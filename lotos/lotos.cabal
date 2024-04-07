@@ -1,20 +1,9 @@
 cabal-version:   3.4
-
--- The cabal-version field refers to the version of the .cabal specification,
--- and can be different from the cabal-install (the tool) version and the
--- Cabal (the library) version you are using. As such, the Cabal (the library)
--- version used must be equal or greater than the version stated in this field.
--- Starting from the specification version 2.2, the cabal-version field must be
--- the first thing in the cabal file.
-
 name:            lotos
 version:         0.1.0.0
 
--- synopsis:
--- description:
-
+--
 license:         BSD-3-Clause
-license-file:    LICENSE
 author:          jacob
 maintainer:      jacobbishopxy@gmail.com
 category:        Data
@@ -25,14 +14,22 @@ common warnings
   ghc-options: -Wall
 
 library
-  -- Import common warning flags.
-  import:           warnings
-
-  -- Modules exported by the library.
-  exposed-modules:  Lotos
+  import:             warnings
+  default-extensions: CPP
+  exposed-modules:
+    Lotos
+    Lotos.Airflow.Cron
+    Lotos.Csv
 
   -- other-modules:
   -- other-extensions:
-  build-depends:    base ^>=4.18.2.0
-  hs-source-dirs:   src
-  default-language: Haskell2010
+  build-depends:
+    , base
+    , containers
+    , directory
+    , filepath
+    , text
+    , vector
+
+  hs-source-dirs:     src
+  default-language:   Haskell2010
