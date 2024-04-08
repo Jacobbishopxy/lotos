@@ -24,3 +24,5 @@ cabal.project.local~
 
 .vscode
 .tmp
+lotos/app/*
+!lotos/app/.gitkeep
