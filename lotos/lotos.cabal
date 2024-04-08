@@ -27,10 +27,13 @@ library
   build-depends:
     , aeson
     , base
+    , bytestring
+    , cassava
     , containers
     , directory
     , filepath
     , text
+    , vector
     , yaml
 
   hs-source-dirs:     src

@@ -23,7 +23,6 @@ import Graphics.Vty qualified as V
 import Graphics.Vty.CrossPlatform (mkVty)
 import Lens.Micro
 import Lens.Micro.Mtl
-import Lotos ((!?))
 import Lotos.Airflow.Conf
 import Lotos.Airflow.Cron
 import System.Environment (getArgs)
@@ -42,8 +41,8 @@ drawUi st = [ui]
               [ hLimitPercent 60 $ borderWithLabel titleSP $ controlBox st,
                 borderWithLabel titleHP $ hCenter $ vCenter helpBox
               ],
-          vLimitPercent 80 $ borderWithLabel titleMR $ resultBox st,
-          borderWithLabel titleDI $ infoBox st <+> fill ' '
+          borderWithLabel titleMR $ resultBox st,
+          vLimit 15 $ borderWithLabel titleDI $ infoBox st <+> fill ' '
         ]
     titleSP = str "search param"
     titleHP = str "help"
@@ -82,7 +81,7 @@ resultBox st =
 -- info box
 infoBox :: AppState -> Widget SourceName
 infoBox st =
-  case (st ^. searchedResult) !? (st ^. selectedResult) of
+  case (st ^. searchedResult) Vec.!? (st ^. selectedResult) of
     Nothing -> emptyWidget
     Just cs -> renderList listDrawInfo False $ list DetailRegion (l cs) 2
   where
@@ -135,11 +134,6 @@ listDrawResult' _ cs =
   hBox $ alignColumns columnAlignments columnWidths $ str <$> c
   where
     c = getCronStrings cs resultBoxColumns
-
--- fixed length
--- ["idx", "dag", "name", "sleeper", "input", "cmd", "output", "activate", "fPath"]
-columnWidths :: [Int]
-columnWidths = [5, 15, 15, 10, 40, 40, 40, 5, 40]
 
 columnAlignments :: [ColumnAlignment]
 columnAlignments = replicate (length resultBoxColumns) AlignLeft
@@ -223,7 +217,7 @@ commitSearchRequest st =
       sr = searchCron sp (st ^. allCrons)
    in st
         & searchedResult .~ sr
-        & searchedResultList .~ list ResultRegion (Vec.fromList sr) 2
+        & searchedResultList .~ list ResultRegion sr 2
         & searchForm %~ setFormFocus (SearchRegion InvisibleField) -- set form focus to null
         & focusRing %~ F.focusSetCurrent ResultRegion -- jump to result region
 
@@ -276,13 +270,13 @@ defaultSearch =
       _invisibleFocus = False
     }
 
-initialState :: [CronSchema] -> AppState
+initialState :: Vec.Vector CronSchema -> AppState
 initialState cs =
   AppState
     { _focusRing = F.focusRing focusRingList,
       _searchForm = mkForm defaultSearch,
       _allCrons = cs,
-      _searchedResult = [],
+      _searchedResult = Vec.empty,
       _searchedResultList = list ResultRegion Vec.empty 0,
       _selectedResult = 0
     }

@@ -7,6 +7,7 @@
 
 module Lotos.Airflow.Cron
   ( CronSchema (..),
+    CronSchemas,
     Conj (..),
     SearchParam (..),
     getAllCron,
@@ -16,9 +17,12 @@ module Lotos.Airflow.Cron
   )
 where
 
+import Data.Char (toUpper)
+import Data.Csv
 import Data.Either (fromRight)
 import Data.List (isInfixOf, isSuffixOf)
 import Data.Maybe (fromMaybe)
+import qualified Data.Vector as Vec
 import Lotos.Csv
 import System.Directory (doesDirectoryExist, doesFileExist, getDirectoryContents)
 import System.FilePath ((</>))
@@ -26,6 +30,8 @@ import System.FilePath ((</>))
 ----------------------------------------------------------------------------------------------------
 -- Adt
 ----------------------------------------------------------------------------------------------------
+
+type CronSchemas = Vec.Vector CronSchema
 
 -- CronSchema
 data CronSchema = CronSchema
@@ -55,41 +61,51 @@ data SearchParam = SearchParam
 -- Impl
 ----------------------------------------------------------------------------------------------------
 
-instance ParseRecord CronSchema where
-  parseRecord header row =
-    CronSchema
-      { idx = 0,
-        dag = readString header row "dag",
-        name = readString header row "name",
-        sleeper = readString header row "sleeper",
-        input = readString' header row "input",
-        cmd = readString header row "cmd",
-        output = readString' header row "output",
-        activate = readBool header row "activate",
-        fPath = ""
-      }
+instance FromNamedRecord CronSchema where
+  parseNamedRecord m = do
+    dagVal <- m .: "dag"
+    nameVal <- m .: "name"
+    sleeperVal <- m .: "sleeper"
+    inputVal <- m .: "input"
+    cmdVal <- m .: "cmd"
+    outputVal <- m .: "output"
+    activateVal <- m .: "activate"
+    return
+      CronSchema
+        { idx = 0,
+          dag = dagVal,
+          name = nameVal,
+          sleeper = sleeperVal,
+          input = inputVal,
+          cmd = cmdVal,
+          output = outputVal,
+          activate = toBool activateVal,
+          fPath = ""
+        }
+    where
+      toBool = (== "TRUE") . map toUpper
 
 ----------------------------------------------------------------------------------------------------
 -- Fn
 ----------------------------------------------------------------------------------------------------
 
 -- search dir/file, discard none CronSchema Csv
-getAllCron :: FilePath -> IO [CronSchema]
+getAllCron :: FilePath -> IO CronSchemas
 getAllCron fp = do
   isFile <- doesFileExist fp
   isDir <- doesDirectoryExist fp
   case (isFile, isDir) of
     (True, False) -> searchCronByFile fp
     (False, True) -> searchCronByDir fp
-    _ -> return []
+    _ -> return Vec.empty
 
 -- search multiple dirs/files
-getAllCrons :: [FilePath] -> IO [CronSchema]
-getAllCrons dirs = concat <$> mapM getAllCron dirs
+getAllCrons :: [FilePath] -> IO CronSchemas
+getAllCrons dirs = Vec.concat <$> mapM getAllCron dirs
 
 -- search `[CronSchema]` contents
-searchCron :: SearchParam -> [CronSchema] -> [CronSchema]
-searchCron sp = filter $ containsSubstring conj lookupStr . flip getCronStrings fields
+searchCron :: SearchParam -> CronSchemas -> CronSchemas
+searchCron sp = Vec.filter $ containsSubstring conj lookupStr . flip getCronStrings fields
   where
     fields = searchFields sp
     conj = searchConj sp
@@ -114,24 +130,28 @@ getCronStrings cron = map f
 -- Helpers
 ----------------------------------------------------------------------------------------------------
 
+-- process csv
+processCsv :: FilePath -> IO (Either String CronSchemas)
+processCsv f = fmap snd <$> readCsv f
+
 -- Given a directory, search all matched Csv files
-searchCronByDir :: FilePath -> IO [CronSchema]
+searchCronByDir :: FilePath -> IO CronSchemas
 searchCronByDir dir = do
   files <- filter (".csv" `isSuffixOf`) <$> getAbsDirCtt dir
-  parsedData <- mapM (\f -> processRow f . fromRight [] <$> readCsv f) files
-  return . concat $ parsedData
+  parsedData <- mapM (\f -> processRow f . fromRight Vec.empty <$> processCsv f) files
+  return . Vec.concat $ parsedData
   where
     -- turn relative filePath into filePath which based on execution location
     getAbsDirCtt :: FilePath -> IO [FilePath]
     getAbsDirCtt d = map (dir </>) <$> getDirectoryContents d
 
 -- Given a file, get `[CronSchema]`
-searchCronByFile :: FilePath -> IO [CronSchema]
-searchCronByFile file = processRow file . fromRight [] <$> readCsv file
+searchCronByFile :: FilePath -> IO CronSchemas
+searchCronByFile file = processRow file . fromRight Vec.empty <$> processCsv file
 
 -- Add extra info to `CronSchema`
-processRow :: FilePath -> [CronSchema] -> [CronSchema]
-processRow fp cs = upfPath fp <$> zip [0 ..] cs
+processRow :: FilePath -> CronSchemas -> CronSchemas
+processRow fp cs = upfPath fp <$> Vec.indexed cs
   where
     upfPath p (i, r) = r {fPath = p, idx = i + 1}
 

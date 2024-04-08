@@ -23,7 +23,31 @@ import Lotos.Airflow.Cron
 ----------------------------------------------------------------------------------------------------
 
 resultBoxColumns :: [String]
-resultBoxColumns = ["idx", "dag", "name", "sleeper", "input", "cmd", "output", "activate", "fPath"]
+resultBoxColumns =
+  [ "idx",
+    "dag",
+    "name",
+    "sleeper",
+    "input",
+    "cmd",
+    "output",
+    "activate",
+    "fPath"
+  ]
+
+-- fixed length
+columnWidths :: [Int]
+columnWidths =
+  [ 5,
+    15,
+    15,
+    10,
+    40,
+    40,
+    40,
+    5,
+    40
+  ]
 
 invisibleFormFieldAttr :: AttrName
 invisibleFormFieldAttr = focusedFormInputAttr <> attrName "invisibleFormField"
@@ -52,6 +76,9 @@ formFocusRingList =
     CaseSensitiveField
   ]
 
+focusRingListLength :: Int
+focusRingListLength = length formFocusRingList
+
 focusRingList :: [SourceName]
 focusRingList =
   [ SearchRegion StringField,
@@ -77,7 +104,7 @@ formFocusRingLoop f = case f `elemIndex` formFocusRingList of
 -- key down
 formFocusRingLoop' :: SearchRegion -> SearchRegion
 formFocusRingLoop' f = case f `elemIndex` formFocusRingList of
-  Just 7 -> StringField
+  Just i | i == focusRingListLength - 1 -> StringField
   Just i -> formFocusRingList !! (i + 1)
   _ -> error "formFocusRingLoop'"
 

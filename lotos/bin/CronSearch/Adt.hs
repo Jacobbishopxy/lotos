@@ -14,6 +14,7 @@ import Brick.Focus qualified as F
 import Brick.Forms (Form)
 import Brick.Widgets.List (List)
 import Data.Text qualified as T
+import Data.Vector qualified as Vec
 import Lens.Micro.TH (makeLenses)
 import Lotos.Airflow.Cron (Conj, CronSchema)
 
@@ -60,9 +61,9 @@ data AppState = AppState
     -- search form
     _searchForm :: Form Search () SourceName,
     -- all crons
-    _allCrons :: [CronSchema],
+    _allCrons :: Vec.Vector CronSchema,
     -- searched result
-    _searchedResult :: [CronSchema],
+    _searchedResult :: Vec.Vector CronSchema,
     _searchedResultList :: List SourceName CronSchema,
     -- searched result
     _selectedResult :: Int
