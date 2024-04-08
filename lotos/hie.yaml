@@ -2,3 +2,12 @@ cradle:
   cabal:
     - path: "src"
       component: "lib:lotos"
+
+    - path: "bin/CronSearch.hs"
+      component: "lotos:exe:cron-search"
+
+    - path: "bin/CronSearch/Adt.hs"
+      component: "lotos:exe:cron-search"
+
+    - path: "bin/CronSearch/Util.hs"
+      component: "lotos:exe:cron-search"
