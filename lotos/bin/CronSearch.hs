@@ -84,14 +84,12 @@ resultBox st =
 -- info box
 infoBox :: AppState -> Widget SourceName
 infoBox st =
-  maybe
-    emptyWidget
-    (`g` resultBoxColumns)
-    ((st ^. searchedResult) Vec.!? (st ^. selectedResult))
+  maybe emptyWidget ((`g` resultBoxColumns) . snd) s
   where
     -- generate info list
     g :: CronSchema -> [String] -> Widget SourceName
     g cs c = txt $ T.unlines [T.pack $ c' <> ": " <> s' | (c', s') <- zip c (getCronStrings cs c)]
+    s = listSelectedElement $ st ^. searchedResultList
 
 ----------------------------------------------------------------------------------------------------
 
@@ -150,10 +148,8 @@ appEvent (VtyEvent k@(V.EvKey V.KUp [])) = do
   r <- use focusRing
   case F.focusGetCurrent r of
     -- arrow up/down effects detailed info
-    Just ResultRegion -> do
+    Just ResultRegion ->
       zoom searchedResultList $ handleListEvent k
-      modify $ \st ->
-        if st ^. selectedResult > 0 then st & selectedResult -~ 1 else st
     -- move to the previous form focus
     Just (SearchRegion f) -> do
       let f' = SearchRegion $ formFocusRingLoop f
@@ -165,10 +161,8 @@ appEvent (VtyEvent k@(V.EvKey V.KDown [])) = do
   r <- use focusRing
   case F.focusGetCurrent r of
     -- arrow up/down effects detailed info
-    Just ResultRegion -> do
+    Just ResultRegion ->
       zoom searchedResultList $ handleListEvent k
-      modify $ \st ->
-        if st ^. selectedResult < length (st ^. searchedResult) - 1 then st & selectedResult +~ 1 else st
     -- move to the next form focus
     Just (SearchRegion f) -> do
       let f' = SearchRegion $ formFocusRingLoop' f
@@ -262,8 +256,7 @@ initialState cs =
       _searchForm = mkForm defaultSearch,
       _allCrons = cs,
       _searchedResult = Vec.empty,
-      _searchedResultList = list ResultRegion Vec.empty 0,
-      _selectedResult = 0
+      _searchedResultList = list ResultRegion Vec.empty 0
     }
 
 ----------------------------------------------------------------------------------------------------

@@ -64,9 +64,7 @@ data AppState = AppState
     _allCrons :: Vec.Vector CronSchema,
     -- searched result
     _searchedResult :: Vec.Vector CronSchema,
-    _searchedResultList :: List SourceName CronSchema,
-    -- searched result
-    _selectedResult :: Int
+    _searchedResultList :: List SourceName CronSchema
   }
 
 makeLenses ''AppState
