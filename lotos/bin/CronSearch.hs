@@ -38,15 +38,14 @@ drawUi st = [ui]
     ui =
       vBox
         [ vLimit 14 $
-            hBox
-              [ hLimitPercent 60 $ borderWithLabel titleSP $ controlBox st,
-                borderWithLabel titleHP $ hCenter $ vCenter helpBox
-              ],
-          borderWithLabel titleMR $ resultBox st,
-          vLimit 15 $ borderWithLabel titleDI $ infoBox st <+> fill ' '
+            borderWithLabel titleSP $
+              hLimitPercent 60 (controlBox st) <+> hCenter (vCenter helpBox),
+          hBox
+            [ hLimitPercent 40 $ borderWithLabel titleMR $ resultBox st,
+              borderWithLabel titleDI $ infoBox st <=> fill ' '
+            ]
         ]
     titleSP = str "search param"
-    titleHP = str "help"
     titleDI = str "detailed info"
     titleMR = str "matched result"
 
@@ -58,13 +57,13 @@ controlBox st = renderForm (st ^. searchForm)
 helpBox :: Widget SourceName
 helpBox =
   str $
-    "Arrow:   move up/down\n"
+    "help:\n"
+      <> "Arrow:   move up/down\n"
       <> "Space:   select param\n"
       <> "Enter:   search\n"
       <> "Tab:     switch panel\n"
       <> "Esc:     quit"
 
--- TODO: render list only show half visible items
 -- result box
 resultBox :: AppState -> Widget SourceName
 resultBox st =
@@ -80,11 +79,11 @@ resultBox st =
       -- when focus ring off
       _ -> withAttr resultUnselectedListAttr l
 
--- TODO: cannot show large text
+-- TODO: fix input/cmd/output
 -- info box
 infoBox :: AppState -> Widget SourceName
 infoBox st =
-  maybe emptyWidget ((`g` resultBoxColumns) . snd) s
+  maybe emptyWidget ((`g` infoBoxColumns) . snd) s
   where
     -- generate info list
     g :: CronSchema -> [String] -> Widget SourceName
@@ -198,7 +197,7 @@ commitSearchRequest st =
       sr = searchCron sp (st ^. allCrons)
    in st
         & searchedResult .~ sr
-        & searchedResultList .~ list ResultRegion sr 2
+        & searchedResultList .~ list ResultRegion sr 1
         & searchForm %~ setFormFocus (SearchRegion InvisibleField) -- set form focus to null
         & focusRing %~ F.focusSetCurrent ResultRegion -- jump to result region
 

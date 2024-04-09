@@ -27,14 +27,10 @@ import Lotos.Airflow.Cron
 resultBoxColumnsSetting :: [(String, Int)]
 resultBoxColumnsSetting =
   [ ("idx", 5),
-    ("dag", 15),
-    ("name", 15),
+    ("dag", 20),
+    ("name", 20),
     ("sleeper", 10),
-    ("input", 40),
-    ("cmd", 40),
-    ("output", 40),
-    ("activate", 5),
-    ("fPath", 40)
+    ("activate", 5)
   ]
 
 resultBoxColumns :: [String]
@@ -45,6 +41,19 @@ resultBoxColumnsWidth = snd <$> resultBoxColumnsSetting
 
 resultBoxColumnsAlignments :: [ColumnAlignment]
 resultBoxColumnsAlignments = replicate (length resultBoxColumns) AlignLeft
+
+infoBoxColumns :: [String]
+infoBoxColumns =
+  [ "idx",
+    "dag",
+    "name",
+    "sleeper",
+    "input",
+    "cmd",
+    "output",
+    "activate",
+    "fPath"
+  ]
 
 invisibleFormFieldAttr :: AttrName
 invisibleFormFieldAttr = focusedFormInputAttr <> attrName "invisibleFormField"
