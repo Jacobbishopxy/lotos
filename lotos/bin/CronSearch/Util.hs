@@ -12,6 +12,7 @@ import Brick
 import Brick.Focus qualified as F
 import Brick.Forms
 import Brick.Widgets.List
+import Brick.Widgets.Table (ColumnAlignment (AlignLeft))
 import CronSearch.Adt
 import Data.List (elemIndex)
 import Data.Text qualified as T
@@ -23,8 +24,8 @@ import Lotos.Airflow.Cron
 ----------------------------------------------------------------------------------------------------
 
 -- name & cell width
-resultBoxColumns :: [(String, Int)]
-resultBoxColumns =
+resultBoxColumnsSetting :: [(String, Int)]
+resultBoxColumnsSetting =
   [ ("idx", 5),
     ("dag", 15),
     ("name", 15),
@@ -35,6 +36,15 @@ resultBoxColumns =
     ("activate", 5),
     ("fPath", 40)
   ]
+
+resultBoxColumns :: [String]
+resultBoxColumns = fst <$> resultBoxColumnsSetting
+
+resultBoxColumnsWidth :: [Int]
+resultBoxColumnsWidth = snd <$> resultBoxColumnsSetting
+
+resultBoxColumnsAlignments :: [ColumnAlignment]
+resultBoxColumnsAlignments = replicate (length resultBoxColumns) AlignLeft
 
 invisibleFormFieldAttr :: AttrName
 invisibleFormFieldAttr = focusedFormInputAttr <> attrName "invisibleFormField"

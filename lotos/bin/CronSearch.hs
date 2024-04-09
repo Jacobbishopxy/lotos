@@ -119,18 +119,15 @@ listDrawResultHeader :: Bool -> [String] -> Widget SourceName
 listDrawResultHeader _ cs =
   withAttr resultHeaderListAttr $
     hBox $
-      alignColumns columnAlignments columnWidths $
+      alignColumns resultBoxColumnsAlignments resultBoxColumnsWidth $
         str <$> cs
 
 -- draw result list item
 listDrawResult :: Bool -> CronSchema -> Widget SourceName
 listDrawResult _ cs =
-  hBox $ alignColumns columnAlignments columnWidths $ txt . T.pack <$> c
+  hBox $ alignColumns resultBoxColumnsAlignments resultBoxColumnsWidth $ txt . T.pack <$> c
   where
     c = getCronStrings cs resultBoxColumns
-
-columnAlignments :: [ColumnAlignment]
-columnAlignments = replicate (length resultBoxColumns) AlignLeft
 
 ----------------------------------------------------------------------------------------------------
 -- Event
