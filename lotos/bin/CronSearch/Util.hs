@@ -22,31 +22,18 @@ import Lotos.Airflow.Cron
 -- Const
 ----------------------------------------------------------------------------------------------------
 
-resultBoxColumns :: [String]
+-- name & cell width
+resultBoxColumns :: [(String, Int)]
 resultBoxColumns =
-  [ "idx",
-    "dag",
-    "name",
-    "sleeper",
-    "input",
-    "cmd",
-    "output",
-    "activate",
-    "fPath"
-  ]
-
--- fixed length
-columnWidths :: [Int]
-columnWidths =
-  [ 5,
-    15,
-    15,
-    10,
-    40,
-    40,
-    40,
-    5,
-    40
+  [ ("idx", 5),
+    ("dag", 15),
+    ("name", 15),
+    ("sleeper", 10),
+    ("input", 40),
+    ("cmd", 40),
+    ("output", 40),
+    ("activate", 5),
+    ("fPath", 40)
   ]
 
 invisibleFormFieldAttr :: AttrName
@@ -60,9 +47,6 @@ resultSelectedListAttr = listSelectedAttr <> attrName "resultSelectedList"
 
 resultUnselectedListAttr :: AttrName
 resultUnselectedListAttr = listAttr <> listSelectedAttr <> attrName "resultUnselectedList"
-
-detailSelectedListAttr :: AttrName
-detailSelectedListAttr = listSelectedAttr <> attrName "detailSelectedList"
 
 formFocusRingList :: [SearchRegion]
 formFocusRingList =

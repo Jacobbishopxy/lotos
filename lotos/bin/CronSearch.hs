@@ -18,6 +18,7 @@ import Brick.Widgets.Table
 import Control.Monad (void)
 import CronSearch.Adt
 import CronSearch.Util
+import Data.Text qualified as T
 import Data.Vector qualified as Vec
 import Graphics.Vty qualified as V
 import Graphics.Vty.CrossPlatform (mkVty)
@@ -63,6 +64,7 @@ helpBox =
       <> "Tab:     switch panel\n"
       <> "Esc:     quit"
 
+-- TODO: render list only show half visible items
 -- result box
 resultBox :: AppState -> Widget SourceName
 resultBox st =
@@ -70,26 +72,26 @@ resultBox st =
   where
     -- header
     h = list ResultHeaderRegion (Vec.fromList [resultBoxColumns]) 1
-    l = st ^. searchedResultList
+    l = renderList listDrawResult False $ st ^. searchedResultList
     -- if not on focus, disable highlight
     r = case F.focusGetCurrent $ st ^. focusRing of
       -- when focus ring on
-      Just ResultRegion -> renderList listDrawResult True l
+      Just ResultRegion -> l
       -- when focus ring off
-      _ -> withAttr resultUnselectedListAttr $ renderList listDrawResult' True l
+      _ -> withAttr resultUnselectedListAttr l
 
+-- TODO: cannot show large text
 -- info box
 infoBox :: AppState -> Widget SourceName
 infoBox st =
-  case (st ^. searchedResult) Vec.!? (st ^. selectedResult) of
-    Nothing -> emptyWidget
-    Just cs -> renderList listDrawInfo False $ list DetailRegion (l cs) 2
+  maybe
+    emptyWidget
+    (`g` resultBoxColumns)
+    ((st ^. searchedResult) Vec.!? (st ^. selectedResult))
   where
     -- generate info list
-    g :: CronSchema -> [String] -> [String]
-    g cs c = [c' <> ": " <> s' | (c', s') <- zip c (getCronStrings cs c)]
-    l :: CronSchema -> Vec.Vector String
-    l = Vec.fromList . flip g resultBoxColumns
+    g :: CronSchema -> [String] -> Widget SourceName
+    g cs c = txt $ T.unlines [T.pack $ c' <> ": " <> s' | (c', s') <- zip c (getCronStrings cs c)]
 
 ----------------------------------------------------------------------------------------------------
 
@@ -120,27 +122,15 @@ listDrawResultHeader _ cs =
       alignColumns columnAlignments columnWidths $
         str <$> cs
 
--- draw an item in `[CronSchema]` list
+-- draw result list item
 listDrawResult :: Bool -> CronSchema -> Widget SourceName
-listDrawResult sel cs =
-  let ws = if sel then s else str <$> c
-   in hBox $ alignColumns columnAlignments columnWidths ws
-  where
-    c = getCronStrings cs resultBoxColumns
-    s = withAttr resultSelectedListAttr . str <$> c
-
-listDrawResult' :: Bool -> CronSchema -> Widget SourceName
-listDrawResult' _ cs =
-  hBox $ alignColumns columnAlignments columnWidths $ str <$> c
+listDrawResult _ cs =
+  hBox $ alignColumns columnAlignments columnWidths $ txt . T.pack <$> c
   where
     c = getCronStrings cs resultBoxColumns
 
 columnAlignments :: [ColumnAlignment]
 columnAlignments = replicate (length resultBoxColumns) AlignLeft
-
-listDrawInfo :: Bool -> String -> Widget SourceName
-listDrawInfo True = withAttr detailSelectedListAttr . str
-listDrawInfo _ = str
 
 ----------------------------------------------------------------------------------------------------
 -- Event
@@ -238,9 +228,7 @@ theMap =
       -- overwrite
       (invisibleFormFieldAttr, fg V.black),
       (resultHeaderListAttr, V.white `on` V.blue),
-      (resultSelectedListAttr, V.black `on` V.yellow),
-      (resultUnselectedListAttr, V.white `on` V.black),
-      (detailSelectedListAttr, V.white `on` V.black)
+      (resultUnselectedListAttr, V.white `on` V.black)
     ]
 
 ----------------------------------------------------------------------------------------------------

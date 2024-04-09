@@ -19,6 +19,7 @@ import qualified System.IO as SIO
 
 type CsvResult a = Either String (Header, Vec.Vector a)
 
+-- TODO: decode
 readCsv :: (FromNamedRecord a) => FilePath -> IO (CsvResult a)
 readCsv file = do
   h <- SIO.openFile file SIO.ReadMode
