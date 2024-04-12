@@ -21,6 +21,7 @@ library
     Lotos.Airflow.Conf
     Lotos.Airflow.Cron
     Lotos.Csv
+    Lotos.Util
 
   -- other-modules:
   -- other-extensions:
@@ -28,11 +29,12 @@ library
     , aeson
     , base
     , bytestring
-    , cassava
     , containers
     , directory
     , filepath
+    , hw-dsv
     , text
+    , unordered-containers
     , vector
     , yaml
 

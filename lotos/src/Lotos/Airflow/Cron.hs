@@ -18,7 +18,6 @@ module Lotos.Airflow.Cron
 where
 
 import Data.Char (toUpper)
-import Data.Csv
 import Data.Either (fromRight)
 import Data.List (isInfixOf, isSuffixOf)
 import Data.Maybe (fromMaybe)
@@ -61,15 +60,15 @@ data SearchParam = SearchParam
 -- Impl
 ----------------------------------------------------------------------------------------------------
 
-instance FromNamedRecord CronSchema where
-  parseNamedRecord m = do
-    dagVal <- m .: "dag"
-    nameVal <- m .: "name"
-    sleeperVal <- m .: "sleeper"
-    inputVal <- m .: "input"
-    cmdVal <- m .: "cmd"
-    outputVal <- m .: "output"
-    activateVal <- m .: "activate"
+instance FromRecord CronSchema where
+  parseRecord fi vec = do
+    dagVal <- (fi, "dag") ~> vec
+    nameVal <- (fi, "name") ~> vec
+    sleeperVal <- (fi, "sleeper") ~> vec
+    inputVal <- (fi, "input") ~> vec
+    cmdVal <- (fi, "cmd") ~> vec
+    outputVal <- (fi, "output") ~> vec
+    activateVal <- (fi, "activate") ~> vec
     return
       CronSchema
         { idx = 0,
@@ -130,15 +129,11 @@ getCronStrings cron = map f
 -- Helpers
 ----------------------------------------------------------------------------------------------------
 
--- process csv
-processCsv :: FilePath -> IO (Either String CronSchemas)
-processCsv f = fmap snd <$> readCsv f
-
 -- Given a directory, search all matched Csv files
 searchCronByDir :: FilePath -> IO CronSchemas
 searchCronByDir dir = do
   files <- filter (".csv" `isSuffixOf`) <$> getAbsDirCtt dir
-  parsedData <- mapM (\f -> processRow f . fromRight Vec.empty <$> processCsv f) files
+  parsedData <- mapM (\f -> processRow f . fromRight Vec.empty <$> readCsv f) files
   return . Vec.concat $ parsedData
   where
     -- turn relative filePath into filePath which based on execution location
@@ -147,7 +142,7 @@ searchCronByDir dir = do
 
 -- Given a file, get `[CronSchema]`
 searchCronByFile :: FilePath -> IO CronSchemas
-searchCronByFile file = processRow file . fromRight Vec.empty <$> processCsv file
+searchCronByFile file = processRow file . fromRight Vec.empty <$> readCsv file
 
 -- Add extra info to `CronSchema`
 processRow :: FilePath -> CronSchemas -> CronSchemas
