@@ -125,7 +125,7 @@ readCsvRaw f = do
   h <- openFile f ReadMode
   b <- BS.hGetContents h
 
-  return $ AL.parseOnly (csv defaultDecodeOptions) (BSL.fromStrict b)
+  return $ AL.parseOnly csv (BSL.fromStrict b)
 
 readCsv :: (FromRecord a) => FilePath -> IO (Either String (V.Vector a))
 readCsv f = do

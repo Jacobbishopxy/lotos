@@ -24,23 +24,10 @@ import Data.Word (Word8)
 import Lotos.Csv.Adt
 import Lotos.Csv.Util
 
-data DecodeOptions where
-  DecodeOptions ::
-    {decDelimiter :: {-# UNPACK #-} !Word8} ->
-    DecodeOptions
-  deriving (Eq, Show)
-
--- | Decoding options for parsing CSV files.
-defaultDecodeOptions :: DecodeOptions
-defaultDecodeOptions =
-  DecodeOptions
-    { decDelimiter = 44 -- comma
-    }
-
 -- | Parse a CSV file that does not include a header.
-csv :: DecodeOptions -> AL.Parser Csv
-csv !opts = do
-  vals <- sepByEndOfLine1' (record (decDelimiter opts))
+csv :: AL.Parser Csv
+csv = do
+  vals <- sepByEndOfLine1' (record decDelimiter)
   _ <- optional endOfLine
   endOfInput
   let nonEmpty = removeBlankLines vals
@@ -82,12 +69,12 @@ sepByEndOfLine1' p = liftM2' (:) p loop
 {-# INLINE sepByEndOfLine1' #-}
 
 -- | Parse a CSV file that includes a header.
-csvWithHeader :: DecodeOptions -> AL.Parser (Header, V.Vector NamedRecord)
-csvWithHeader !opts = do
-  !hdr <- header (decDelimiter opts)
+csvWithHeader :: AL.Parser (Header, V.Vector NamedRecord)
+csvWithHeader = do
+  !hdr <- header decDelimiter
   vals <-
     map (toNamedRecord hdr) . removeBlankLines
-      <$> sepByEndOfLine1' (record (decDelimiter opts))
+      <$> sepByEndOfLine1' (record decDelimiter)
   _ <- optional endOfLine
   endOfInput
   let !v = V.fromList vals

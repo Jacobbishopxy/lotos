@@ -32,13 +32,6 @@ toStrict = B.concat . L.toChunks
 toNamedRecord :: Header -> Record -> NamedRecord
 toNamedRecord hdr v = HM.fromList . V.toList $ V.zip hdr v
 
--- | Is the CSV data preceded by a header?
-data HasHeader
-  = -- | The CSV data is preceded by a header
-    HasHeader
-  | -- | The CSV data is not preceded by a header
-    NoHeader
-
 -- | A strict version of 'Data.Functor.<$>' for monads.
 (<$!>) :: (Monad m) => (a -> b) -> m a -> m b
 f <$!> m = do
@@ -67,7 +60,8 @@ endOfLine :: Parser ()
 endOfLine = (A.word8 newline $> ()) <|> (string "\r\n" $> ()) <|> (A.word8 cr $> ())
 {-# INLINE endOfLine #-}
 
-doubleQuote, newline, cr :: Word8
+doubleQuote, newline, cr, decDelimiter :: Word8
 doubleQuote = 34
 newline = 10
 cr = 13
+decDelimiter = 44 -- comma
