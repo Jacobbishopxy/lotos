@@ -23,16 +23,20 @@ library
     Lotos.Csv
     Lotos.Util
 
-  -- other-modules:
+  other-modules:
+    Lotos.Csv.Adt
+    Lotos.Csv.Parser
+    Lotos.Csv.Util
+
   -- other-extensions:
   build-depends:
     , aeson
+    , attoparsec
     , base
     , bytestring
     , containers
     , directory
     , filepath
-    , hw-dsv
     , text
     , unordered-containers
     , vector
@@ -40,6 +44,19 @@ library
 
   hs-source-dirs:     src
   default-language:   Haskell2010
+
+----------------------------------------------------------------------------------------------------
+
+test-suite test-read-cron
+  type:             exitcode-stdio-1.0
+  import:           warnings
+  default-language: GHC2021
+  hs-source-dirs:   test
+  main-is:          ReadCron.hs
+  build-depends:
+    , base
+    , lotos
+    , vector
 
 ----------------------------------------------------------------------------------------------------
 
