@@ -18,6 +18,7 @@ import Brick.Widgets.Table
 import Control.Monad (void)
 import CronSearch.Adt
 import CronSearch.Util
+import Data.List (intercalate)
 import Data.Text qualified as T
 import Data.Vector qualified as Vec
 import Graphics.Vty qualified as V
@@ -87,7 +88,7 @@ infoBox st =
   where
     -- generate info list
     g :: CronSchema -> [String] -> Widget SourceName
-    g cs c = txt $ T.unlines [T.pack $ c' <> ": " <> s' | (c', s') <- zip c (getCronStrings cs c)]
+    g cs c = txt $ T.pack $ intercalate "\n" [c' <> ": " <> s' | (c', s') <- zip c (getCronStrings cs c)]
     s = listSelectedElement $ st ^. searchedResultList
 
 ----------------------------------------------------------------------------------------------------
