@@ -48,8 +48,8 @@ library
 ----------------------------------------------------------------------------------------------------
 
 test-suite test-read-cron
-  type:             exitcode-stdio-1.0
   import:           warnings
+  type:             exitcode-stdio-1.0
   default-language: GHC2021
   hs-source-dirs:   test
   main-is:          ReadCron.hs
@@ -82,4 +82,3 @@ executable cron-search
     , vector
     , vty
     , vty-crossplatform
-    , word-wrap

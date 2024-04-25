@@ -51,6 +51,8 @@ infoBoxColumns =
     "input",
     "cmd",
     "output",
+    "server",
+    "user",
     "activate",
     "fPath"
   ]

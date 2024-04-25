@@ -41,6 +41,8 @@ data CronSchema = CronSchema
     input :: Maybe String,
     cmd :: String,
     output :: Maybe String,
+    server :: Maybe String,
+    user :: Maybe String,
     activate :: Bool,
     fPath :: String
   }
@@ -68,6 +70,8 @@ instance FromRecord CronSchema where
     inputVal <- (fi, "input") ~> vec
     cmdVal <- (fi, "cmd") ~> vec
     outputVal <- (fi, "output") ~> vec
+    serverVal <- (fi, "server") ~> vec
+    userVal <- (fi, "user") ~> vec
     activateVal <- (fi, "activate") ~> vec
     return
       CronSchema
@@ -78,6 +82,8 @@ instance FromRecord CronSchema where
           input = inputVal,
           cmd = cmdVal,
           output = outputVal,
+          server = serverVal,
+          user = userVal,
           activate = toBool activateVal,
           fPath = ""
         }
@@ -121,6 +127,8 @@ getCronStrings cron = map f
     f "input" = fromMaybe "" $ input cron
     f "cmd" = cmd cron
     f "output" = fromMaybe "" $ output cron
+    f "server" = fromMaybe "" $ server cron
+    f "user" = fromMaybe "" $ user cron
     f "activate" = show $ activate cron
     f "fPath" = fPath cron
     f _ = ""

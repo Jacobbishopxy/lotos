@@ -88,7 +88,9 @@ infoBox st =
   where
     -- generate info list
     g :: CronSchema -> [String] -> Widget SourceName
-    g cs c = txt $ T.pack $ intercalate "\n" [c' <> ": " <> s' | (c', s') <- zip c (getCronStrings cs c)]
+    g cs c =
+      strWrap $
+        intercalate "\n" [c' <> ": " <> s' | (c', s') <- zip c (getCronStrings cs c)]
     s = listSelectedElement $ st ^. searchedResultList
 
 ----------------------------------------------------------------------------------------------------
