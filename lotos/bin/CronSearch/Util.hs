@@ -76,8 +76,13 @@ formFocusRingList =
     SelectInputField,
     SelectCmdField,
     SelectOutputField,
+    SelectServerField,
+    SelectUserField,
     ConjAndField,
     ConjOrField,
+    ActAllField,
+    ActTrueField,
+    ActFalseField,
     CaseSensitiveField
   ]
 
@@ -91,8 +96,13 @@ focusRingList =
     SearchRegion SelectInputField,
     SearchRegion SelectCmdField,
     SearchRegion SelectOutputField,
+    SearchRegion SelectServerField,
+    SearchRegion SelectUserField,
     SearchRegion ConjAndField,
     SearchRegion ConjOrField,
+    SearchRegion ActAllField,
+    SearchRegion ActTrueField,
+    SearchRegion ActFalseField,
     SearchRegion CaseSensitiveField,
     ResultRegion
   ]
@@ -113,13 +123,29 @@ formFocusRingLoop' f = case f `elemIndex` formFocusRingList of
   Just i -> formFocusRingList !! (i + 1)
   _ -> error "formFocusRingLoop'"
 
+-- TODO: check this!
+
 -- from Search to SearchParam
 genSearchParam :: Search -> SearchParam
 genSearchParam s =
-  let flt = [s ^. selectSleeperCol, s ^. selectInputCol, s ^. selectCmdCol, s ^. selectOutputCol]
-      cols = ["sleeper", "input", "cmd", "output"]
+  let flt =
+        [ s ^. selectSleeperCol,
+          s ^. selectInputCol,
+          s ^. selectCmdCol,
+          s ^. selectOutputCol,
+          s ^. selectServerCol,
+          s ^. selectUserCol
+        ]
+      cols =
+        [ "sleeper",
+          "input",
+          "cmd",
+          "output",
+          "server",
+          "user"
+        ]
       sf = [c | (c, f) <- zip cols flt, f]
-   in SearchParam sf (s ^. conjunction) (T.unpack $ s ^. searchString)
+   in SearchParam sf (s ^. conjunction) (T.unpack $ s ^. searchString) (s ^. selectActivate)
 
 appCursor :: AppState -> [CursorLocation SourceName] -> Maybe (CursorLocation SourceName)
 appCursor = F.focusRingCursor (^. focusRing)

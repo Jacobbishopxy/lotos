@@ -16,7 +16,7 @@ import Brick.Widgets.List (List)
 import Data.Text qualified as T
 import Data.Vector qualified as Vec
 import Lens.Micro.TH (makeLenses)
-import Lotos.Airflow.Cron (Conj, CronSchema)
+import Lotos.Airflow.Cron (Activate, Conj, CronSchema)
 
 -- Source Name
 data SourceName
@@ -33,8 +33,13 @@ data SearchRegion
   | SelectInputField
   | SelectCmdField
   | SelectOutputField
+  | SelectServerField
+  | SelectUserField
   | ConjAndField
   | ConjOrField
+  | ActAllField
+  | ActTrueField
+  | ActFalseField
   | CaseSensitiveField
   | InvisibleField
   deriving (Eq, Ord, Show)
@@ -46,8 +51,12 @@ data Search = Search
     _selectInputCol :: Bool,
     _selectCmdCol :: Bool,
     _selectOutputCol :: Bool,
+    _selectServerCol :: Bool,
+    _selectUserCol :: Bool,
     -- conjunction
     _conjunction :: Conj,
+    -- filter activate
+    _selectActivate :: Activate,
     -- ignore case
     _caseSensitive :: Bool,
     -- hidden widget, used when switched out from SearchRegion

@@ -9,6 +9,7 @@ module Lotos.Airflow.Cron
   ( CronSchema (..),
     CronSchemas,
     Conj (..),
+    Activate (..),
     SearchParam (..),
     getAllCron,
     getAllCrons,
@@ -51,12 +52,18 @@ data CronSchema = CronSchema
 -- Conjunction
 data Conj = AND | OR deriving (Enum, Show, Read, Eq, Ord)
 
+-- Activate
+data Activate = ActivateTrue | ActivateFalse | ActivateAll
+  deriving (Enum, Show, Read, Eq, Ord)
+
 -- SearchParam
 data SearchParam = SearchParam
   { searchFields :: [String],
     searchConj :: Conj,
-    searchStr :: String
+    searchStr :: String,
+    searchAct :: Activate
   }
+  deriving (Show)
 
 ----------------------------------------------------------------------------------------------------
 -- Impl
@@ -108,13 +115,23 @@ getAllCron fp = do
 getAllCrons :: [FilePath] -> IO CronSchemas
 getAllCrons dirs = Vec.concat <$> mapM getAllCron dirs
 
+--
+filterActivate :: CronSchema -> Activate -> Bool
+filterActivate cs a =
+  case a of
+    ActivateAll -> True
+    ActivateTrue -> activate cs
+    ActivateFalse -> not $ activate cs
+
 -- search `[CronSchema]` contents
 searchCron :: SearchParam -> CronSchemas -> CronSchemas
-searchCron sp = Vec.filter $ containsSubstring conj lookupStr . flip getCronStrings fields
+searchCron sp = Vec.filter $
+  \cs -> containsSubstring conj lookupStr (getCronStrings cs fields) && filterActivate cs act
   where
     fields = searchFields sp
     conj = searchConj sp
     lookupStr = searchStr sp
+    act = searchAct sp
 
 -- Get all strings by a field list
 getCronStrings :: CronSchema -> [String] -> [String]

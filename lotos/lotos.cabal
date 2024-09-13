@@ -58,6 +58,17 @@ test-suite test-read-cron
     , lotos
     , vector
 
+test-suite test-airflow
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  default-language: GHC2021
+  hs-source-dirs:   test
+  main-is:          Airflow.hs
+  build-depends:
+    , base
+    , lotos
+    , vector
+
 ----------------------------------------------------------------------------------------------------
 
 executable cron-search

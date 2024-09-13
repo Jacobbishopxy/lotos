@@ -3,8 +3,11 @@ cradle:
     - path: "src"
       component: "lib:lotos"
 
-    - path: "test"
+    - path: "test/ReadCron.hs"
       component: "lotos:test:test-read-cron"
+
+    - path: "test/Airflow.hs"
+      component: "lotos:test:test-airflow"
 
     - path: "bin/CronSearch.hs"
       component: "lotos:exe:cron-search"

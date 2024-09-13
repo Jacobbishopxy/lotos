@@ -38,7 +38,7 @@ drawUi st = [ui]
   where
     ui =
       vBox
-        [ vLimit 14 $
+        [ vLimit 20 $
             borderWithLabel titleSP $
               hLimitPercent 60 (controlBox st) <+> hCenter (vCenter helpBox),
           hBox
@@ -58,7 +58,7 @@ controlBox st = renderForm (st ^. searchForm)
 helpBox :: Widget SourceName
 helpBox =
   str $
-    "help:\n"
+    "HELP\n\n"
       <> "Arrow:   move up/down\n"
       <> "Space:   select param\n"
       <> "Enter:   search\n"
@@ -103,8 +103,11 @@ mkForm =
       label "Select columns" @@= checkboxField selectSleeperCol (SearchRegion SelectSleeperField) "Sleeper",
       label "" @@= checkboxField selectInputCol (SearchRegion SelectInputField) "Input",
       label "" @@= checkboxField selectCmdCol (SearchRegion SelectCmdField) "Cmd",
-      labelP "" @@= checkboxField selectOutputCol (SearchRegion SelectOutputField) "Output",
-      labelP "Conjunction" @@= radioField conjunction radioG,
+      label "" @@= checkboxField selectCmdCol (SearchRegion SelectOutputField) "Output",
+      label "" @@= checkboxField selectServerCol (SearchRegion SelectServerField) "Server",
+      labelP "" @@= checkboxField selectUserCol (SearchRegion SelectUserField) "User",
+      labelP "Conjunction" @@= radioField conjunction radioG1,
+      labelP "Activate" @@= radioField selectActivate radioG2,
       labelP "Case sensitive" @@= checkboxField caseSensitive (SearchRegion CaseSensitiveField) "",
       labelI @@= checkboxField invisibleFocus (SearchRegion InvisibleField) ""
     ]
@@ -112,7 +115,15 @@ mkForm =
     label s w = vLimit 1 (hLimit 20 $ str s <+> fill ' ') <+> w
     labelP s w = padBottom (Pad 1) $ label s w
     labelI = withAttr invisibleFormFieldAttr
-    radioG = [(AND, SearchRegion ConjAndField, "And"), (OR, SearchRegion ConjOrField, "Or")]
+    radioG1 =
+      [ (AND, SearchRegion ConjAndField, "And"),
+        (OR, SearchRegion ConjOrField, "Or")
+      ]
+    radioG2 =
+      [ (ActivateAll, SearchRegion ActAllField, "All"),
+        (ActivateTrue, SearchRegion ActTrueField, "True"),
+        (ActivateFalse, SearchRegion ActFalseField, "False")
+      ]
 
 -- result header
 listDrawResultHeader :: Bool -> [String] -> Widget SourceName
@@ -246,6 +257,9 @@ defaultSearch =
       _selectInputCol = True,
       _selectCmdCol = True,
       _selectOutputCol = True,
+      _selectServerCol = False,
+      _selectUserCol = False,
+      _selectActivate = ActivateAll,
       _conjunction = OR,
       _caseSensitive = False,
       _invisibleFocus = False

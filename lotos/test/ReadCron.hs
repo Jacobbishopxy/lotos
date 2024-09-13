@@ -11,9 +11,9 @@ import System.Environment (getArgs)
 
 main :: IO ()
 main = do
-  args <- getArgs
+  (csvPath : _) <- getArgs
 
-  crons :: V.Vector CronSchema <- getAllCron $ head args
+  crons :: V.Vector CronSchema <- getAllCron csvPath
 
   mapM_
     (\(idx, r) -> putStrLn $ "idx: " <> show (idx :: Int) <> ", row: " <> show r)
