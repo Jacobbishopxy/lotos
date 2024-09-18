@@ -18,7 +18,7 @@ module Lotos.Airflow.Cron
   )
 where
 
-import Data.Char (toUpper)
+import Data.Char (toLower, toUpper)
 import Data.Either (fromRight)
 import Data.List (isInfixOf, isSuffixOf)
 import Data.Maybe (fromMaybe)
@@ -61,7 +61,8 @@ data SearchParam = SearchParam
   { searchFields :: [String],
     searchConj :: Conj,
     searchStr :: String,
-    searchAct :: Activate
+    searchAct :: Activate,
+    searchCS :: Bool
   }
   deriving (Show)
 
@@ -126,12 +127,13 @@ filterActivate cs a =
 -- search `[CronSchema]` contents
 searchCron :: SearchParam -> CronSchemas -> CronSchemas
 searchCron sp = Vec.filter $
-  \cs -> containsSubstring conj lookupStr (getCronStrings cs fields) && filterActivate cs act
+  \cs -> containsSubstring conj sen lookupStr (getCronStrings cs fields) && filterActivate cs act
   where
     fields = searchFields sp
     conj = searchConj sp
     lookupStr = searchStr sp
     act = searchAct sp
+    sen = searchCS sp
 
 -- Get all strings by a field list
 getCronStrings :: CronSchema -> [String] -> [String]
@@ -175,9 +177,14 @@ processRow fp cs = upfPath fp <$> Vec.indexed cs
   where
     upfPath p (i, r) = r {fPath = p, idx = i + 1}
 
+isSubstring :: String -> String -> Bool -> Bool
+isSubstring needle haystack caseSensitive
+  | caseSensitive = needle `isInfixOf` haystack
+  | otherwise = map toLower needle `isInfixOf` map toLower haystack
+
 -- Check a list of string contain a substring
-containsSubstring :: Conj -> String -> [String] -> Bool
-containsSubstring conj lookupStr = f (lookupStr `isInfixOf`)
+containsSubstring :: Conj -> Bool -> String -> [String] -> Bool
+containsSubstring conj cs originStr = f $ \subStr -> isSubstring originStr subStr cs
   where
     f = case conj of
       AND -> all

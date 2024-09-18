@@ -5,13 +5,20 @@
 
 module Main where
 
+import Data.Char (toLower)
 import Data.List (isInfixOf)
 import Data.Vector qualified as V
 import Lotos.Airflow.Cron
 import System.Environment (getArgs)
 
-containsSubstring :: Conj -> String -> [String] -> Bool
-containsSubstring conj lookupStr = f (lookupStr `isInfixOf`)
+isSubstring :: String -> String -> Bool -> Bool
+isSubstring needle haystack caseSensitive
+  | caseSensitive = needle `isInfixOf` haystack
+  | otherwise = map toLower needle `isInfixOf` map toLower haystack
+
+-- Check a list of string contain a substring
+containsSubstring :: Conj -> Bool -> String -> [String] -> Bool
+containsSubstring conj cs lookupStr = f $ \s -> isSubstring lookupStr s cs
   where
     f = case conj of
       AND -> all
@@ -19,11 +26,11 @@ containsSubstring conj lookupStr = f (lookupStr `isInfixOf`)
 
 main :: IO ()
 main = do
-  -- let c = containsSubstring OR "__d" ["abc__d", "bc__dfi"]
-  -- let c = containsSubstring OR "__d" []
+  -- let c = isSubstring "__D" "abc__d" False
+  -- let c = containsSubstring OR False "__d" ["abc__d", "bc__dfi"]
   -- putStrLn $ "containsSubstring: " <> show c
 
-  let sc = SearchParam ["user"] OR "xiey" ActivateAll
+  let sc = SearchParam ["user"] OR "XIEY" ActivateAll False
 
   (csvPath : _) <- getArgs
 

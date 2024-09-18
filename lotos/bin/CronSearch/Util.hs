@@ -145,7 +145,12 @@ genSearchParam s =
           "user"
         ]
       sf = [c | (c, f) <- zip cols flt, f]
-   in SearchParam sf (s ^. conjunction) (T.unpack $ s ^. searchString) (s ^. selectActivate)
+   in SearchParam
+        sf
+        (s ^. conjunction)
+        (T.unpack $ s ^. searchString)
+        (s ^. selectActivate)
+        (s ^. caseSensitive)
 
 appCursor :: AppState -> [CursorLocation SourceName] -> Maybe (CursorLocation SourceName)
 appCursor = F.focusRingCursor (^. focusRing)
