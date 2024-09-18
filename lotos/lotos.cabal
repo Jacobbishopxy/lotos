@@ -21,6 +21,7 @@ library
     Lotos.Airflow.Conf
     Lotos.Airflow.Cron
     Lotos.Csv
+    Lotos.Logger
     Lotos.Util
 
   other-modules:
@@ -38,6 +39,7 @@ library
     , directory
     , filepath
     , text
+    , time
     , unordered-containers
     , vector
     , yaml

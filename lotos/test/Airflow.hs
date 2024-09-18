@@ -23,7 +23,7 @@ main = do
   -- let c = containsSubstring OR "__d" []
   -- putStrLn $ "containsSubstring: " <> show c
 
-  let sc = SearchParam [] OR "xiey" ActivateAll
+  let sc = SearchParam ["user"] OR "xiey" ActivateAll
 
   (csvPath : _) <- getArgs
 
