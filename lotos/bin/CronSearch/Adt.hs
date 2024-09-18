@@ -62,6 +62,7 @@ data Search = Search
     -- hidden widget, used when switched out from SearchRegion
     _invisibleFocus :: Bool
   }
+  deriving (Show)
 
 makeLenses ''Search
 
