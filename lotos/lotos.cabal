@@ -10,11 +10,17 @@ category:        Data
 build-type:      Simple
 extra-doc-files: CHANGELOG.md
 
-common warnings
-  ghc-options: -Wall
+common shared-properties
+  default-language: GHC2024
+  build-depends:    base >=4 && <5
+  ghc-options:      -Wall
+
+----------------------------------------------------------------------------------------------------
+-- Lib
+----------------------------------------------------------------------------------------------------
 
 library
-  import:             warnings
+  import:             shared-properties
   default-extensions: CPP
   exposed-modules:
     Lotos
@@ -38,47 +44,49 @@ library
     , containers
     , directory
     , filepath
+    , mtl
     , text
     , time
     , unordered-containers
     , vector
     , yaml
+    , zmqx
 
   hs-source-dirs:     src
-  default-language:   Haskell2010
 
+----------------------------------------------------------------------------------------------------
+-- Test
 ----------------------------------------------------------------------------------------------------
 
 test-suite test-read-cron
-  import:           warnings
-  type:             exitcode-stdio-1.0
-  default-language: GHC2021
-  hs-source-dirs:   test
-  main-is:          ReadCron.hs
+  import:         shared-properties
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        ReadCron.hs
   build-depends:
     , base
     , lotos
     , vector
 
 test-suite test-airflow
-  import:           warnings
-  type:             exitcode-stdio-1.0
-  default-language: GHC2021
-  hs-source-dirs:   test
-  main-is:          Airflow.hs
+  import:         shared-properties
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        Airflow.hs
   build-depends:
     , base
     , lotos
     , vector
 
 ----------------------------------------------------------------------------------------------------
+-- Bin
+----------------------------------------------------------------------------------------------------
 
 executable cron-search
-  import:           warnings
-  default-language: GHC2021
-  hs-source-dirs:   bin
-  main-is:          CronSearch.hs
-  ghc-options:      -threaded -Wall -Wcompat -O2
+  import:         shared-properties
+  hs-source-dirs: bin
+  main-is:        CronSearch.hs
+  ghc-options:    -threaded -Wall -Wcompat -O2
   other-modules:
     CronSearch.Adt
     CronSearch.Util
