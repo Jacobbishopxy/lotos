@@ -15,6 +15,10 @@ common shared-properties
   build-depends:    base >=4 && <5
   ghc-options:      -Wall
 
+common test
+  hs-source-dirs: test
+  build-depends:  lotos
+
 ----------------------------------------------------------------------------------------------------
 -- Lib
 ----------------------------------------------------------------------------------------------------
@@ -59,23 +63,24 @@ library
 ----------------------------------------------------------------------------------------------------
 
 test-suite test-read-cron
-  import:         shared-properties
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        ReadCron.hs
-  build-depends:
-    , base
-    , lotos
-    , vector
+  import:        shared-properties, test
+  type:          exitcode-stdio-1.0
+  main-is:       ReadCron.hs
+  build-depends: vector
 
 test-suite test-airflow
-  import:         shared-properties
+  import:        shared-properties, test
+  type:          exitcode-stdio-1.0
+  main-is:       Airflow.hs
+  build-depends: vector
+
+test-suite test-logger
+  import:         shared-properties, test
   type:           exitcode-stdio-1.0
   hs-source-dirs: test
-  main-is:        Airflow.hs
+  main-is:        Logger.hs
   build-depends:
-    , base
-    , lotos
+    , mtl
     , vector
 
 ----------------------------------------------------------------------------------------------------
