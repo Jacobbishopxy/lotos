@@ -11,9 +11,10 @@ build-type:      Simple
 extra-doc-files: CHANGELOG.md
 
 common shared-properties
-  default-language: GHC2024
-  build-depends:    base >=4 && <5
-  ghc-options:      -Wall
+  default-language:   GHC2024
+  build-depends:      base >=4 && <5
+  ghc-options:        -Wall
+  default-extensions: OverloadedStrings
 
 common test
   hs-source-dirs: test
@@ -33,11 +34,15 @@ library
     Lotos.Csv
     Lotos.Logger
     Lotos.Util
+    Lotos.Zmq.Adt
+    Lotos.Zmq.Error
 
   other-modules:
     Lotos.Csv.Adt
     Lotos.Csv.Parser
     Lotos.Csv.Util
+    Lotos.Zmq.RRLayer
+    Lotos.Zmq.Util
 
   -- other-extensions:
   build-depends:
