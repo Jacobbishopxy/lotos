@@ -1,20 +1,92 @@
+{-# LANGUAGE BlockArguments #-}
+
 -- file: Adt.hs
 -- author: Jacob Xie
 -- date: 2025/03/12 17:29:53 Wednesday
 -- brief:
 
 module Lotos.Zmq.Adt
-  ( module Lotos.Zmq.Adt,
+  ( -- * alias
+    RoutingID,
+
+    -- * classes
+    ToZmq (..),
+    FromZmq (..),
+
+    -- * task
+    Task (..),
+    defaultTask,
+
+    -- * ack
+    Ack,
+    newAck,
+    ackFromText,
+    ackFromBs,
+    ackFromUTC,
+
+    -- * router frontend
+    RouterFrontendOut (..),
+    RouterFrontendIn (..),
+
+    -- * task status
+    TaskStatus (..),
+
+    -- * worker msg type
+    WorkerMsgType (..),
+
+    -- * router backend
+    RouterBackendOut (..),
+    RouterBackendIn (..),
+
+    -- * que
+    TSQueue,
+    newTSQueue,
+    enqueueTS,
+    dequeueTS,
+    readQueue,
+    isEmptyTS,
+
+    -- * worker tasks map
+    TSWorkerTasksMap,
+    newTSWorkerTasksMap,
+    lookupTSWorkerTasksMap,
+    insertTSWorkerTasksMap,
+    deleteTSWorkerTasksMap,
+    updateTSWorkerTasksMap,
+    appendTSWorkerTasksMap,
+    toListTSWorkerTasksMap,
+
+    -- * worker status map
+    TSWorkerStatusMap,
+    newTSWorkerStatusMap,
+    insertTSWorkerStatus,
+    lookupTSWorkerStatus,
+    deleteTSWorkerStatus,
+    updateTSWorkerStatus,
+    modifyTSWorkerStatus,
+    toListTSWorkerStatus,
+    isEmptyTSWorkerStatus,
   )
 where
 
+import Control.Concurrent (MVar, modifyMVar, modifyMVar_, newMVar, readMVar, withMVar)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as Char8
+import Data.Map.Strict qualified as Map
+import Data.Sequence qualified as Seq
 import Data.Text qualified as Text
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime, parseTimeM)
 import Lotos.Zmq.Error
 import Lotos.Zmq.Util
 
+----------------------------------------------------------------------------------------------------
+-- Type alias
+----------------------------------------------------------------------------------------------------
+
+type RoutingID = Text.Text
+
+----------------------------------------------------------------------------------------------------
+-- Zmq Messages
 ----------------------------------------------------------------------------------------------------
 
 class ToZmq a where
@@ -70,14 +142,26 @@ instance ToZmq Ack where
     [Char8.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" time)]
 
 instance FromZmq Ack where
-  fromZmq [timeBs] =
-    case parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" (Char8.unpack timeBs) of
-      Just time -> Right (Ack time)
-      Nothing -> Left $ ZmqParsing "Failed to parse UTCTime"
+  fromZmq [timeBs] = ackFromBs timeBs
   fromZmq _ = Left $ ZmqParsing "Expected exactly one ByteString"
 
-defaultAck :: IO Ack
-defaultAck = Ack <$> getCurrentTime
+newAck :: IO Ack
+newAck = Ack <$> getCurrentTime
+
+ackFromText :: Text.Text -> Either ZmqError Ack
+ackFromText t =
+  case parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" (Text.unpack t) of
+    Just time -> Right (Ack time)
+    Nothing -> Left $ ZmqParsing "Failed to parse UTCTime"
+
+ackFromBs :: ByteString.ByteString -> Either ZmqError Ack
+ackFromBs t =
+  case parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" (Char8.unpack t) of
+    Just time -> Right (Ack time)
+    Nothing -> Left $ ZmqParsing "Failed to parse UTCTime"
+
+ackFromUTC :: UTCTime -> Ack
+ackFromUTC = Ack
 
 ----------------------------------------------------------------------------------------------------
 {-
@@ -86,17 +170,17 @@ defaultAck = Ack <$> getCurrentTime
   - send: ClientAck
 -}
 
-data RouterFrontendIn a
-  = ClientRequest
-      Text.Text -- clientID
-      Text.Text -- clientReqID
-      (Task a) -- clientTask
-
 data RouterFrontendOut
   = ClientAck
-      Text.Text -- clientID
+      RoutingID -- clientID
       Text.Text -- clientReqID
       Ack -- ack
+
+data RouterFrontendIn a
+  = ClientRequest
+      RoutingID -- clientID
+      Text.Text -- clientReqID
+      (Task a) -- clientTask
 
 instance ToZmq RouterFrontendOut where
   toZmq (ClientAck clientID clientReqID ack) =
@@ -139,40 +223,176 @@ instance FromZmq TaskStatus where
   fromZmq _ = Left $ ZmqParsing "Invalid TaskStatus format"
 
 ----------------------------------------------------------------------------------------------------
+
+data WorkerMsgType
+  = WorkerAckT
+  | WorkerStatusT
+  | WorkerReplyT
+
+instance ToZmq WorkerMsgType where
+  toZmq WorkerAckT = [textToBS "WorkerAckT"]
+  toZmq WorkerStatusT = [textToBS "WorkerStatusT"]
+  toZmq WorkerReplyT = [textToBS "WorkerReplyT"]
+
+instance FromZmq WorkerMsgType where
+  fromZmq ["WorkerAckT"] = Right WorkerAckT
+  fromZmq ["WorkerStatusT"] = Right WorkerStatusT
+  fromZmq ["WorkerReplyT"] = Right WorkerReplyT
+  fromZmq _ = Left $ ZmqParsing "Invalid WorkerMsgType format"
+
+----------------------------------------------------------------------------------------------------
 {-
   Router Backend
   - recv: WorkerReply: ack/status
   - send: WorkerTask
 -}
 
-data RouterBackendIn
-  = WorkerAck
-      Text.Text -- workerID
-      Ack -- ack
-  | WorkerTaskStatus
-      Text.Text -- workerID
-      Ack -- ack
-      TaskStatus -- task status
-
 data RouterBackendOut a
   = WorkerTask
-      Text.Text -- workerID
+      RoutingID -- workerID
       (Task a) -- task
+
+data RouterBackendIn s
+  = WorkerAck
+      RoutingID -- workerID
+      WorkerMsgType -- msg type
+      Ack -- ack
+  | WorkerStatus
+      RoutingID -- workerID
+      WorkerMsgType -- msg type
+      Ack -- ack
+      s -- worker status
+  | WorkerTaskStatus
+      RoutingID -- workerID
+      WorkerMsgType -- msg type
+      Ack -- ack
+      TaskStatus -- task status
 
 instance (ToZmq a) => ToZmq (RouterBackendOut a) where
   toZmq (WorkerTask workerID task) =
     textToBS workerID : toZmq task
 
-instance FromZmq RouterBackendIn where
+instance (FromZmq s) => FromZmq (RouterBackendIn s) where
   fromZmq bs =
     case bs of
-      [workerIDBs, ackBs] -> do
+      [workerIDBs, _, ackBs] -> do
         workerID <- textFromBS workerIDBs
         ack <- fromZmq [ackBs]
-        return $ WorkerAck workerID ack
-      [workerIDBs, ackBs, statusBs] -> do
+        return $ WorkerAck workerID WorkerAckT ack
+      [workerIDBs, mtBs, ackBs, statusBs] -> do
         workerID <- textFromBS workerIDBs
-        ack <- fromZmq [ackBs]
-        status <- fromZmq [statusBs]
-        return $ WorkerTaskStatus workerID ack status
+        -- based on message type
+        mt <- fromZmq [mtBs]
+        case mt of
+          WorkerStatusT -> do
+            ack <- fromZmq [ackBs]
+            status <- fromZmq [statusBs]
+            return $ WorkerStatus workerID WorkerStatusT ack status
+          WorkerReplyT -> do
+            ack <- fromZmq [ackBs]
+            status <- fromZmq [statusBs]
+            return $ WorkerTaskStatus workerID WorkerReplyT ack status
+          _ -> Left $ ZmqParsing "Invalid format for RouterBackendIn message type"
       _ -> Left $ ZmqParsing "Invalid format for RouterBackendIn"
+
+----------------------------------------------------------------------------------------------------
+-- Queue
+----------------------------------------------------------------------------------------------------
+
+-- A thread-safe queue implemented using an MVar containing a Sequence.
+newtype TSQueue a = TSQueue (MVar (Seq.Seq a))
+
+-- Creates a new empty thread-safe queue.
+newTSQueue :: IO (TSQueue a)
+newTSQueue = TSQueue <$> newMVar Seq.empty
+
+-- Enqueues an element into the thread-safe queue.
+enqueueTS :: a -> TSQueue a -> IO ()
+enqueueTS x (TSQueue q) = modifyMVar_ q (\s -> return $ s Seq.|> x)
+
+-- Dequeues an element from the thread-safe queue. Returns Nothing if the queue is empty.
+dequeueTS :: TSQueue a -> IO (Maybe a)
+dequeueTS (TSQueue q) = modifyMVar q $ \s -> case Seq.viewl s of
+  Seq.EmptyL -> return (s, Nothing)
+  x Seq.:< xs -> return (xs, Just x)
+
+-- Reads the entire content of the queue without modifying it.
+readQueue :: TSQueue a -> IO (Seq.Seq a)
+readQueue (TSQueue q) = readMVar q
+
+-- Checks if the thread-safe queue is empty.
+isEmptyTS :: TSQueue a -> IO Bool
+isEmptyTS (TSQueue q) = Seq.null <$> readMVar q
+
+----------------------------------------------------------------------------------------------------
+-- WorkerTasksMap
+----------------------------------------------------------------------------------------------------
+-- A thread-safe map that associates RoutingIDs with lists of tasks.
+newtype TSWorkerTasksMap a = TSWorkerTasksMap (MVar (Map.Map RoutingID [a]))
+
+-- Creates a new empty thread-safe worker tasks map.
+newTSWorkerTasksMap :: IO (TSWorkerTasksMap a)
+newTSWorkerTasksMap = TSWorkerTasksMap <$> newMVar Map.empty
+
+-- Looks up the tasks associated with a given RoutingID in the map.
+lookupTSWorkerTasksMap :: RoutingID -> TSWorkerTasksMap a -> IO (Maybe [a])
+lookupTSWorkerTasksMap k (TSWorkerTasksMap m) = withMVar m $ \m' -> return $ Map.lookup k m'
+
+-- Inserts a list of tasks associated with a RoutingID into the map.
+insertTSWorkerTasksMap :: RoutingID -> [a] -> TSWorkerTasksMap a -> IO ()
+insertTSWorkerTasksMap k v (TSWorkerTasksMap m) = modifyMVar_ m $ \m' -> return $ Map.insert k v m'
+
+-- Deletes the entry associated with a RoutingID from the map.
+deleteTSWorkerTasksMap :: RoutingID -> TSWorkerTasksMap a -> IO ()
+deleteTSWorkerTasksMap k (TSWorkerTasksMap m) = modifyMVar_ m $ \m' -> return $ Map.delete k m'
+
+-- Updates the tasks associated with a RoutingID using the provided function.
+updateTSWorkerTasksMap :: RoutingID -> (Maybe [a] -> Maybe [a]) -> TSWorkerTasksMap a -> IO ()
+updateTSWorkerTasksMap k f (TSWorkerTasksMap m) = modifyMVar_ m $ \m' -> return $ Map.alter f k m'
+
+-- Appends a task to the list of tasks associated with a RoutingID.
+appendTSWorkerTasksMap :: RoutingID -> a -> TSWorkerTasksMap a -> IO ()
+appendTSWorkerTasksMap k v m = updateTSWorkerTasksMap k (Just . maybe [v] (v :)) m
+
+-- Converts the thread-safe worker tasks map to a list of key-value pairs.
+toListTSWorkerTasksMap :: TSWorkerTasksMap a -> IO [(RoutingID, [a])]
+toListTSWorkerTasksMap (TSWorkerTasksMap m) = withMVar m $ \m' -> return $ Map.toList m'
+
+----------------------------------------------------------------------------------------------------
+-- WorkerStatusMap
+----------------------------------------------------------------------------------------------------
+
+-- A thread-safe map that associates RoutingIDs with worker statuses.
+newtype TSWorkerStatusMap a = TSWorkerStatusMap (MVar (Map.Map RoutingID a))
+
+-- Creates a new empty thread-safe worker status map.
+newTSWorkerStatusMap :: IO (TSWorkerStatusMap a)
+newTSWorkerStatusMap = TSWorkerStatusMap <$> newMVar Map.empty
+
+-- Inserts a worker status associated with a RoutingID into the map.
+insertTSWorkerStatus :: RoutingID -> a -> TSWorkerStatusMap a -> IO ()
+insertTSWorkerStatus k v (TSWorkerStatusMap m) = modifyMVar_ m $ \m' -> return $ Map.insert k v m'
+
+-- Looks up the status associated with a given RoutingID in the map.
+lookupTSWorkerStatus :: RoutingID -> TSWorkerStatusMap a -> IO (Maybe a)
+lookupTSWorkerStatus k (TSWorkerStatusMap m) = withMVar m $ \m' -> return $ Map.lookup k m'
+
+-- Deletes the entry associated with a RoutingID from the map.
+deleteTSWorkerStatus :: RoutingID -> TSWorkerStatusMap a -> IO ()
+deleteTSWorkerStatus k (TSWorkerStatusMap m) = modifyMVar_ m $ \m' -> return $ Map.delete k m'
+
+-- Updates the status associated with a RoutingID using the provided function.
+updateTSWorkerStatus :: RoutingID -> (Maybe a -> Maybe a) -> TSWorkerStatusMap a -> IO ()
+updateTSWorkerStatus k f (TSWorkerStatusMap m) = modifyMVar_ m $ \m' -> return $ Map.alter f k m'
+
+-- Modifies the status associated with a RoutingID using the provided function.
+modifyTSWorkerStatus :: RoutingID -> (a -> a) -> TSWorkerStatusMap a -> IO ()
+modifyTSWorkerStatus k f m = updateTSWorkerStatus k (fmap f) m
+
+-- Converts the thread-safe worker status map to a list of key-value pairs.
+toListTSWorkerStatus :: TSWorkerStatusMap a -> IO [(RoutingID, a)]
+toListTSWorkerStatus (TSWorkerStatusMap m) = withMVar m $ \m' -> return $ Map.toList m'
+
+-- Checks if the thread-safe worker status map is empty.
+isEmptyTSWorkerStatus :: TSWorkerStatusMap a -> IO Bool
+isEmptyTSWorkerStatus (TSWorkerStatusMap m) = withMVar m $ \m' -> return $ Map.null m'
