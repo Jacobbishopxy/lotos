@@ -57,6 +57,7 @@ library
     , text
     , time
     , unordered-containers
+    , uuid
     , vector
     , yaml
     , zmqx

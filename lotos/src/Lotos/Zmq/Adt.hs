@@ -16,6 +16,8 @@ module Lotos.Zmq.Adt
     -- * task
     Task (..),
     defaultTask,
+    fillTaskID,
+    fillTaskID',
 
     -- * ack
     Ack,
@@ -76,6 +78,8 @@ import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq
 import Data.Text qualified as Text
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime, parseTimeM)
+import Data.UUID qualified as UUID
+import Data.UUID.V4 (nextRandom)
 import Lotos.Zmq.Error
 import Lotos.Zmq.Util
 
@@ -109,29 +113,45 @@ instance FromZmq () where
   Req Client --(Task)-> Router Frontend
 -}
 
+-- TODO: taskId
 data Task a = Task
-  { taskContent :: Text.Text,
+  { taskID :: Maybe UUID.UUID,
+    taskContent :: Text.Text,
     taskRetry :: Int,
     taskRetryInterval :: Int,
     taskTimeout :: Int,
     taskProp :: a
   }
+  deriving (Show)
 
 instance (ToZmq a) => ToZmq (Task a) where
-  toZmq (Task ctt rty ri to prop) = textToBS ctt : intToBS rty : intToBS ri : intToBS to : toZmq prop
+  toZmq (Task uuid ctt rty ri to prop) =
+    uuidOptToBS uuid : textToBS ctt : intToBS rty : intToBS ri : intToBS to : toZmq prop
 
 instance (FromZmq a) => FromZmq (Task a) where
-  fromZmq (cttBs : rtyBs : riBs : toBs : propBs) = do
+  fromZmq (uuidBs : cttBs : rtyBs : riBs : toBs : propBs) = do
+    uuid <- uuidOptFromBS uuidBs
     ctt <- textFromBS cttBs
     rty <- intFromBS rtyBs
     ri <- intFromBS riBs
     to <- intFromBS toBs
     prop <- fromZmq propBs
-    return $ Task ctt rty ri to prop
+    return $ Task uuid ctt rty ri to prop
   fromZmq _ = Left $ ZmqParsing "Expected 3 parts for Task"
 
 defaultTask :: Task ()
-defaultTask = Task "Ping" 0 0 0 ()
+defaultTask = Task Nothing "Ping" 0 0 0 ()
+
+fillTaskID :: Task a -> IO (Task a)
+fillTaskID task@Task {taskID = Nothing} = do
+  uuid <- nextRandom
+  return task {taskID = Just uuid}
+fillTaskID t = return t
+
+fillTaskID' :: Task a -> IO (Task a)
+fillTaskID' task = do
+  uuid <- nextRandom
+  return task {taskID = Just uuid}
 
 ----------------------------------------------------------------------------------------------------
 
@@ -225,17 +245,14 @@ instance FromZmq TaskStatus where
 ----------------------------------------------------------------------------------------------------
 
 data WorkerMsgType
-  = WorkerAckT
-  | WorkerStatusT
+  = WorkerStatusT
   | WorkerReplyT
 
 instance ToZmq WorkerMsgType where
-  toZmq WorkerAckT = [textToBS "WorkerAckT"]
   toZmq WorkerStatusT = [textToBS "WorkerStatusT"]
   toZmq WorkerReplyT = [textToBS "WorkerReplyT"]
 
 instance FromZmq WorkerMsgType where
-  fromZmq ["WorkerAckT"] = Right WorkerAckT
   fromZmq ["WorkerStatusT"] = Right WorkerStatusT
   fromZmq ["WorkerReplyT"] = Right WorkerReplyT
   fromZmq _ = Left $ ZmqParsing "Invalid WorkerMsgType format"
@@ -253,11 +270,7 @@ data RouterBackendOut a
       (Task a) -- task
 
 data RouterBackendIn s
-  = WorkerAck
-      RoutingID -- workerID
-      WorkerMsgType -- msg type
-      Ack -- ack
-  | WorkerStatus
+  = WorkerStatus
       RoutingID -- workerID
       WorkerMsgType -- msg type
       Ack -- ack
@@ -266,34 +279,37 @@ data RouterBackendIn s
       RoutingID -- workerID
       WorkerMsgType -- msg type
       Ack -- ack
+      UUID.UUID -- taskID
       TaskStatus -- task status
 
 instance (ToZmq a) => ToZmq (RouterBackendOut a) where
   toZmq (WorkerTask workerID task) =
     textToBS workerID : toZmq task
 
+instance (FromZmq a) => FromZmq (RouterBackendOut a) where
+  fromZmq (workerIDBs : taskBs) = do
+    workerID <- textFromBS workerIDBs
+    task <- fromZmq taskBs
+    return $ WorkerTask workerID task
+  fromZmq _ = Left $ ZmqParsing "Invalid format for RouterBackendOut"
+
 instance (FromZmq s) => FromZmq (RouterBackendIn s) where
-  fromZmq bs =
-    case bs of
-      [workerIDBs, _, ackBs] -> do
-        workerID <- textFromBS workerIDBs
-        ack <- fromZmq [ackBs]
-        return $ WorkerAck workerID WorkerAckT ack
-      [workerIDBs, mtBs, ackBs, statusBs] -> do
-        workerID <- textFromBS workerIDBs
-        -- based on message type
-        mt <- fromZmq [mtBs]
-        case mt of
-          WorkerStatusT -> do
-            ack <- fromZmq [ackBs]
-            status <- fromZmq [statusBs]
-            return $ WorkerStatus workerID WorkerStatusT ack status
-          WorkerReplyT -> do
-            ack <- fromZmq [ackBs]
-            status <- fromZmq [statusBs]
-            return $ WorkerTaskStatus workerID WorkerReplyT ack status
-          _ -> Left $ ZmqParsing "Invalid format for RouterBackendIn message type"
-      _ -> Left $ ZmqParsing "Invalid format for RouterBackendIn"
+  fromZmq (workerIDBs : mtBs : ackBs : theRest) = do
+    workerID <- textFromBS workerIDBs
+    -- based on message type
+    mt <- fromZmq [mtBs]
+    ack <- fromZmq [ackBs]
+    case mt of
+      WorkerStatusT ->
+        fromZmq theRest >>= Right . WorkerStatus workerID WorkerStatusT ack
+      WorkerReplyT ->
+        case theRest of
+          (uuidBs : wsBs) -> do
+            uuid <- uuidOptFromBS uuidBs >>= maybeToEither (ZmqParsing "Invalid format for RouterBackendIn.WorkerReplyT")
+            status <- fromZmq wsBs
+            return $ WorkerTaskStatus workerID WorkerReplyT ack uuid status
+          _ -> Left $ ZmqParsing "Invalid format for RouterBackendIn.WorkerReplyT"
+  fromZmq _ = Left $ ZmqParsing "Invalid format for RouterBackendIn"
 
 ----------------------------------------------------------------------------------------------------
 -- Queue

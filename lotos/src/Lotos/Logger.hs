@@ -16,9 +16,13 @@ module Lotos.Logger
     logInfoR,
     logWarnR,
     logErrorR,
+
+    -- * unwrap
+    logUnwrap,
   )
 where
 
+import Control.Exception (Exception, throwIO)
 import Control.Monad (when)
 import Control.Monad.Reader
 import Data.Time.Format (defaultTimeLocale, formatTime)
@@ -85,3 +89,17 @@ logDebugR msg = ask >>= \logger -> liftIO $ logDebug logger msg
 logInfoR msg = ask >>= \logger -> liftIO $ logInfo logger msg
 logWarnR msg = ask >>= \logger -> liftIO $ logWarn logger msg
 logErrorR msg = ask >>= \logger -> liftIO $ logError logger msg
+
+logUnwrap ::
+  (MonadIO m, MonadReader LotosLogger m, Exception e) =>
+  (String -> m ()) -> -- Logger function
+  (e -> String) -> -- Error formatter
+  IO (Either e a) -> -- IO action
+  m a
+logUnwrap loggerFn formatErr action = do
+  result <- liftIO action
+  case result of
+    Left err -> do
+      loggerFn $ formatErr err
+      liftIO $ throwIO err
+    Right x -> pure x
