@@ -8,6 +8,7 @@
 module Lotos.Zmq.Adt
   ( -- * alias
     RoutingID,
+    TaskID,
 
     -- * classes
     ToZmq (..),
@@ -51,12 +52,15 @@ module Lotos.Zmq.Adt
     -- * worker tasks map
     TSWorkerTasksMap,
     newTSWorkerTasksMap,
-    lookupTSWorkerTasksMap,
-    insertTSWorkerTasksMap,
-    deleteTSWorkerTasksMap,
-    updateTSWorkerTasksMap,
-    appendTSWorkerTasksMap,
-    toListTSWorkerTasksMap,
+    lookupTSWorkerTasks,
+    insertTSWorkerTasks,
+    lookupTSWorkerTasks',
+    deleteTSWorkerTasks,
+    deleteTSWorkerTasks',
+    updateTSWorkerTasks,
+    modifyTSWorkerTasks',
+    appendTSWorkerTasks,
+    toListTSWorkerTasks,
 
     -- * worker status map
     TSWorkerStatusMap,
@@ -74,6 +78,7 @@ where
 import Control.Concurrent (MVar, modifyMVar, modifyMVar_, newMVar, readMVar, withMVar)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as Char8
+import Data.List (find)
 import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq
 import Data.Text qualified as Text
@@ -88,6 +93,8 @@ import Lotos.Zmq.Util
 ----------------------------------------------------------------------------------------------------
 
 type RoutingID = Text.Text
+
+type TaskID = UUID.UUID
 
 ----------------------------------------------------------------------------------------------------
 -- Zmq Messages
@@ -113,13 +120,12 @@ instance FromZmq () where
   Req Client --(Task)-> Router Frontend
 -}
 
--- TODO: taskId
 data Task a = Task
-  { taskID :: Maybe UUID.UUID,
+  { taskID :: Maybe TaskID,
     taskContent :: Text.Text,
     taskRetry :: Int,
-    taskRetryInterval :: Int,
-    taskTimeout :: Int,
+    taskRetryInterval :: Int, -- TODO
+    taskTimeout :: Int, -- TODO
     taskProp :: a
   }
   deriving (Show)
@@ -156,6 +162,7 @@ fillTaskID' task = do
 ----------------------------------------------------------------------------------------------------
 
 newtype Ack = Ack UTCTime
+  deriving (Show)
 
 instance ToZmq Ack where
   toZmq (Ack time) =
@@ -186,8 +193,8 @@ ackFromUTC = Ack
 ----------------------------------------------------------------------------------------------------
 {-
   Router Frontend
-  - recv: ClientRequest
   - send: ClientAck
+  - recv: ClientRequest
 -}
 
 data RouterFrontendOut
@@ -223,7 +230,7 @@ data TaskStatus
   | TaskRetrying
   | TaskFailed
   | TaskSucceed
-  deriving (Show)
+  deriving (Show, Eq)
 
 instance ToZmq TaskStatus where
   toZmq TaskInit = [textToBS "TaskInit"]
@@ -246,22 +253,23 @@ instance FromZmq TaskStatus where
 
 data WorkerMsgType
   = WorkerStatusT
-  | WorkerReplyT
+  | WorkerTaskStatusT
+  deriving (Show, Eq)
 
 instance ToZmq WorkerMsgType where
   toZmq WorkerStatusT = [textToBS "WorkerStatusT"]
-  toZmq WorkerReplyT = [textToBS "WorkerReplyT"]
+  toZmq WorkerTaskStatusT = [textToBS "WorkerTaskStatusT"]
 
 instance FromZmq WorkerMsgType where
   fromZmq ["WorkerStatusT"] = Right WorkerStatusT
-  fromZmq ["WorkerReplyT"] = Right WorkerReplyT
+  fromZmq ["WorkerTaskStatusT"] = Right WorkerTaskStatusT
   fromZmq _ = Left $ ZmqParsing "Invalid WorkerMsgType format"
 
 ----------------------------------------------------------------------------------------------------
 {-
   Router Backend
-  - recv: WorkerReply: ack/status
   - send: WorkerTask
+  - recv: WorkerReply: worker status, task status
 -}
 
 data RouterBackendOut a
@@ -296,18 +304,18 @@ instance (FromZmq a) => FromZmq (RouterBackendOut a) where
 instance (FromZmq s) => FromZmq (RouterBackendIn s) where
   fromZmq (workerIDBs : mtBs : ackBs : theRest) = do
     workerID <- textFromBS workerIDBs
-    -- based on message type
     mt <- fromZmq [mtBs]
     ack <- fromZmq [ackBs]
+    -- based on message type
     case mt of
       WorkerStatusT ->
         fromZmq theRest >>= Right . WorkerStatus workerID WorkerStatusT ack
-      WorkerReplyT ->
+      WorkerTaskStatusT ->
         case theRest of
           (uuidBs : wsBs) -> do
             uuid <- uuidOptFromBS uuidBs >>= maybeToEither (ZmqParsing "Invalid format for RouterBackendIn.WorkerReplyT")
             status <- fromZmq wsBs
-            return $ WorkerTaskStatus workerID WorkerReplyT ack uuid status
+            return $ WorkerTaskStatus workerID WorkerTaskStatusT ack uuid status
           _ -> Left $ ZmqParsing "Invalid format for RouterBackendIn.WorkerReplyT"
   fromZmq _ = Left $ ZmqParsing "Invalid format for RouterBackendIn"
 
@@ -324,7 +332,7 @@ newTSQueue = TSQueue <$> newMVar Seq.empty
 
 -- Enqueues an element into the thread-safe queue.
 enqueueTS :: a -> TSQueue a -> IO ()
-enqueueTS x (TSQueue q) = modifyMVar_ q (\s -> return $ s Seq.|> x)
+enqueueTS x (TSQueue q) = modifyMVar_ q $ \s -> return $ s Seq.|> x
 
 -- Dequeues an element from the thread-safe queue. Returns Nothing if the queue is empty.
 dequeueTS :: TSQueue a -> IO (Maybe a)
@@ -351,28 +359,56 @@ newTSWorkerTasksMap :: IO (TSWorkerTasksMap a)
 newTSWorkerTasksMap = TSWorkerTasksMap <$> newMVar Map.empty
 
 -- Looks up the tasks associated with a given RoutingID in the map.
-lookupTSWorkerTasksMap :: RoutingID -> TSWorkerTasksMap a -> IO (Maybe [a])
-lookupTSWorkerTasksMap k (TSWorkerTasksMap m) = withMVar m $ \m' -> return $ Map.lookup k m'
+lookupTSWorkerTasks :: RoutingID -> TSWorkerTasksMap a -> IO (Maybe [a])
+lookupTSWorkerTasks k (TSWorkerTasksMap m) = withMVar m $ return . Map.lookup k
+
+lookupTSWorkerTasks' :: RoutingID -> (a -> Bool) -> TSWorkerTasksMap a -> IO (Maybe a)
+lookupTSWorkerTasks' k f (TSWorkerTasksMap m) = withMVar m $ \mp ->
+  case Map.lookup k mp of
+    Nothing -> return Nothing
+    Just tasks -> return $ find f tasks
 
 -- Inserts a list of tasks associated with a RoutingID into the map.
-insertTSWorkerTasksMap :: RoutingID -> [a] -> TSWorkerTasksMap a -> IO ()
-insertTSWorkerTasksMap k v (TSWorkerTasksMap m) = modifyMVar_ m $ \m' -> return $ Map.insert k v m'
+insertTSWorkerTasks :: RoutingID -> [a] -> TSWorkerTasksMap a -> IO ()
+insertTSWorkerTasks k v (TSWorkerTasksMap m) = modifyMVar_ m $ return . Map.insert k v
 
 -- Deletes the entry associated with a RoutingID from the map.
-deleteTSWorkerTasksMap :: RoutingID -> TSWorkerTasksMap a -> IO ()
-deleteTSWorkerTasksMap k (TSWorkerTasksMap m) = modifyMVar_ m $ \m' -> return $ Map.delete k m'
+deleteTSWorkerTasks :: RoutingID -> TSWorkerTasksMap a -> IO ()
+deleteTSWorkerTasks k (TSWorkerTasksMap m) = modifyMVar_ m $ return . Map.delete k
+
+deleteTSWorkerTasks' :: RoutingID -> (a -> Bool) -> TSWorkerTasksMap a -> IO (Maybe a)
+deleteTSWorkerTasks' k f (TSWorkerTasksMap m) = modifyMVar m $ \m' ->
+  case Map.lookup k m' of
+    Nothing -> return (m', Nothing)
+    Just tasks -> do
+      let (deleted, remaining) = foldr go (Nothing, []) tasks
+      return (Map.insert k remaining m', deleted)
+  where
+    go x (Nothing, acc) | f x = (Just x, acc)
+    go x (found, acc) = (found, x : acc)
 
 -- Updates the tasks associated with a RoutingID using the provided function.
-updateTSWorkerTasksMap :: RoutingID -> (Maybe [a] -> Maybe [a]) -> TSWorkerTasksMap a -> IO ()
-updateTSWorkerTasksMap k f (TSWorkerTasksMap m) = modifyMVar_ m $ \m' -> return $ Map.alter f k m'
+updateTSWorkerTasks :: RoutingID -> (Maybe [a] -> Maybe [a]) -> TSWorkerTasksMap a -> IO ()
+updateTSWorkerTasks k f (TSWorkerTasksMap m) = modifyMVar_ m $ return . Map.alter f k
+
+-- Modifies the tasks associated with a RoutingID using the provided function.
+-- iterate through the list, if true then replace the element by the given value
+modifyTSWorkerTasks' :: RoutingID -> a -> (a -> Bool) -> TSWorkerTasksMap a -> IO ()
+modifyTSWorkerTasks' k v f (TSWorkerTasksMap m) = modifyMVar_ m $ \m' ->
+  case Map.lookup k m' of
+    Nothing -> return m'
+    Just tasks -> do
+      let go [] = []
+          go (x : xs) = if f x then v : xs else x : go xs
+      return $ Map.insert k (go tasks) m'
 
 -- Appends a task to the list of tasks associated with a RoutingID.
-appendTSWorkerTasksMap :: RoutingID -> a -> TSWorkerTasksMap a -> IO ()
-appendTSWorkerTasksMap k v m = updateTSWorkerTasksMap k (Just . maybe [v] (v :)) m
+appendTSWorkerTasks :: RoutingID -> a -> TSWorkerTasksMap a -> IO ()
+appendTSWorkerTasks k v m = updateTSWorkerTasks k (Just . maybe [v] (v :)) m
 
 -- Converts the thread-safe worker tasks map to a list of key-value pairs.
-toListTSWorkerTasksMap :: TSWorkerTasksMap a -> IO [(RoutingID, [a])]
-toListTSWorkerTasksMap (TSWorkerTasksMap m) = withMVar m $ \m' -> return $ Map.toList m'
+toListTSWorkerTasks :: TSWorkerTasksMap a -> IO [(RoutingID, [a])]
+toListTSWorkerTasks (TSWorkerTasksMap m) = withMVar m $ return . Map.toList
 
 ----------------------------------------------------------------------------------------------------
 -- WorkerStatusMap
@@ -387,19 +423,19 @@ newTSWorkerStatusMap = TSWorkerStatusMap <$> newMVar Map.empty
 
 -- Inserts a worker status associated with a RoutingID into the map.
 insertTSWorkerStatus :: RoutingID -> a -> TSWorkerStatusMap a -> IO ()
-insertTSWorkerStatus k v (TSWorkerStatusMap m) = modifyMVar_ m $ \m' -> return $ Map.insert k v m'
+insertTSWorkerStatus k v (TSWorkerStatusMap m) = modifyMVar_ m $ return . Map.insert k v
 
 -- Looks up the status associated with a given RoutingID in the map.
 lookupTSWorkerStatus :: RoutingID -> TSWorkerStatusMap a -> IO (Maybe a)
-lookupTSWorkerStatus k (TSWorkerStatusMap m) = withMVar m $ \m' -> return $ Map.lookup k m'
+lookupTSWorkerStatus k (TSWorkerStatusMap m) = withMVar m $ return . Map.lookup k
 
 -- Deletes the entry associated with a RoutingID from the map.
 deleteTSWorkerStatus :: RoutingID -> TSWorkerStatusMap a -> IO ()
-deleteTSWorkerStatus k (TSWorkerStatusMap m) = modifyMVar_ m $ \m' -> return $ Map.delete k m'
+deleteTSWorkerStatus k (TSWorkerStatusMap m) = modifyMVar_ m $ return . Map.delete k
 
 -- Updates the status associated with a RoutingID using the provided function.
 updateTSWorkerStatus :: RoutingID -> (Maybe a -> Maybe a) -> TSWorkerStatusMap a -> IO ()
-updateTSWorkerStatus k f (TSWorkerStatusMap m) = modifyMVar_ m $ \m' -> return $ Map.alter f k m'
+updateTSWorkerStatus k f (TSWorkerStatusMap m) = modifyMVar_ m $ return . Map.alter f k
 
 -- Modifies the status associated with a RoutingID using the provided function.
 modifyTSWorkerStatus :: RoutingID -> (a -> a) -> TSWorkerStatusMap a -> IO ()
@@ -407,8 +443,8 @@ modifyTSWorkerStatus k f m = updateTSWorkerStatus k (fmap f) m
 
 -- Converts the thread-safe worker status map to a list of key-value pairs.
 toListTSWorkerStatus :: TSWorkerStatusMap a -> IO [(RoutingID, a)]
-toListTSWorkerStatus (TSWorkerStatusMap m) = withMVar m $ \m' -> return $ Map.toList m'
+toListTSWorkerStatus (TSWorkerStatusMap m) = withMVar m $ return . Map.toList
 
 -- Checks if the thread-safe worker status map is empty.
 isEmptyTSWorkerStatus :: TSWorkerStatusMap a -> IO Bool
-isEmptyTSWorkerStatus (TSWorkerStatusMap m) = withMVar m $ \m' -> return $ Map.null m'
+isEmptyTSWorkerStatus (TSWorkerStatusMap m) = withMVar m $ return . Map.null

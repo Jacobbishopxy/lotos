@@ -9,17 +9,22 @@ module Lotos.Zmq.Error
     zmqUnwrap,
     zmqThrow,
     maybeToEither,
+    unwrapEither,
+    unwrapOption,
   )
 where
 
 import Control.Monad.IO.Class (liftIO)
 import Data.Text qualified as Text
+import Data.UUID qualified as UUID
 import Lotos.Logger
 import Zmqx
 
 data ZmqError
-  = ZmqParsing Text.Text
-  | ZmqErr Zmqx.Error
+  = ZmqErr Zmqx.Error
+  | ZmqParsing Text.Text
+  | ZmqIDNotExist
+  | ZmqIDNotFound UUID.UUID
   deriving (Show)
 
 zmqErrWrap :: Either Zmqx.Error a -> Either ZmqError a
@@ -40,3 +45,13 @@ zmqThrow action = do
 maybeToEither :: ZmqError -> Maybe a -> Either ZmqError a
 maybeToEither _ (Just x) = Right x
 maybeToEither err Nothing = Left err
+
+unwrapEither :: Either ZmqError a -> a
+unwrapEither = \case
+  Left err -> error $ show err
+  Right a -> a
+
+unwrapOption :: Maybe a -> a
+unwrapOption = \case
+  Just a -> a
+  Nothing -> error "unwrapOption: Nothing"
