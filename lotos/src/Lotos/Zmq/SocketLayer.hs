@@ -7,7 +7,6 @@
 
 module Lotos.Zmq.SocketLayer
   ( SocketLayerConfig (..),
-    SocketLayerRefData (..),
     SocketLayer,
     runSocketLayer,
   )
@@ -20,6 +19,7 @@ import Data.Function ((&))
 import Data.Text qualified as Text
 import Lotos.Logger
 import Lotos.Zmq.Adt
+import Lotos.Zmq.Data
 import Lotos.Zmq.Error
 import Zmqx
 import Zmqx.Pair
@@ -31,14 +31,6 @@ data SocketLayerConfig = SocketLayerConfig
   { frontendAddr :: Text.Text,
     backendAddr :: Text.Text
   }
-
-data SocketLayerRefData t s
-  = SocketLayerRefData
-      (TSQueue (Task t)) -- task queue
-      (TSQueue (Task t)) -- failed task queue
-      (TSWorkerTasksMap (TaskID, Task t, TaskStatus)) -- work tasks map
-      (TSWorkerStatusMap s) -- worker status map
-      (TSQueue (Task t)) -- garbage queue
 
 data SocketLayer t s = SocketLayer
   { frontendRouter :: Zmqx.Router,
@@ -54,7 +46,7 @@ data SocketLayer t s = SocketLayer
 
 ----------------------------------------------------------------------------------------------------
 
-runSocketLayer :: forall t s. (FromZmq t, ToZmq t, FromZmq s) => SocketLayerConfig -> SocketLayerRefData t s -> LotosAppMonad ThreadId
+runSocketLayer :: forall t s. (FromZmq t, ToZmq t, FromZmq s) => SocketLayerConfig -> TaskSchedulerData t s -> LotosAppMonad ThreadId
 runSocketLayer SocketLayerConfig {..} (SocketLayerRefData tq ftq wtm wsm gbb) = do
   logInfoR "runSocketLayer start!"
 
