@@ -1,15 +1,15 @@
 {-# LANGUAGE RecordWildCards #-}
 
--- file: RRLayer.hs
+-- file: SocketLayer.hs
 -- author: Jacob Xie
 -- date: 2025/03/11 09:27:59 Tuesday
 -- brief:
 
-module Lotos.Zmq.RRLayer
-  ( RRLayerConfig (..),
-    RRLayerRefData (..),
-    RRLayer,
-    runRRLayer,
+module Lotos.Zmq.SocketLayer
+  ( SocketLayerConfig (..),
+    SocketLayerRefData (..),
+    SocketLayer,
+    runSocketLayer,
   )
 where
 
@@ -27,20 +27,20 @@ import Zmqx.Router
 
 ----------------------------------------------------------------------------------------------------
 
-data RRLayerConfig = RRLayerConfig
+data SocketLayerConfig = SocketLayerConfig
   { frontendAddr :: Text.Text,
     backendAddr :: Text.Text
   }
 
-data RRLayerRefData t s
-  = RRLayerRefData
-      (TSQueue (Task t))
-      (TSQueue (Task t))
-      (TSWorkerTasksMap (TaskID, Task t, TaskStatus))
-      (TSWorkerStatusMap s)
-      (TSQueue (Task t))
+data SocketLayerRefData t s
+  = SocketLayerRefData
+      (TSQueue (Task t)) -- task queue
+      (TSQueue (Task t)) -- failed task queue
+      (TSWorkerTasksMap (TaskID, Task t, TaskStatus)) -- work tasks map
+      (TSWorkerStatusMap s) -- worker status map
+      (TSQueue (Task t)) -- garbage queue
 
-data RRLayer t s = RRLayer
+data SocketLayer t s = SocketLayer
   { frontendRouter :: Zmqx.Router,
     backendRouter :: Zmqx.Router,
     backendPair :: Zmqx.Pair,
@@ -54,9 +54,9 @@ data RRLayer t s = RRLayer
 
 ----------------------------------------------------------------------------------------------------
 
-runRRLayer :: forall t s. (FromZmq t, ToZmq t, FromZmq s) => RRLayerConfig -> RRLayerRefData t s -> LotosAppMonad ThreadId
-runRRLayer RRLayerConfig {..} (RRLayerRefData tq ftq wtm wsm gbb) = do
-  logInfoR "runRRLayer start!"
+runSocketLayer :: forall t s. (FromZmq t, ToZmq t, FromZmq s) => SocketLayerConfig -> SocketLayerRefData t s -> LotosAppMonad ThreadId
+runSocketLayer SocketLayerConfig {..} (SocketLayerRefData tq ftq wtm wsm gbb) = do
+  logInfoR "runSocketLayer start!"
 
   -- Init Router/Pair then bind
   frontend <- zmqUnwrap $ Zmqx.Router.open $ Zmqx.name "frontend"
@@ -64,16 +64,16 @@ runRRLayer RRLayerConfig {..} (RRLayerRefData tq ftq wtm wsm gbb) = do
   backend <- zmqUnwrap $ Zmqx.Router.open $ Zmqx.name "backend"
   zmqThrow $ Zmqx.bind backend backendAddr
   pair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "pair"
-  zmqThrow $ Zmqx.bind pair "inproc://RRLayer_Pair"
+  zmqThrow $ Zmqx.bind pair "inproc://SocketLayer_Pair"
 
-  -- rrLayer cst
+  -- socketLayer cst
   let pollItems = Zmqx.the frontend & Zmqx.also backend & Zmqx.also pair
-      rrLayer = RRLayer frontend backend pair tq ftq wtm wsm gbb 0
+      socketLayer = SocketLayer frontend backend pair tq ftq wtm wsm gbb 0
 
   logger <- ask
-  liftIO $ forkIO $ runReaderT (layerLoop pollItems rrLayer) logger
+  liftIO $ forkIO $ runReaderT (layerLoop pollItems socketLayer) logger
 
-layerLoop :: (FromZmq t, ToZmq t, FromZmq s) => Zmqx.Sockets -> RRLayer t s -> LotosAppMonad ()
+layerLoop :: (FromZmq t, ToZmq t, FromZmq s) => Zmqx.Sockets -> SocketLayer t s -> LotosAppMonad ()
 layerLoop pollItems layer = do
   logger <- ask
   liftIO $
@@ -85,8 +85,8 @@ layerLoop pollItems layer = do
         runReaderT (layerLoop pollItems layer) logger
 
 -- ⭐⭐ handle message from clients
-handleFrontend :: forall t s. (FromZmq t) => RRLayer t s -> Zmqx.Ready -> LotosAppMonad ()
-handleFrontend RRLayer {..} (Zmqx.Ready ready) =
+handleFrontend :: forall t s. (FromZmq t) => SocketLayer t s -> Zmqx.Ready -> LotosAppMonad ()
+handleFrontend SocketLayer {..} (Zmqx.Ready ready) =
   -- 📩 receive message from a client
   when (ready frontendRouter) $ do
     logDebugR "handleFrontend: recv client request"
@@ -97,8 +97,8 @@ handleFrontend RRLayer {..} (Zmqx.Ready ready) =
         liftIO $ fillTaskID' task >>= \t -> liftIO $ enqueueTS t taskQueue
 
 -- ⭐⭐ handle message from load-balancer or workers
-handleBackend :: forall t s. (FromZmq t, ToZmq t, FromZmq s) => RRLayer t s -> Zmqx.Ready -> LotosAppMonad ()
-handleBackend RRLayer {..} (Zmqx.Ready ready) = do
+handleBackend :: forall t s. (FromZmq t, ToZmq t, FromZmq s) => SocketLayer t s -> Zmqx.Ready -> LotosAppMonad ()
+handleBackend SocketLayer {..} (Zmqx.Ready ready) = do
   -- 📩 receive message from load-balancer
   when (ready backendPair) $ do
     logDebugR "handleBackend: recv load-balancer request"

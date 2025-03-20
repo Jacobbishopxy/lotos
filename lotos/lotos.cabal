@@ -41,7 +41,7 @@ library
     Lotos.Csv.Adt
     Lotos.Csv.Parser
     Lotos.Csv.Util
-    Lotos.Zmq.RRLayer
+    Lotos.Zmq.SocketLayer
     Lotos.Zmq.Util
 
   -- other-extensions:
