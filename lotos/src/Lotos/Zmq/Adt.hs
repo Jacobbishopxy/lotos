@@ -41,11 +41,19 @@ module Lotos.Zmq.Adt
     RouterBackendOut (..),
     RouterBackendIn (..),
 
+    -- * backend pair
+    Notify (..),
+
     -- * que
     TSQueue,
+    peekFirstN,
+    peekFirstN',
     newTSQueue,
     enqueueTS,
+    enqueueTSs,
     dequeueTS,
+    dequeueFirstN,
+    dequeueFirstN',
     readQueue,
     isEmptyTS,
 
@@ -78,6 +86,7 @@ where
 import Control.Concurrent (MVar, modifyMVar, modifyMVar_, newMVar, readMVar, withMVar)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as Char8
+import Data.Foldable (toList)
 import Data.List (find)
 import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq
@@ -120,21 +129,21 @@ instance FromZmq () where
   Req Client --(Task)-> Router Frontend
 -}
 
-data Task a = Task
+data Task t = Task
   { taskID :: Maybe TaskID,
     taskContent :: Text.Text,
     taskRetry :: Int,
     taskRetryInterval :: Int, -- TODO
     taskTimeout :: Int, -- TODO
-    taskProp :: a
+    taskProp :: t
   }
   deriving (Show)
 
-instance (ToZmq a) => ToZmq (Task a) where
+instance (ToZmq t) => ToZmq (Task t) where
   toZmq (Task uuid ctt rty ri to prop) =
     uuidOptToBS uuid : textToBS ctt : intToBS rty : intToBS ri : intToBS to : toZmq prop
 
-instance (FromZmq a) => FromZmq (Task a) where
+instance (FromZmq t) => FromZmq (Task t) where
   fromZmq (uuidBs : cttBs : rtyBs : riBs : toBs : propBs) = do
     uuid <- uuidOptFromBS uuidBs
     ctt <- textFromBS cttBs
@@ -203,17 +212,17 @@ data RouterFrontendOut
       Text.Text -- clientReqID
       Ack -- ack
 
-data RouterFrontendIn a
+data RouterFrontendIn t
   = ClientRequest
       RoutingID -- clientID
       Text.Text -- clientReqID
-      (Task a) -- clientTask
+      (Task t) -- clientTask
 
 instance ToZmq RouterFrontendOut where
   toZmq (ClientAck clientID clientReqID ack) =
     textToBS clientID : textToBS clientReqID : "" : toZmq ack
 
-instance (FromZmq a) => FromZmq (RouterFrontendIn a) where
+instance (FromZmq t) => FromZmq (RouterFrontendIn t) where
   fromZmq (clientIDBs : clientReqIDBs : "" : taskBs) = do
     clientID <- textFromBS clientIDBs
     clientReqID <- textFromBS clientReqIDBs
@@ -272,17 +281,17 @@ instance FromZmq WorkerMsgType where
   - recv: WorkerReply: worker status, task status
 -}
 
-data RouterBackendOut a
+data RouterBackendOut t
   = WorkerTask
       RoutingID -- workerID
-      (Task a) -- task
+      (Task t) -- task
 
-data RouterBackendIn s
+data RouterBackendIn w
   = WorkerStatus
       RoutingID -- workerID
       WorkerMsgType -- msg type
       Ack -- ack
-      s -- worker status
+      w -- worker status
   | WorkerTaskStatus
       RoutingID -- workerID
       WorkerMsgType -- msg type
@@ -290,18 +299,18 @@ data RouterBackendIn s
       UUID.UUID -- taskID
       TaskStatus -- task status
 
-instance (ToZmq a) => ToZmq (RouterBackendOut a) where
+instance (ToZmq t) => ToZmq (RouterBackendOut t) where
   toZmq (WorkerTask workerID task) =
     textToBS workerID : toZmq task
 
-instance (FromZmq a) => FromZmq (RouterBackendOut a) where
+instance (FromZmq t) => FromZmq (RouterBackendOut t) where
   fromZmq (workerIDBs : taskBs) = do
     workerID <- textFromBS workerIDBs
     task <- fromZmq taskBs
     return $ WorkerTask workerID task
   fromZmq _ = Left $ ZmqParsing "Invalid format for RouterBackendOut"
 
-instance (FromZmq s) => FromZmq (RouterBackendIn s) where
+instance (FromZmq w) => FromZmq (RouterBackendIn w) where
   fromZmq (workerIDBs : mtBs : ackBs : theRest) = do
     workerID <- textFromBS workerIDBs
     mt <- fromZmq [mtBs]
@@ -320,6 +329,20 @@ instance (FromZmq s) => FromZmq (RouterBackendIn s) where
   fromZmq _ = Left $ ZmqParsing "Invalid format for RouterBackendIn"
 
 ----------------------------------------------------------------------------------------------------
+
+-- used for backend to notify load-balancer pulling tasks
+data Notify
+  = Notify
+  { taskProcessorNotify :: Ack
+  }
+
+instance ToZmq Notify where
+  toZmq (Notify ack) = toZmq ack
+
+instance FromZmq Notify where
+  fromZmq bs = Notify <$> fromZmq bs
+
+----------------------------------------------------------------------------------------------------
 -- Queue
 ----------------------------------------------------------------------------------------------------
 
@@ -330,15 +353,37 @@ newtype TSQueue a = TSQueue (MVar (Seq.Seq a))
 newTSQueue :: IO (TSQueue a)
 newTSQueue = TSQueue <$> newMVar Seq.empty
 
+-- Peek at the first N elements of the queue
+peekFirstN :: Int -> TSQueue a -> IO (Seq.Seq a)
+peekFirstN n (TSQueue m) = withMVar m $ return . Seq.take n
+
+peekFirstN' :: Int -> TSQueue a -> IO ([a])
+peekFirstN' n (TSQueue m) = withMVar m $ return . toList . Seq.take n
+
 -- Enqueues an element into the thread-safe queue.
 enqueueTS :: a -> TSQueue a -> IO ()
 enqueueTS x (TSQueue q) = modifyMVar_ q $ \s -> return $ s Seq.|> x
+
+-- Enqueues a list of elements into the thread-safe queue.
+enqueueTSs :: [a] -> TSQueue a -> IO ()
+enqueueTSs xs (TSQueue q) = modifyMVar_ q $ \s -> return $ s Seq.>< Seq.fromList xs
 
 -- Dequeues an element from the thread-safe queue. Returns Nothing if the queue is empty.
 dequeueTS :: TSQueue a -> IO (Maybe a)
 dequeueTS (TSQueue q) = modifyMVar q $ \s -> case Seq.viewl s of
   Seq.EmptyL -> return (s, Nothing)
   x Seq.:< xs -> return (xs, Just x)
+
+-- Dequeues the first N elements from the thread-safe queue.
+dequeueFirstN :: Int -> TSQueue a -> IO (Seq.Seq a)
+dequeueFirstN n (TSQueue q) = modifyMVar q $ \s ->
+  let (taken, remaining) = Seq.splitAt n s
+   in return (remaining, taken)
+
+dequeueFirstN' :: Int -> TSQueue a -> IO ([a])
+dequeueFirstN' n (TSQueue q) = modifyMVar q $ \s ->
+  let (taken, remaining) = Seq.splitAt n s
+   in return (remaining, toList taken)
 
 -- Reads the entire content of the queue without modifying it.
 readQueue :: TSQueue a -> IO (Seq.Seq a)

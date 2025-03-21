@@ -40,7 +40,7 @@ library
     Lotos.Csv.Parser
     Lotos.Csv.Util
     Lotos.Zmq.Adt
-    Lotos.Zmq.Data
+    Lotos.Zmq.Config
     Lotos.Zmq.Error
     Lotos.Zmq.SocketLayer
     Lotos.Zmq.TaskProcessor
