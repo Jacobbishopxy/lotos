@@ -3,4 +3,4 @@ packages: */*.cabal
 source-repository-package
   type: git
   location: git@github.com:Jacobbishopxy/zmqx.git
-  tag: 582f60a535db551ebfe2e03d39e544b22882fb0d
+  tag: 35338d457593b9d9200c256edf93bfe2a370cf3a

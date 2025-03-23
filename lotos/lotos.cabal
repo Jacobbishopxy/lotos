@@ -34,6 +34,7 @@ library
     Lotos.Csv
     Lotos.Logger
     Lotos.Util
+    Lotos.Zmq
 
   other-modules:
     Lotos.Csv.Adt
@@ -90,6 +91,13 @@ test-suite test-logger
   build-depends:
     , mtl
     , vector
+
+test-suite test-event-trigger
+  import:         shared-properties, test
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        EventTrigger.hs
+  build-depends:  time
 
 ----------------------------------------------------------------------------------------------------
 -- Bin

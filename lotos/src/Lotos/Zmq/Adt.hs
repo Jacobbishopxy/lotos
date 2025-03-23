@@ -80,6 +80,12 @@ module Lotos.Zmq.Adt
     modifyTSWorkerStatus,
     toListTSWorkerStatus,
     isEmptyTSWorkerStatus,
+
+    -- * event trigger
+    EventTrigger,
+    mkLoopTrigger,
+    callTrigger,
+    timeoutInterval,
   )
 where
 
@@ -91,7 +97,7 @@ import Data.List (find)
 import Data.Map.Strict qualified as Map
 import Data.Sequence qualified as Seq
 import Data.Text qualified as Text
-import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime, parseTimeM)
+import Data.Time (UTCTime, addUTCTime, defaultTimeLocale, diffUTCTime, formatTime, getCurrentTime, parseTimeM)
 import Data.UUID qualified as UUID
 import Data.UUID.V4 (nextRandom)
 import Lotos.Zmq.Error
@@ -493,3 +499,67 @@ toListTSWorkerStatus (TSWorkerStatusMap m) = withMVar m $ return . Map.toList
 -- Checks if the thread-safe worker status map is empty.
 isEmptyTSWorkerStatus :: TSWorkerStatusMap a -> IO Bool
 isEmptyTSWorkerStatus (TSWorkerStatusMap m) = withMVar m $ return . Map.null
+
+----------------------------------------------------------------------------------------------------
+-- EventTrigger
+----------------------------------------------------------------------------------------------------
+
+-- | EventTrigger is a mechanism that can trigger events based on either:
+-- 1. A counter reaching a threshold value (tResetVal)
+-- 2. A time interval elapsing (tInterval in seconds)
+-- It's useful for periodic tasks or operations that should happen after N iterations
+data EventTrigger = EventTrigger
+  { tCounter :: Int,           -- Current count, incremented on each call
+    tResetVal :: Int,          -- Threshold value for counter to trigger
+    tLastTriggerTime :: UTCTime, -- Last time the trigger fired
+    tInterval :: Int           -- Time interval in seconds
+  }
+  deriving (Show)
+
+-- | Creates a new EventTrigger with initial counter set to 0
+-- @param resetVal    The threshold value for the counter
+-- @param timeInterval The time interval in seconds
+mkLoopTrigger :: Int -> Int -> IO EventTrigger
+mkLoopTrigger resetVal timeInterval = do
+  now <- getCurrentTime
+  return $ EventTrigger 0 resetVal now timeInterval
+
+-- | Calls the trigger and determines if an event should be triggered
+-- Returns the updated trigger and a boolean indicating if triggered
+-- An event is triggered if either:
+-- - The counter reaches the reset value
+-- - The time since last trigger exceeds the interval
+callTrigger :: EventTrigger -> IO (EventTrigger, Bool)
+callTrigger trigger = do
+  now <- getCurrentTime
+
+  -- check the counter condition
+  let newCounter = tCounter trigger + 1
+      counterResult = newCounter >= tResetVal trigger
+      updatedCounter = if counterResult then 0 else newCounter
+
+  -- check the timer condition
+  let timeDiff = diffUTCTime now $ tLastTriggerTime trigger
+      timerResult = timeDiff > fromIntegral (tInterval trigger)
+      updatedLastTriggerTime = if timerResult then now else tLastTriggerTime trigger
+
+  -- determine if either condition is met
+  let combResult = counterResult || timerResult
+
+  -- reset both counter and timer if either condition is met
+  let finalCounter = if combResult then 0 else updatedCounter
+  finalLastTriggerTime <- if combResult then getCurrentTime else pure updatedLastTriggerTime
+
+  let updatedTrigger = EventTrigger finalCounter (tResetVal trigger) finalLastTriggerTime (tInterval trigger)
+  return (updatedTrigger, combResult)
+
+-- | Calculates the time remaining until the next time-based trigger in milliseconds
+-- @param trigger The EventTrigger to check
+-- @param now     The current time
+-- @return        Time in milliseconds until next trigger (0 if already elapsed)
+timeoutInterval :: EventTrigger -> UTCTime -> Int
+timeoutInterval trigger now =
+  let nextTriggerTime = addUTCTime (fromIntegral (tInterval trigger)) (tLastTriggerTime trigger)
+      timeDiff = diffUTCTime nextTriggerTime now
+      timeDiffMills = truncate $ timeDiff * 1000
+   in max 0 timeDiffMills
