@@ -19,6 +19,7 @@ import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Reader (ask, runReaderT)
 import Data.Map.Strict qualified as Map
+import Data.Time (getCurrentTime)
 import Lotos.Logger
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
@@ -63,6 +64,7 @@ data TaskProcessor t w
     workerStatusMap :: TSWorkerStatusMap w, -- backend modify map
     garbageBin :: TSQueue (Task t), -- backend discard tasks
     loadBalancer :: a,
+    trigger :: EventTrigger,
     ver :: Int
   }
 
@@ -75,7 +77,7 @@ runTaskProcessor ::
   TaskSchedulerData t w ->
   a ->
   LotosAppMonad ThreadId
-runTaskProcessor config (TaskSchedulerData tq ftq wtm wsm gbb) loadBalancer = do
+runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) loadBalancer = do
   logInfoR "runTaskProcessor"
 
   -- Init receiver Pair
@@ -86,7 +88,8 @@ runTaskProcessor config (TaskSchedulerData tq ftq wtm wsm gbb) loadBalancer = do
   zmqThrow $ Zmqx.bind senderPair taskProcessorSenderAddr
 
   -- task processor cst
-  let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm gbb loadBalancer 0
+  tg <- liftIO $ mkEventTrigger triggerAlgoMaxNotifications triggerAlgoMaxWaitingSec
+  let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm gbb loadBalancer tg 0
 
   logger <- ask
   liftIO $ forkIO $ runReaderT (processorLoop config taskProcessor) logger
@@ -98,15 +101,22 @@ processorLoop ::
   TaskProcessor t w ->
   LotosAppMonad ()
 processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
-  logger <- ask
+  -- 0. accumulate ack and record time; according to the trigger, enter into a new loop or continue
+  now <- liftIO $ getCurrentTime
+  (trigger', shouldProcess) <- liftIO $ callTrigger trigger now
 
-  -- 1. receiving notification (blocking
-  fromZmq @Notify <$> zmqUnwrap (Zmqx.receives lbReceiver) >>= \case
-    Left e -> logErrorR $ show e
-    Right (Notify ack) ->
-      logDebugR $ "processorLoop -> lbReceiver: " <> show ack
-
-  -- TODO: accumulate ack, and record time; according to trigger, enter into a new loop or continue
+  -- 1. receiving notification (BLOCKING !!!
+  zmqUnwrap (Zmqx.receivesFor lbReceiver $ timeoutInterval trigger now) >>= \case
+    Just bs ->
+      case (fromZmq bs) of
+        Left e -> logErrorR $ show e
+        Right (Notify ack) -> do
+          logDebugR $ "processorLoop -> lbReceiver(ack): " <> show ack
+          -- received notification from workers, only do the rest work after accumulating N times
+          when (not shouldProcess) $
+            ask >>= liftIO . runReaderT (processorLoop cfg tp {trigger = trigger'})
+    Nothing ->
+      logDebugR $ "processorLoop -> lbReceiver(none): " <> show now
 
   -- 2. get worker status: [w]
   workerStatuses <- liftIO $ toListTSWorkerStatus workerStatusMap
@@ -136,6 +146,7 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   liftIO $ enqueueTSs invalidFailedTasks failedTaskQueue
 
   -- 7. loop
+  logger <- ask
   liftIO $ runReaderT (processorLoop cfg tp) logger
 
 ----------------------------------------------------------------------------------------------------

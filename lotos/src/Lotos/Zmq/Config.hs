@@ -51,6 +51,6 @@ data SocketLayerConfig = SocketLayerConfig
 data TaskProcessorConfig = TaskProcessorConfig
   { taskQueuePullNo :: Int,
     failedTaskQueuePullNo :: Int,
-    triggerAlgoMaxWaitingSec :: Int,
-    triggerAlgoMaxNotifications :: Int
+    triggerAlgoMaxNotifications :: Int, -- lower bound of process (how many workers
+    triggerAlgoMaxWaitingSec :: Int -- upper bound of process (worker status report interval
   }

@@ -83,7 +83,7 @@ module Lotos.Zmq.Adt
 
     -- * event trigger
     EventTrigger,
-    mkLoopTrigger,
+    mkEventTrigger,
     callTrigger,
     timeoutInterval,
   )
@@ -509,18 +509,18 @@ isEmptyTSWorkerStatus (TSWorkerStatusMap m) = withMVar m $ return . Map.null
 -- 2. A time interval elapsing (tInterval in seconds)
 -- It's useful for periodic tasks or operations that should happen after N iterations
 data EventTrigger = EventTrigger
-  { tCounter :: Int,           -- Current count, incremented on each call
-    tResetVal :: Int,          -- Threshold value for counter to trigger
+  { tCounter :: Int, -- Current count, incremented on each call
+    tResetVal :: Int, -- Threshold value for counter to trigger
     tLastTriggerTime :: UTCTime, -- Last time the trigger fired
-    tInterval :: Int           -- Time interval in seconds
+    tInterval :: Int -- Time interval in seconds
   }
   deriving (Show)
 
 -- | Creates a new EventTrigger with initial counter set to 0
 -- @param resetVal    The threshold value for the counter
 -- @param timeInterval The time interval in seconds
-mkLoopTrigger :: Int -> Int -> IO EventTrigger
-mkLoopTrigger resetVal timeInterval = do
+mkEventTrigger :: Int -> Int -> IO EventTrigger
+mkEventTrigger resetVal timeInterval = do
   now <- getCurrentTime
   return $ EventTrigger 0 resetVal now timeInterval
 
@@ -529,10 +529,8 @@ mkLoopTrigger resetVal timeInterval = do
 -- An event is triggered if either:
 -- - The counter reaches the reset value
 -- - The time since last trigger exceeds the interval
-callTrigger :: EventTrigger -> IO (EventTrigger, Bool)
-callTrigger trigger = do
-  now <- getCurrentTime
-
+callTrigger :: EventTrigger -> UTCTime -> IO (EventTrigger, Bool)
+callTrigger trigger now = do
   -- check the counter condition
   let newCounter = tCounter trigger + 1
       counterResult = newCounter >= tResetVal trigger
