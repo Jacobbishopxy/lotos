@@ -91,8 +91,7 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
   tg <- liftIO $ mkEventTrigger triggerAlgoMaxNotifications triggerAlgoMaxWaitingSec
   let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm gbb loadBalancer tg 0
 
-  logger <- ask
-  liftIO $ forkIO $ runReaderT (processorLoop config taskProcessor) logger
+  liftIO . forkIO =<< runReaderT (processorLoop config taskProcessor) <$> ask
 
 processorLoop ::
   forall t w.
