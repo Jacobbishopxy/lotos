@@ -6,16 +6,17 @@
 module Lotos.TSD.Queue
   ( -- * que
     TSQueue,
-    peekFirstN,
-    peekFirstN',
+    peekQueue,
+    peekQueue',
     mkTSQueue,
     enqueueTS,
     enqueueTSs,
     dequeueTS,
-    dequeueFirstN,
-    dequeueFirstN',
+    dequeueN,
+    dequeueN',
     readQueue,
-    isEmptyTS,
+    readQueue',
+    isEmptyQueue,
   )
 where
 
@@ -35,11 +36,12 @@ mkTSQueue :: IO (TSQueue a)
 mkTSQueue = TSQueue <$> newTVarIO Seq.empty
 
 -- Peek at the first N elements of the queue (without modifying it).
-peekFirstN :: Int -> TSQueue a -> IO (Seq.Seq a)
-peekFirstN n (TSQueue t) = atomically $ Seq.take n <$> readTVar t
+peekQueue :: Int -> TSQueue a -> IO (Seq.Seq a)
+peekQueue n (TSQueue t) = atomically $ Seq.take n <$> readTVar t
 
-peekFirstN' :: Int -> TSQueue a -> IO [a]
-peekFirstN' n (TSQueue t) = atomically $ toList . Seq.take n <$> readTVar t
+-- Peek at the first N elements of the queue (without modifying it).
+peekQueue' :: Int -> TSQueue a -> IO [a]
+peekQueue' n (TSQueue t) = atomically $ toList . Seq.take n <$> readTVar t
 
 -- Enqueues an element into the thread-safe queue.
 enqueueTS :: a -> TSQueue a -> IO ()
@@ -60,15 +62,16 @@ dequeueTS (TSQueue t) = atomically $ do
       return (Just x)
 
 -- Dequeues the first N elements from the thread-safe queue.
-dequeueFirstN :: Int -> TSQueue a -> IO (Seq.Seq a)
-dequeueFirstN n (TSQueue t) = atomically $ do
+dequeueN :: Int -> TSQueue a -> IO (Seq.Seq a)
+dequeueN n (TSQueue t) = atomically $ do
   s <- readTVar t
   let (taken, remaining) = Seq.splitAt n s
   writeTVar t remaining
   return taken
 
-dequeueFirstN' :: Int -> TSQueue a -> IO [a]
-dequeueFirstN' n (TSQueue t) = atomically $ do
+-- Dequeues the first N elements from the thread-safe queue.
+dequeueN' :: Int -> TSQueue a -> IO [a]
+dequeueN' n (TSQueue t) = atomically $ do
   s <- readTVar t
   let (taken, remaining) = Seq.splitAt n s
   writeTVar t remaining
@@ -78,6 +81,10 @@ dequeueFirstN' n (TSQueue t) = atomically $ do
 readQueue :: TSQueue a -> IO (Seq.Seq a)
 readQueue (TSQueue t) = atomically $ readTVar t
 
+-- Reads the entire content of the queue without modifying it.
+readQueue' :: TSQueue a -> IO [a]
+readQueue' (TSQueue t) = atomically $ toList <$> readTVar t
+
 -- Checks if the thread-safe queue is empty.
-isEmptyTS :: TSQueue a -> IO Bool
-isEmptyTS (TSQueue t) = atomically $ Seq.null <$> readTVar t
+isEmptyQueue :: TSQueue a -> IO Bool
+isEmptyQueue (TSQueue t) = atomically $ Seq.null <$> readTVar t

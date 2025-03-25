@@ -123,8 +123,8 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   workerStatuses <- liftIO $ toListMap workerStatusMap
 
   -- 3. call `dequeueFirstN` from TaskQueue and FailedTaskQueue: [t]
-  tasks <- liftIO $ dequeueFirstN' taskQueuePullNo taskQueue
-  failedTasks <- liftIO $ dequeueFirstN' failedTaskQueuePullNo failedTaskQueue
+  tasks <- liftIO $ dequeueN' taskQueuePullNo taskQueue
+  failedTasks <- liftIO $ dequeueN' failedTaskQueuePullNo failedTaskQueue
 
   -- 4. perform load-balancer algo: `[w] -> [t] -> ([(RoutingID, t)], [t])`
   let tasksMap = tasksToMap tasks

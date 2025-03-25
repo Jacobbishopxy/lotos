@@ -60,5 +60,6 @@ toListMap (TSMap t) = atomically $ Map.toList <$> readTVar t
 isEmptyMap :: TSMap k v -> IO Bool
 isEmptyMap (TSMap t) = atomically $ Map.null <$> readTVar t
 
+-- Retrieves the TVar containing the map.
 getTSMapTVar :: TSMap k v -> TVar (Map.Map k v)
 getTSMapTVar (TSMap t) = t

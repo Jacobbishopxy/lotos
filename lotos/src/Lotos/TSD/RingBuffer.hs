@@ -12,9 +12,10 @@ module Lotos.TSD.RingBuffer
     setBufferCapacity,
     mkTSRingBuffer,
     writeBuffer,
-    writeBuffer',
+    writeBufferN,
     getBuffer,
     getBuffer',
+    getBufferN,
   )
 where
 
@@ -29,9 +30,11 @@ data TSRingBuffer a = TSRingBuffer
     buffer :: TVar (Seq a) -- STM-protected sequence of logs
   }
 
+-- | Get the capacity of the ring-buffer.
 getBufferCapacity :: TSRingBuffer a -> Int
 getBufferCapacity = capacity
 
+-- | Set the capacity of the ring-buffer.
 setBufferCapacity :: TSRingBuffer a -> Int -> TSRingBuffer a
 setBufferCapacity rb cap = rb {capacity = cap}
 
@@ -54,16 +57,21 @@ writeBuffer rb msg = atomically $ do
           else buf |> msg
   writeTVar (buffer rb) buf'
 
-writeBuffer' :: TSRingBuffer a -> [a] -> IO ()
-writeBuffer' rb msgs = mapM_ (writeBuffer rb) msgs
+-- | Append a list of log messages to the ring-buffer.
+writeBufferN :: TSRingBuffer a -> [a] -> IO ()
+writeBufferN rb msgs = mapM_ (writeBuffer rb) msgs
+
+getBuffer :: TSRingBuffer a -> IO (Seq.Seq a)
+getBuffer rb = atomically $ readTVar (buffer rb)
 
 -- | Retrieve all log messages in order from oldest to newest.
-getBuffer :: TSRingBuffer a -> IO [a]
-getBuffer rb = atomically $ do
+getBuffer' :: TSRingBuffer a -> IO [a]
+getBuffer' rb = atomically $ do
   buf <- readTVar (buffer rb)
   return $ toList buf
 
-getBuffer' :: TSRingBuffer a -> Int -> IO [a]
-getBuffer' rb n = atomically $ do
+-- | Retrieve the first N log messages in order from oldest to newest.
+getBufferN :: TSRingBuffer a -> Int -> IO [a]
+getBufferN rb n = atomically $ do
   buf <- readTVar (buffer rb)
   return $ toList $ Seq.take n buf
