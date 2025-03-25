@@ -33,6 +33,9 @@ library
     Lotos.Airflow.Cron
     Lotos.Csv
     Lotos.Logger
+    Lotos.TSD.Map
+    Lotos.TSD.Queue
+    Lotos.TSD.RingBuffer
     Lotos.Util
     Lotos.Zmq
 
@@ -57,6 +60,7 @@ library
     , directory
     , filepath
     , mtl
+    , stm
     , text
     , time
     , unordered-containers

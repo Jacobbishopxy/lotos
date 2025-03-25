@@ -17,6 +17,8 @@ import Control.Monad (when)
 import Control.Monad.Reader (ReaderT, ask, lift, liftIO, runReaderT)
 import Data.Function ((&))
 import Lotos.Logger
+import Lotos.TSD.Map
+import Lotos.TSD.Queue
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
@@ -162,7 +164,7 @@ getTaskContext SocketLayer {..} =
 handleWorkerStatus :: (FromZmq w) => RoutingID -> WorkerMsgType -> Ack -> w -> TSWorkerStatusMap w -> LotosAppMonad ()
 handleWorkerStatus wID mt a st workerStatusMap = do
   logDebugR $ "handleBackend -> WorkerStatus: " <> show wID <> " " <> show mt <> " " <> show a
-  when (mt == WorkerStatusT) $ liftIO $ insertTSWorkerStatus wID st workerStatusMap
+  when (mt == WorkerStatusT) $ liftIO $ insertMap wID st workerStatusMap
 
 -- Handle worker task status updates using Reader monad
 handleWorkerTaskStatus :: (FromZmq t, ToZmq t) => SocketLayer t w -> RoutingID -> WorkerMsgType -> Ack -> TaskID -> TaskStatus -> LotosAppMonad ()

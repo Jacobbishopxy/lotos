@@ -14,6 +14,7 @@ module Lotos.Zmq.Config
 where
 
 import Data.Text qualified as Text
+import Lotos.TSD.Queue
 import Lotos.Zmq.Adt
 
 ----------------------------------------------------------------------------------------------------

@@ -21,6 +21,8 @@ import Control.Monad.Reader (ask, runReaderT)
 import Data.Map.Strict qualified as Map
 import Data.Time (getCurrentTime)
 import Lotos.Logger
+import Lotos.TSD.Map
+import Lotos.TSD.Queue
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
@@ -118,7 +120,7 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
       logDebugR $ "processorLoop -> lbReceiver(none): " <> show now
 
   -- 2. get worker status: [w]
-  workerStatuses <- liftIO $ toListTSWorkerStatus workerStatusMap
+  workerStatuses <- liftIO $ toListMap workerStatusMap
 
   -- 3. call `dequeueFirstN` from TaskQueue and FailedTaskQueue: [t]
   tasks <- liftIO $ dequeueFirstN' taskQueuePullNo taskQueue
@@ -145,8 +147,7 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   liftIO $ enqueueTSs invalidFailedTasks failedTaskQueue
 
   -- 7. loop
-  logger <- ask
-  liftIO $ runReaderT (processorLoop cfg tp) logger
+  liftIO =<< runReaderT (processorLoop cfg tp {trigger = trigger'}) <$> ask
 
 ----------------------------------------------------------------------------------------------------
 
