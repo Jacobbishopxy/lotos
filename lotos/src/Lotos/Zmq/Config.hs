@@ -10,11 +10,13 @@ module Lotos.Zmq.Config
     TaskSchedulerConfig (..),
     SocketLayerConfig (..),
     TaskProcessorConfig (..),
+    InfoStorageConfig (..),
   )
 where
 
 import Data.Text qualified as Text
 import Lotos.TSD.Queue
+import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 
 ----------------------------------------------------------------------------------------------------
@@ -34,7 +36,7 @@ data TaskSchedulerData t s
       (TSQueue (Task t)) -- failed task queue
       (TSWorkerTasksMap (TaskID, Task t, TaskStatus)) -- work tasks map
       (TSWorkerStatusMap s) -- worker status map
-      (TSQueue (Task t)) -- garbage queue
+      (TSRingBuffer (Task t)) -- garbage queue
 
 data TaskSchedulerConfig = TaskSchedulerConfig
   { taskQueueHWM :: Int,
@@ -54,4 +56,8 @@ data TaskProcessorConfig = TaskProcessorConfig
     failedTaskQueuePullNo :: Int,
     triggerAlgoMaxNotifications :: Int, -- lower bound of process (how many workers
     triggerAlgoMaxWaitingSec :: Int -- upper bound of process (worker status report interval
+  }
+
+data InfoStorageConfig = InfoStorageConfig
+  {
   }

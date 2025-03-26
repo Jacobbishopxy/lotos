@@ -23,6 +23,7 @@ import Data.Time (getCurrentTime)
 import Lotos.Logger
 import Lotos.TSD.Map
 import Lotos.TSD.Queue
+import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
@@ -64,7 +65,7 @@ data TaskProcessor t w
     failedTaskQueue :: TSQueue (Task t), -- backend put message
     workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modify map
     workerStatusMap :: TSWorkerStatusMap w, -- backend modify map
-    garbageBin :: TSQueue (Task t), -- backend discard tasks
+    garbageBin :: TSRingBuffer (Task t), -- backend discard tasks
     loadBalancer :: a,
     trigger :: EventTrigger,
     ver :: Int

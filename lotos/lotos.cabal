@@ -46,6 +46,7 @@ library
     Lotos.Zmq.Adt
     Lotos.Zmq.Config
     Lotos.Zmq.Error
+    Lotos.Zmq.InfoStorage
     Lotos.Zmq.SocketLayer
     Lotos.Zmq.TaskProcessor
     Lotos.Zmq.Util
@@ -60,12 +61,16 @@ library
     , directory
     , filepath
     , mtl
+    , servant
+    , servant-server
     , stm
     , text
     , time
     , unordered-containers
     , uuid
     , vector
+    , wai
+    , warp
     , yaml
     , zmqx
 

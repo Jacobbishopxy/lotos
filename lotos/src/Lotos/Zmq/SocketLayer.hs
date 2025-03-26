@@ -19,6 +19,7 @@ import Data.Function ((&))
 import Lotos.Logger
 import Lotos.TSD.Map
 import Lotos.TSD.Queue
+import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
@@ -37,7 +38,7 @@ data SocketLayer t w = SocketLayer
     failedTaskQueue :: TSQueue (Task t), -- backend put message
     workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modify map
     workerStatusMap :: TSWorkerStatusMap w, -- backend modify map
-    garbageBin :: TSQueue (Task t), -- backend discard tasks
+    garbageBin :: TSRingBuffer (Task t), -- backend discard tasks
     ver :: Int
   }
 
@@ -139,7 +140,7 @@ handleWorkerMessage layer@SocketLayer {..} = do
 data TaskContext t w = TaskContext
   { tcWorkerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus),
     tcFailedTaskQueue :: TSQueue (Task t),
-    tcGarbageBin :: TSQueue (Task t),
+    tcGarbageBin :: TSRingBuffer (Task t),
     tcWorkerStatusMap :: TSWorkerStatusMap w,
     tcBackendSender :: Zmqx.Pair
   }
@@ -196,7 +197,7 @@ handleFailedTask wID uuid = do
       lift $ logDebugR $ "handleBackend -> retry: taskID [" <> show tID <> "], retry [" <> show retry <> "]"
       if retry > 0
         then liftIO $ enqueueTS task {taskRetry = retry - 1} tcFailedTaskQueue
-        else liftIO $ enqueueTS task tcGarbageBin
+        else liftIO $ writeBuffer tcGarbageBin task
   -- notify load-balancer
   notifyLoadBalancer
 
