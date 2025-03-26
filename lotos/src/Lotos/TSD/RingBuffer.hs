@@ -23,7 +23,7 @@ where
 
 import Control.Concurrent.STM
 import Data.Foldable (toList)
-import Data.Sequence (Seq, ViewL (..), (|>))
+import Data.Sequence (Seq, ViewL (..), (><), (|>))
 import Data.Sequence qualified as Seq
 
 -- | A ring-buffer that holds up to a fixed number of messages.
@@ -61,11 +61,19 @@ writeBuffer rb msg = atomically $ do
 
 -- | Append a list of messages to the ring-buffer.
 writeBufferN :: TSRingBuffer a -> Seq.Seq a -> IO ()
-writeBufferN rb msgs = mapM_ (writeBuffer rb) msgs
+writeBufferN rb msgs = atomically $ do
+  current <- readTVar (buffer rb)
+  let combined = current >< msgs
+      lenCombined = Seq.length combined
+      finalSeq =
+        if lenCombined > capacity rb
+          then Seq.drop (lenCombined - capacity rb) combined
+          else combined
+  writeTVar (buffer rb) finalSeq
 
 -- | Append a list of messages to the ring-buffer.
 writeBufferN' :: TSRingBuffer a -> [a] -> IO ()
-writeBufferN' rb msgs = mapM_ (writeBuffer rb) msgs
+writeBufferN' rb msgs = writeBufferN rb (Seq.fromList msgs)
 
 -- | Retrieve all messages in order from oldest to newest.
 getBuffer :: TSRingBuffer a -> IO (Seq.Seq a)

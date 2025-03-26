@@ -31,7 +31,7 @@ data InfoStorage t w = InfoStorage
     tasksInGarbageBin :: [Task t],
     workerTasksMap :: Map.Map RoutingID [Task t],
     workerStatusMap :: Map.Map RoutingID w,
-    workerLogginsMap :: Map.Map RoutingID [Text.Text]
+    workerLoggingsMap :: Map.Map RoutingID [Text.Text]
   }
   deriving (Show, Generic)
 
