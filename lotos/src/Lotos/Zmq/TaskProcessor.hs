@@ -91,7 +91,7 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
   zmqThrow $ Zmqx.bind senderPair taskProcessorSenderAddr
 
   -- task processor cst
-  tg <- liftIO $ mkEventTrigger triggerAlgoMaxNotifications triggerAlgoMaxWaitingSec
+  tg <- liftIO $ mkCombinedTrigger triggerAlgoMaxNotifications triggerAlgoMaxWaitingSec
   let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm gbb loadBalancer tg 0
 
   liftIO . forkIO =<< runReaderT (processorLoop config taskProcessor) <$> ask

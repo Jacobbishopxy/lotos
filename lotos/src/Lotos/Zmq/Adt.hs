@@ -1,4 +1,5 @@
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE GADTs #-}
 
 -- file: Adt.hs
 -- author: Jacob Xie
@@ -60,7 +61,9 @@ module Lotos.Zmq.Adt
 
     -- * event trigger
     EventTrigger,
-    mkEventTrigger,
+    mkCounterTrigger,
+    mkTimeTrigger,
+    mkCombinedTrigger,
     callTrigger,
     timeoutInterval,
   )
@@ -392,60 +395,102 @@ toListTSWorkerTasks = toListMap
 -- EventTrigger
 ----------------------------------------------------------------------------------------------------
 
--- | EventTrigger is a mechanism that can trigger events based on either:
--- 1. A counter reaching a threshold value (tResetVal)
--- 2. A time interval elapsing (tInterval in seconds)
--- It's useful for periodic tasks or operations that should happen after N iterations
-data EventTrigger = EventTrigger
-  { tCounter :: Int, -- Current count, incremented on each call
-    tResetVal :: Int, -- Threshold value for counter to trigger
-    tLastTriggerTime :: UTCTime, -- Last time the trigger fired
-    tInterval :: Int -- Time interval in seconds
-  }
-  deriving (Show)
+-- | EventTrigger is a mechanism that can trigger events based on:
+-- 1. A counter reaching a threshold value
+-- 2. A time interval elapsing (in seconds)
+-- 3. A combination of both conditions
+data EventTrigger where
+  CounterTrigger ::
+    { tCounter :: Int, -- Current count, incremented on each call
+      tResetVal :: Int -- Threshold value for counter to trigger
+    } ->
+    EventTrigger
+  TimeTrigger ::
+    { tLastTriggerTime :: UTCTime, -- Last time the trigger fired
+      tInterval :: Int -- Time interval in seconds
+    } ->
+    EventTrigger
+  CombinedTrigger ::
+    { tCounter :: Int, -- Current count, incremented on each call
+      tResetVal :: Int, -- Threshold value for counter to trigger
+      tLastTriggerTime :: UTCTime, -- Last time the trigger fired
+      tInterval :: Int -- Time interval in seconds
+    } ->
+    EventTrigger
 
--- | Creates a new EventTrigger with initial counter set to 0
--- @param resetVal    The threshold value for the counter
--- @param timeInterval The time interval in seconds
-mkEventTrigger :: Int -> Int -> IO EventTrigger
-mkEventTrigger resetVal timeInterval = do
+deriving instance Show EventTrigger
+
+-- | Creates a new CounterTrigger with initial counter set to 0
+mkCounterTrigger :: Int -> IO EventTrigger
+mkCounterTrigger resetVal = return $ CounterTrigger 0 resetVal
+
+-- | Creates a new TimeTrigger with the current time
+mkTimeTrigger :: Int -> IO EventTrigger
+mkTimeTrigger timeInterval = do
   now <- getCurrentTime
-  return $ EventTrigger 0 resetVal now timeInterval
+  return $ TimeTrigger now timeInterval
+
+-- | Creates a new CombinedTrigger with initial counter set to 0 and the current time
+mkCombinedTrigger :: Int -> Int -> IO EventTrigger
+mkCombinedTrigger resetVal timeInterval = do
+  now <- getCurrentTime
+  return $ CombinedTrigger 0 resetVal now timeInterval
 
 -- | Calls the trigger and determines if an event should be triggered
 -- Returns the updated trigger and a boolean indicating if triggered
--- An event is triggered if either:
--- - The counter reaches the reset value
--- - The time since last trigger exceeds the interval
 callTrigger :: EventTrigger -> UTCTime -> IO (EventTrigger, Bool)
-callTrigger trigger now = do
-  -- check the counter condition
-  let newCounter = tCounter trigger + 1
-      counterResult = newCounter >= tResetVal trigger
-      updatedCounter = if counterResult then 0 else newCounter
+callTrigger (CounterTrigger counter resetVal) _ = do
+  let newCounter = counter + 1
+      triggered = newCounter >= resetVal
+      updatedCounter = if triggered then 0 else newCounter
+  return (CounterTrigger updatedCounter resetVal, triggered)
+callTrigger (TimeTrigger lastTriggerTime interval) now = do
+  let timeDiff = diffUTCTime now lastTriggerTime
+      triggered = timeDiff > fromIntegral interval
+      updatedLastTriggerTime = if triggered then now else lastTriggerTime
+  return (TimeTrigger updatedLastTriggerTime interval, triggered)
+callTrigger (CombinedTrigger counter resetVal lastTriggerTime interval) now = do
+  -- Check the counter condition
+  let newCounter = counter + 1
+      counterTriggered = newCounter >= resetVal
+      updatedCounter = if counterTriggered then 0 else newCounter
 
-  -- check the timer condition
-  let timeDiff = diffUTCTime now $ tLastTriggerTime trigger
-      timerResult = timeDiff > fromIntegral (tInterval trigger)
-      updatedLastTriggerTime = if timerResult then now else tLastTriggerTime trigger
+  -- Check the timer condition
+  let timeDiff = diffUTCTime now lastTriggerTime
+      timerTriggered = timeDiff > fromIntegral interval
+      updatedLastTriggerTime = if timerTriggered then now else lastTriggerTime
 
-  -- determine if either condition is met
-  let combResult = counterResult || timerResult
+  -- Determine if either condition is met
+  let triggered = counterTriggered || timerTriggered
+      finalCounter = if triggered then 0 else updatedCounter
+      finalLastTriggerTime = if triggered then now else updatedLastTriggerTime
 
-  -- reset both counter and timer if either condition is met
-  let finalCounter = if combResult then 0 else updatedCounter
-  finalLastTriggerTime <- if combResult then getCurrentTime else pure updatedLastTriggerTime
-
-  let updatedTrigger = EventTrigger finalCounter (tResetVal trigger) finalLastTriggerTime (tInterval trigger)
-  return (updatedTrigger, combResult)
+  return (CombinedTrigger finalCounter resetVal finalLastTriggerTime interval, triggered)
 
 -- | Calculates the time remaining until the next time-based trigger in milliseconds
 -- @param trigger The EventTrigger to check
 -- @param now     The current time
 -- @return        Time in milliseconds until next trigger (0 if already elapsed)
 timeoutInterval :: EventTrigger -> UTCTime -> Int
-timeoutInterval trigger now =
-  let nextTriggerTime = addUTCTime (fromIntegral (tInterval trigger)) (tLastTriggerTime trigger)
+timeoutInterval (CounterTrigger _ _) _ = 0 -- Counter-based triggers don't have a timeout
+timeoutInterval (TimeTrigger lastTriggerTime interval) now =
+  let nextTriggerTime = addUTCTime (fromIntegral interval) lastTriggerTime
       timeDiff = diffUTCTime nextTriggerTime now
       timeDiffMills = truncate $ timeDiff * 1000
    in max 0 timeDiffMills
+timeoutInterval (CombinedTrigger _ _ lastTriggerTime interval) now =
+  let nextTriggerTime = addUTCTime (fromIntegral interval) lastTriggerTime
+      timeDiff = diffUTCTime nextTriggerTime now
+      timeDiffMills = truncate $ timeDiff * 1000
+   in max 0 timeDiffMills
+
+----------------------------------------------------------------------------------------------------
+-- AliveSensor
+----------------------------------------------------------------------------------------------------
+
+-- TODO: check worker alive, if disconnected, move all tasks which belong to this worker to failed queue
+data AliveSensor = AliveSensor
+  { asLastSeen :: UTCTime,
+    asInterval :: Int
+  }
+  deriving (Show)
