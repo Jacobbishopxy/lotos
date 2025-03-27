@@ -7,7 +7,7 @@
 -- brief:
 
 module Lotos.Zmq.InfoStorage
-  ( httpServer,
+  ( runInfoStorageServer,
   )
 where
 
@@ -20,8 +20,10 @@ import GHC.TypeLits (AppendSymbol)
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Network.Wai
-import Network.Wai.Handler.Warp
+import Network.Wai.Handler.Warp qualified as Warp
 import Servant
+import Zmqx
+import Zmqx.Sub
 
 ----------------------------------------------------------------------------------------------------
 
@@ -39,6 +41,13 @@ instance
   (Aeson.ToJSON t, Aeson.ToJSON w, Aeson.ToJSON (Task t)) =>
   Aeson.ToJSON (InfoStorage t w)
 
+data InfoStorageServer t w = InfoStorageServer
+  { loggingsSubscriber :: Zmqx.Sub,
+    trigger :: EventTrigger,
+    infoStorage :: InfoStorage t w,
+    httpServer :: Server (HttpAPI "InfoStorage" t w)
+  }
+
 ----------------------------------------------------------------------------------------------------
 -- Http API
 
@@ -52,12 +61,15 @@ type family HttpAPI (name :: Symbol) t w where
       :> Summary (name :<>: " info")
       :> Get '[JSON] (InfoStorage t w)
 
-httpServer ::
+apiServer ::
   forall name t w.
   (Aeson.ToJSON t, Aeson.ToJSON w) =>
   Proxy name ->
   InfoStorage t w ->
   Server (HttpAPI name t w)
-httpServer _ is = pure is
+apiServer _ is = pure is
 
 ----------------------------------------------------------------------------------------------------
+
+runInfoStorageServer :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => InfoStorageConfig -> TaskSchedulerData t w -> IO ()
+runInfoStorageServer config tsd = undefined

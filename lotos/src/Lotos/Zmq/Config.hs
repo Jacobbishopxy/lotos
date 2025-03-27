@@ -59,5 +59,5 @@ data TaskProcessorConfig = TaskProcessorConfig
   }
 
 data InfoStorageConfig = InfoStorageConfig
-  {
+  { httpPort :: Int
   }
