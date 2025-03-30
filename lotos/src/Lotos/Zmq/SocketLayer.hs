@@ -44,6 +44,7 @@ data SocketLayer t w = SocketLayer
 
 ----------------------------------------------------------------------------------------------------
 
+-- main function of the socket layer
 runSocketLayer :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => SocketLayerConfig -> TaskSchedulerData t w -> LotosAppMonad ThreadId
 runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = do
   logInfoR "runSocketLayer start!"
@@ -65,8 +66,7 @@ runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = d
   let pollItems = Zmqx.the frontend & Zmqx.also backend & Zmqx.also receiverPair
       socketLayer = SocketLayer frontend backend receiverPair senderPair tq ftq wtm wsm gbb 0
 
-  logger <- ask
-  liftIO $ forkIO $ runReaderT (layerLoop pollItems socketLayer) logger
+  liftIO . forkIO =<< runReaderT (layerLoop pollItems socketLayer) <$> ask
 
 -- event loop
 layerLoop :: (FromZmq t, ToZmq t, FromZmq w) => Zmqx.Sockets -> SocketLayer t w -> LotosAppMonad ()

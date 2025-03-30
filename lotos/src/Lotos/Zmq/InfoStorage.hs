@@ -17,6 +17,7 @@ import Data.Text qualified as Text
 import GHC.Base (Symbol)
 import GHC.Generics
 import GHC.TypeLits (AppendSymbol)
+import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Network.Wai
@@ -27,6 +28,7 @@ import Zmqx.Sub
 
 ----------------------------------------------------------------------------------------------------
 
+-- a snapshot of the task processor
 data InfoStorage t w = InfoStorage
   { tasksInQueue :: [Task t],
     tasksInFailedQueue :: [Task t],
@@ -41,11 +43,12 @@ instance
   (Aeson.ToJSON t, Aeson.ToJSON w, Aeson.ToJSON (Task t)) =>
   Aeson.ToJSON (InfoStorage t w)
 
-data InfoStorageServer t w = InfoStorageServer
+data InfoStorageServer (name :: Symbol) t w = InfoStorageServer
   { loggingsSubscriber :: Zmqx.Sub,
+    subscriberInfo :: Map.Map RoutingID (TSRingBuffer Text.Text),
     trigger :: EventTrigger,
     infoStorage :: InfoStorage t w,
-    httpServer :: Server (HttpAPI "InfoStorage" t w)
+    httpServer :: Server (HttpAPI name t w)
   }
 
 ----------------------------------------------------------------------------------------------------
@@ -73,3 +76,7 @@ apiServer _ is = pure is
 
 runInfoStorageServer :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => InfoStorageConfig -> TaskSchedulerData t w -> IO ()
 runInfoStorageServer config tsd = undefined
+
+-- a Zmq pollItems
+infoLoop :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => Zmqx.Sockets -> TaskSchedulerData t w -> IO ()
+infoLoop = undefined
