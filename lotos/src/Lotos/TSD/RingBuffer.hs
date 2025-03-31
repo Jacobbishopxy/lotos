@@ -11,6 +11,9 @@ module Lotos.TSD.RingBuffer
     getTSRingBufferCapacity,
     setTSRingBufferCapacity,
     mkTSRingBuffer,
+    mkTSRingBuffer',
+    mkTSRingBufferN,
+    mkTSRingBufferN',
     writeBuffer,
     writeBufferN,
     writeBufferN',
@@ -45,6 +48,22 @@ mkTSRingBuffer :: Int -> IO (TSRingBuffer a)
 mkTSRingBuffer cap = atomically $ do
   buf <- newTVar Seq.empty
   return $ TSRingBuffer cap buf
+
+-- | Create a new ring-buffer with the specified capacity and an initial message.
+mkTSRingBuffer' :: Int -> a -> IO (TSRingBuffer a)
+mkTSRingBuffer' cap msg = atomically $ do
+  buf <- newTVar (Seq.singleton msg)
+  return $ TSRingBuffer cap buf
+
+-- | Create a new ring-buffer with the specified capacity and an initial sequence of messages.
+mkTSRingBufferN :: Int -> Seq.Seq a -> IO (TSRingBuffer a)
+mkTSRingBufferN cap msgs = atomically $ do
+  buf <- newTVar msgs
+  return $ TSRingBuffer cap buf
+
+-- | Create a new ring-buffer with the specified capacity and an initial list of messages.
+mkTSRingBufferN' :: Int -> [a] -> IO (TSRingBuffer a)
+mkTSRingBufferN' cap msgs = mkTSRingBufferN cap (Seq.fromList msgs)
 
 -- | Append a new message to the ring-buffer.
 -- If the buffer is full, the oldest message is dropped.

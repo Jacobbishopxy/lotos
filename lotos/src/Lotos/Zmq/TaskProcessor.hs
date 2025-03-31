@@ -104,30 +104,29 @@ processorLoop ::
   LotosAppMonad ()
 processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   -- 0. accumulate ack and record time; according to the trigger, enter into a new loop or continue
-  now <- liftIO $ getCurrentTime
-  (trigger', shouldProcess) <- liftIO $ callTrigger trigger now
+  now <- liftIO getCurrentTime
+  (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger now
 
-  -- 1. receiving notification (BLOCKING !!!
-  zmqUnwrap (Zmqx.receivesFor lbReceiver $ timeoutInterval trigger now) >>= \case
+  -- 1. receiving notification (BLOCKING !!!)
+  zmqUnwrap (Zmqx.receivesFor lbReceiver $ timeoutInterval newTrigger now) >>= \case
     Just bs ->
       case (fromZmq bs) of
         Left e -> logErrorR $ show e
-        Right (Notify ack) -> do
-          logDebugR $ "processorLoop -> lbReceiver(ack): " <> show ack
-          -- received notification from workers, only do the rest work after accumulating N times
-          when (not shouldProcess) $
-            ask >>= liftIO . runReaderT (processorLoop cfg tp {trigger = trigger'})
-    Nothing ->
-      logDebugR $ "processorLoop -> lbReceiver(none): " <> show now
+        Right (Notify ack) -> logDebugR $ "processorLoop -> lbReceiver(ack): " <> show ack
+    Nothing -> logDebugR $ "processorLoop -> lbReceiver(none): " <> show now
 
-  -- 2. get worker status: [w]
+  -- 2. only when the trigger is activated, we will call the load-balancer algo
+  when (not shouldProcess) $
+    ask >>= liftIO . runReaderT (processorLoop cfg tp {trigger = newTrigger})
+
+  -- 3. get worker status: [w]
   workerStatuses <- liftIO $ toListMap workerStatusMap
 
-  -- 3. call `dequeueFirstN` from TaskQueue and FailedTaskQueue: [t]
+  -- 4. call `dequeueFirstN` from TaskQueue and FailedTaskQueue: [t]
   tasks <- liftIO $ dequeueN' taskQueuePullNo taskQueue
   failedTasks <- liftIO $ dequeueN' failedTaskQueuePullNo failedTaskQueue
 
-  -- 4. perform load-balancer algo: `[w] -> [t] -> ([(RoutingID, t)], [t])`
+  -- 5. perform load-balancer algo: `[w] -> [t] -> ([(RoutingID, t)], [t])`
   let tasksMap = tasksToMap tasks
       failedTasksMap = tasksToMap failedTasks
       ScheduledResult tasksTodo leftTasks = scheduleTasks workerStatuses $ tasks <> failedTasks
@@ -140,15 +139,15 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
     logErrorR $
       "processorLoop.leftTasks: " <> show errLen
 
-  -- 5. send to backend router
+  -- 6. send to backend router
   mapM_ (zmqUnwrap . Zmqx.sends lbSender . toZmq) workerTasks
 
-  -- 6. re-enqueue invalid tasks
+  -- 7. re-enqueue invalid tasks
   liftIO $ enqueueTSs invalidTasks taskQueue
   liftIO $ enqueueTSs invalidFailedTasks failedTaskQueue
 
-  -- 7. loop
-  liftIO =<< runReaderT (processorLoop cfg tp {trigger = trigger'}) <$> ask
+  -- 8. loop
+  liftIO =<< runReaderT (processorLoop cfg tp {trigger = newTrigger}) <$> ask
 
 ----------------------------------------------------------------------------------------------------
 
