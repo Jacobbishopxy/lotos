@@ -15,6 +15,7 @@ module Lotos.Zmq.Config
 where
 
 import Data.Text qualified as Text
+import Lotos.Logger
 import Lotos.TSD.Queue
 import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
@@ -32,6 +33,7 @@ taskProcessorSenderAddr = "inproc://taskProcessorSender"
 -- data used for cross threads read & write
 data TaskSchedulerData t s
   = TaskSchedulerData
+      LogConfig -- log config
       (TSQueue (Task t)) -- task queue
       (TSQueue (Task t)) -- failed task queue
       (TSWorkerTasksMap (TaskID, Task t, TaskStatus)) -- work tasks map

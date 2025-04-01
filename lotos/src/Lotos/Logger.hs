@@ -4,14 +4,10 @@
 -- brief:
 
 module Lotos.Logger
-  ( LotosLogger,
-    LogLevel (..),
+  ( LogLevel (..),
+    LogConfig (..),
     LotosAppMonad,
-    createLogger,
-    logDebugM,
-    logInfoM,
-    logWarnM,
-    logErrorM,
+    runLotosApp,
     logDebugR,
     logInfoR,
     logWarnR,
@@ -23,83 +19,136 @@ module Lotos.Logger
 where
 
 import Control.Exception (Exception, throwIO)
-import Control.Monad (when)
-import Control.Monad.Reader
-import Data.Time.Format (defaultTimeLocale, formatTime)
-import Data.Time.LocalTime (getZonedTime)
+import Control.Monad (unless, when)
+import Control.Monad.IO.Class
+import Control.Monad.RWS
+import Data.DList qualified as DL
+import Data.Time
+import System.Directory
+import System.FilePath
 import System.IO
 
-data LogLevel = L_DEBUG | L_INFO | L_WARN | L_ERROR deriving (Eq, Ord, Show, Enum)
+data LogLevel = L_DEBUG | L_INFO | L_WARN | L_ERROR
+  deriving (Eq, Ord, Show, Enum)
 
-type LotosAppMonad = ReaderT LotosLogger IO
+newtype LotosAppMonad a = LotosAppMonad
+  { unLotosApp :: RWST LogConfig () LoggerState IO a
+  }
+  deriving
+    ( Functor,
+      Applicative,
+      Monad,
+      MonadIO,
+      MonadReader LogConfig,
+      MonadState LoggerState
+    )
 
-data LotosLogger = LotosLogger
-  { logDebug :: String -> IO (),
-    logInfo :: String -> IO (),
-    logWarn :: String -> IO (),
-    logError :: String -> IO ()
+data LogConfig = LogConfig
+  { confLogLevel :: LogLevel,
+    confLogDir :: FilePath,
+    confBufferSize :: Int
   }
 
-createLogger :: LogLevel -> IO LotosLogger
-createLogger logLevel = do
+data LoggerState = LoggerState
+  { logEntries :: DL.DList LogEntry,
+    currentDate :: Day,
+    logHandle :: Handle
+  }
+
+data LogEntry = LogEntry LogLevel ZonedTime String
+
+-- Initialize the logger
+initLoggerState :: LogConfig -> IO LoggerState
+initLoggerState config = do
   now <- getZonedTime
-  let fileName = formatTime defaultTimeLocale "%Y-%m-%d.log" now
-  handle <- openFile fileName AppendMode
-  hSetBuffering handle LineBuffering
-  let debugFunc msg = do
-        when (L_DEBUG >= logLevel) $ do
-          timestamp <- formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" <$> getZonedTime
-          let output = "[" ++ timestamp ++ "] DEBUG: " ++ msg
-          putStrLn output
-          hPutStrLn handle output
-          hFlush handle
-      infoFunc msg = do
-        when (L_INFO >= logLevel) $ do
-          timestamp <- formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" <$> getZonedTime
-          let output = "[" ++ timestamp ++ "] INFO: " ++ msg
-          putStrLn output
-          hPutStrLn handle output
-          hFlush handle
-      warnFunc msg = do
-        when (L_WARN >= logLevel) $ do
-          timestamp <- formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" <$> getZonedTime
-          let output = "[" ++ timestamp ++ "] WARN: " ++ msg
-          putStrLn output
-          hPutStrLn handle output
-          hFlush handle
-      errorFunc msg = do
-        when (L_ERROR >= logLevel) $ do
-          timestamp <- formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" <$> getZonedTime
-          let output = "[" ++ timestamp ++ "] ERROR: " ++ msg
-          hPutStrLn stderr output
-          hPutStrLn handle output
-          hFlush handle
-  return $ LotosLogger debugFunc infoFunc warnFunc errorFunc
+  let day = localDay (zonedTimeToLocalTime now)
+  createDirectoryIfMissing True (confLogDir config)
+  handle <- openLogFile config day
+  return
+    LoggerState
+      { logEntries = DL.empty,
+        currentDate = day,
+        logHandle = handle
+      }
 
--- Helper functions for MonadIO
-logDebugM, logInfoM, logWarnM, logErrorM :: (MonadIO m) => LotosLogger -> String -> m ()
-logDebugM logger = liftIO . logDebug logger
-logInfoM logger = liftIO . logInfo logger
-logWarnM logger = liftIO . logWarn logger
-logErrorM logger = liftIO . logError logger
+openLogFile :: LogConfig -> Day -> IO Handle
+openLogFile config day = do
+  let fileName = formatTime defaultTimeLocale "%Y-%m-%d.log" day
+      path = confLogDir config </> fileName
+  openFile path AppendMode
 
--- ReaderT helpers
+formatEntry :: LogEntry -> String
+formatEntry (LogEntry lvl t msg) =
+  let timeStr = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" t
+   in "[" ++ timeStr ++ "] " ++ show lvl ++ ": " ++ msg
+
+flushLogs :: LoggerState -> IO LoggerState
+flushLogs st = do
+  let entries = DL.toList (logEntries st)
+  unless (null entries) $ do
+    mapM_ (hPutStrLn (logHandle st)) (map formatEntry entries)
+    hFlush (logHandle st)
+  return st {logEntries = DL.empty}
+
+rotateIfNeeded :: LoggerState -> IO LoggerState
+rotateIfNeeded st = do
+  now <- getZonedTime
+  let newDay = localDay (zonedTimeToLocalTime now)
+  if newDay /= currentDate st
+    then do
+      hClose (logHandle st)
+      newHandle <- openLogFile (LogConfig undefined undefined undefined) newDay
+      return
+        st
+          { currentDate = newDay,
+            logHandle = newHandle
+          }
+    else return st
+
+logMessage :: LogLevel -> String -> LotosAppMonad ()
+logMessage level msg = do
+  config <- ask
+  when (level >= confLogLevel config) $ do
+    now <- liftIO getZonedTime
+    modify $ \s ->
+      s {logEntries = logEntries s `DL.snoc` LogEntry level now msg}
+
+    st <- get
+    when (length (logEntries st) >= confBufferSize config) $ do
+      newState <- liftIO (flushLogs st)
+      put newState
+
+    -- Check date rotation
+    rotatedState <- liftIO (rotateIfNeeded st)
+    put rotatedState
+
+-- Public logging functions
 logDebugR, logInfoR, logWarnR, logErrorR :: String -> LotosAppMonad ()
-logDebugR msg = ask >>= \logger -> liftIO $ logDebug logger msg
-logInfoR msg = ask >>= \logger -> liftIO $ logInfo logger msg
-logWarnR msg = ask >>= \logger -> liftIO $ logWarn logger msg
-logErrorR msg = ask >>= \logger -> liftIO $ logError logger msg
+logDebugR = logMessage L_DEBUG
+logInfoR = logMessage L_INFO
+logWarnR = logMessage L_WARN
+logErrorR = logMessage L_ERROR
 
+-- Runner function
+runLotosApp :: LogConfig -> LotosAppMonad a -> IO a
+runLotosApp config action = do
+  initialState <- initLoggerState config
+  (result, finalState, _) <- runRWST (unLotosApp action) config initialState
+  _ <- flushLogs finalState
+  hClose (logHandle finalState)
+  return result
+
+-- Error handling helper
 logUnwrap ::
-  (MonadIO m, MonadReader LotosLogger m, Exception e) =>
-  (String -> m ()) -> -- Logger function
-  (e -> String) -> -- Error formatter
-  IO (Either e a) -> -- IO action
+  (Exception e, MonadIO m) =>
+  (String -> m ()) ->
+  (e -> String) ->
+  IO (Either e a) ->
   m a
-logUnwrap loggerFn formatErr action = do
+logUnwrap logger formatErr action = do
   result <- liftIO action
   case result of
     Left err -> do
-      loggerFn $ formatErr err
+      logger (formatErr err)
       liftIO $ throwIO err
-    Right x -> pure x
+    Right x -> return x

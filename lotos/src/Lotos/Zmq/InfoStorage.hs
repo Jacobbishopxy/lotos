@@ -112,7 +112,7 @@ infoLoop iss@InfoStorageServer {..} layer = do
 
   -- 2. only when the trigger is activated, we will process the info
   when (not shouldProcess) $
-    ask >>= liftIO . runReaderT (infoLoop iss {subscriberInfo = si, trigger = newTrigger} layer)
+    infoLoop iss {subscriberInfo = si, trigger = newTrigger} layer
 
   -- loop
-  liftIO =<< runReaderT (infoLoop iss layer) <$> ask
+  infoLoop iss layer

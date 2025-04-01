@@ -17,7 +17,6 @@ where
 import Control.Concurrent (ThreadId, forkIO)
 import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Control.Monad.Reader (ask, runReaderT)
 import Data.Map.Strict qualified as Map
 import Data.Time (getCurrentTime)
 import Lotos.Logger
@@ -80,7 +79,7 @@ runTaskProcessor ::
   TaskSchedulerData t w ->
   a ->
   LotosAppMonad ThreadId
-runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) loadBalancer = do
+runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData l tq ftq wtm wsm gbb) loadBalancer = do
   logInfoR "runTaskProcessor"
 
   -- Init receiver Pair
@@ -94,7 +93,7 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
   tg <- liftIO $ mkCombinedTrigger triggerAlgoMaxNotifications triggerAlgoMaxWaitingSec
   let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm gbb loadBalancer tg 0
 
-  liftIO . forkIO =<< runReaderT (processorLoop config taskProcessor) <$> ask
+  liftIO $ forkIO $ runLotosApp l $ processorLoop config taskProcessor
 
 processorLoop ::
   forall t w.
@@ -117,7 +116,7 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
 
   -- 2. only when the trigger is activated, we will call the load-balancer algo
   when (not shouldProcess) $
-    ask >>= liftIO . runReaderT (processorLoop cfg tp {trigger = newTrigger})
+    processorLoop cfg tp {trigger = newTrigger}
 
   -- 3. get worker status: [w]
   workerStatuses <- liftIO $ toListMap workerStatusMap
@@ -147,7 +146,7 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   liftIO $ enqueueTSs invalidFailedTasks failedTaskQueue
 
   -- 8. loop
-  liftIO =<< runReaderT (processorLoop cfg tp {trigger = newTrigger}) <$> ask
+  processorLoop cfg tp {trigger = newTrigger}
 
 ----------------------------------------------------------------------------------------------------
 

@@ -59,6 +59,7 @@ library
     , bytestring
     , containers
     , directory
+    , dlist
     , filepath
     , mtl
     , servant

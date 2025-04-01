@@ -14,7 +14,8 @@ where
 
 import Control.Concurrent (ThreadId, forkIO)
 import Control.Monad (when)
-import Control.Monad.Reader (ReaderT, ask, lift, liftIO, runReaderT)
+import Control.Monad.RWS (liftIO)
+import Control.Monad.Reader (ReaderT, ask, lift, runReaderT)
 import Data.Function ((&))
 import Lotos.Logger
 import Lotos.TSD.Map
@@ -46,7 +47,7 @@ data SocketLayer t w = SocketLayer
 
 -- main function of the socket layer
 runSocketLayer :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => SocketLayerConfig -> TaskSchedulerData t w -> LotosAppMonad ThreadId
-runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = do
+runSocketLayer SocketLayerConfig {..} (TaskSchedulerData l tq ftq wtm wsm gbb) = do
   logInfoR "runSocketLayer start!"
 
   -- Init frontend Router
@@ -60,28 +61,24 @@ runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = d
   zmqThrow $ Zmqx.bind receiverPair taskProcessorSenderAddr
   -- Init sender Pair
   senderPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "slSender"
-  zmqThrow $ Zmqx.connect receiverPair socketLayerSenderAddr
+  zmqThrow $ Zmqx.connect senderPair socketLayerSenderAddr -- Fixed to use connect
 
   -- pollItems & socketLayer cst
   let pollItems = Zmqx.the frontend & Zmqx.also backend & Zmqx.also receiverPair
       socketLayer = SocketLayer frontend backend receiverPair senderPair tq ftq wtm wsm gbb 0
 
-  liftIO . forkIO =<< runReaderT (layerLoop pollItems socketLayer) <$> ask
+  liftIO $ forkIO $ runLotosApp l $ layerLoop pollItems socketLayer -- Start the event loop in a separate thread
 
 -- event loop
 layerLoop :: (FromZmq t, ToZmq t, FromZmq w) => Zmqx.Sockets -> SocketLayer t w -> LotosAppMonad ()
 layerLoop pollItems layer = do
-  logger <- ask
-  liftIO $
-    Zmqx.poll pollItems >>= \case
-      Left e -> logErrorM logger $ show e
-      Right ready -> do
-        -- handle frontend message
-        liftIO $ runReaderT (handleFrontend layer ready) logger
-        -- handle backend message
-        liftIO $ runReaderT (handleBackend layer ready) logger
-        -- loop
-        runReaderT (layerLoop pollItems layer) logger
+  result <- liftIO $ Zmqx.poll pollItems
+  case result of
+    Left e -> logErrorR $ show e
+    Right ready -> do
+      handleFrontend layer ready
+      handleBackend layer ready
+      layerLoop pollItems layer -- Recursive call within ReaderT context
 
 -- ⭐⭐ handle message from clients
 handleFrontend :: forall t w. (FromZmq t) => SocketLayer t w -> Zmqx.Ready -> LotosAppMonad ()
@@ -91,9 +88,9 @@ handleFrontend SocketLayer {..} (Zmqx.Ready ready) =
     logDebugR "handleFrontend: recv client request"
     fromZmq @(Task t) <$> zmqUnwrap (Zmqx.receives frontendRouter) >>= \case
       Left e -> logErrorR $ show e
-      Right task ->
-        -- make sure task always has a UUID by `fillTaskID'`
-        liftIO $ fillTaskID' task >>= \t -> liftIO $ enqueueTS t taskQueue
+      Right task -> do
+        filledTask <- liftIO $ fillTaskID' task
+        liftIO $ enqueueTS filledTask taskQueue -- Ensure proper enqueueing
 
 -- ⭐⭐ handle message from load-balancer or workers
 handleBackend :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => SocketLayer t w -> Zmqx.Ready -> LotosAppMonad ()
