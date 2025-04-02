@@ -9,6 +9,12 @@ cradle:
     - path: "test/Airflow.hs"
       component: "lotos:test:test-airflow"
 
+    - path: "test/Logger.hs"
+      component: "lotos:test:test-logger"
+
+    - path: "test/EventTrigger.hs"
+      component: "lotos:test:test-event-trigger"
+
     - path: "bin/CronSearch.hs"
       component: "lotos:exe:cron-search"
 

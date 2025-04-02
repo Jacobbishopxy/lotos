@@ -6,8 +6,11 @@
 module Lotos.Logger
   ( LogLevel (..),
     LogConfig (..),
+    LotosApp (..),
     LotosAppMonad,
+    LoggerState,
     runLotosApp,
+    runLotosAppWithState,
     logDebugR,
     logInfoR,
     logWarnR,
@@ -18,10 +21,13 @@ module Lotos.Logger
   )
 where
 
+import Control.Concurrent.STM
 import Control.Exception (Exception, throwIO)
 import Control.Monad (unless, when)
 import Control.Monad.IO.Class
 import Control.Monad.RWS
+import Control.Monad.Reader
+import Control.Monad.State
 import Data.DList qualified as DL
 import Data.Time
 import System.Directory
@@ -31,8 +37,8 @@ import System.IO
 data LogLevel = L_DEBUG | L_INFO | L_WARN | L_ERROR
   deriving (Eq, Ord, Show, Enum)
 
-newtype LotosAppMonad a = LotosAppMonad
-  { unLotosApp :: RWST LogConfig () LoggerState IO a
+newtype LotosApp m a = LotosApp
+  { runLotosAppMonad :: StateT LoggerState (ReaderT LogConfig m) a
   }
   deriving
     ( Functor,
@@ -43,6 +49,8 @@ newtype LotosAppMonad a = LotosAppMonad
       MonadState LoggerState
     )
 
+type LotosAppMonad = LotosApp IO
+
 data LogConfig = LogConfig
   { confLogLevel :: LogLevel,
     confLogDir :: FilePath,
@@ -50,9 +58,9 @@ data LogConfig = LogConfig
   }
 
 data LoggerState = LoggerState
-  { logEntries :: DL.DList LogEntry,
-    currentDate :: Day,
-    logHandle :: Handle
+  { logEntries :: TVar (DL.DList LogEntry),
+    currentDate :: TVar Day,
+    logHandle :: TVar Handle
   }
 
 data LogEntry = LogEntry LogLevel ZonedTime String
@@ -64,12 +72,10 @@ initLoggerState config = do
   let day = localDay (zonedTimeToLocalTime now)
   createDirectoryIfMissing True (confLogDir config)
   handle <- openLogFile config day
-  return
-    LoggerState
-      { logEntries = DL.empty,
-        currentDate = day,
-        logHandle = handle
-      }
+  LoggerState
+    <$> newTVarIO DL.empty
+    <*> newTVarIO day
+    <*> newTVarIO handle
 
 openLogFile :: LogConfig -> Day -> IO Handle
 openLogFile config day = do
@@ -82,65 +88,83 @@ formatEntry (LogEntry lvl t msg) =
   let timeStr = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" t
    in "[" ++ timeStr ++ "] " ++ show lvl ++ ": " ++ msg
 
-flushLogs :: LoggerState -> IO LoggerState
+flushLogs :: LoggerState -> IO ()
 flushLogs st = do
-  let entries = DL.toList (logEntries st)
+  (entries, handle) <- atomically $ do
+    entries <- readTVar (logEntries st)
+    handle <- readTVar (logHandle st)
+    writeTVar (logEntries st) DL.empty
+    return (entries, handle)
   unless (null entries) $ do
-    mapM_ (hPutStrLn (logHandle st)) (map formatEntry entries)
-    hFlush (logHandle st)
-  return st {logEntries = DL.empty}
+    mapM_ (hPutStrLn handle) (map formatEntry (DL.toList entries))
+    hFlush handle
 
-rotateIfNeeded :: LoggerState -> IO LoggerState
-rotateIfNeeded st = do
+rotateIfNeeded :: LogConfig -> LoggerState -> IO ()
+rotateIfNeeded config st = do
   now <- getZonedTime
-  let newDay = localDay (zonedTimeToLocalTime now)
-  if newDay /= currentDate st
-    then do
-      hClose (logHandle st)
-      newHandle <- openLogFile (LogConfig undefined undefined undefined) newDay
-      return
-        st
-          { currentDate = newDay,
-            logHandle = newHandle
-          }
-    else return st
+  let today = localDay (zonedTimeToLocalTime now)
 
-logMessage :: LogLevel -> String -> LotosAppMonad ()
+  -- Atomically check and update the current date
+  shouldRotate <- atomically $ do
+    currentDay <- readTVar (currentDate st)
+    if currentDay /= today
+      then do
+        writeTVar (currentDate st) today
+        return True
+      else return False
+
+  -- If the date has changed, rotate the log file
+  when shouldRotate $ do
+    -- Flush any remaining logs
+    flushLogs st
+
+    -- Close the current log file
+    oldHandle <- atomically $ readTVar (logHandle st)
+    hClose oldHandle
+
+    -- Open a new log file for the new date
+    newHandle <- openLogFile config today
+    atomically $ writeTVar (logHandle st) newHandle
+
+logMessage :: LogLevel -> String -> LotosApp IO ()
 logMessage level msg = do
   config <- ask
   when (level >= confLogLevel config) $ do
     now <- liftIO getZonedTime
-    modify $ \s ->
-      s {logEntries = logEntries s `DL.snoc` LogEntry level now msg}
-
     st <- get
-    when (length (logEntries st) >= confBufferSize config) $ do
-      newState <- liftIO (flushLogs st)
-      put newState
+    liftIO $ atomically $ modifyTVar' (logEntries st) (`DL.snoc` LogEntry level now msg)
 
-    -- Check date rotation
-    rotatedState <- liftIO (rotateIfNeeded st)
-    put rotatedState
+    entries <- liftIO $ atomically $ readTVar (logEntries st)
+    when (length entries >= confBufferSize config) $
+      liftIO $
+        flushLogs st
+
+    liftIO $ rotateIfNeeded config st
 
 -- Public logging functions
-logDebugR, logInfoR, logWarnR, logErrorR :: String -> LotosAppMonad ()
+logDebugR, logInfoR, logWarnR, logErrorR :: String -> LotosApp IO ()
 logDebugR = logMessage L_DEBUG
 logInfoR = logMessage L_INFO
 logWarnR = logMessage L_WARN
 logErrorR = logMessage L_ERROR
 
 -- Runner function
-runLotosApp :: LogConfig -> LotosAppMonad a -> IO a
-runLotosApp config action = do
+runLotosApp :: LogConfig -> LotosAppMonad a -> IO (a, LoggerState)
+runLotosApp config (LotosApp action) = do
   initialState <- initLoggerState config
-  (result, finalState, _) <- runRWST (unLotosApp action) config initialState
-  _ <- flushLogs finalState
-  hClose (logHandle finalState)
-  return result
+  result <- runReaderT (evalStateT action initialState) config
+  -- Rotate logs if needed and flush remaining logs
+  rotateIfNeeded config initialState
+  flushLogs initialState
+  return (result, initialState)
+
+runLotosAppWithState :: LogConfig -> LoggerState -> LotosAppMonad a -> IO a
+runLotosAppWithState config st (LotosApp action) =
+  runReaderT (evalStateT action st) config
 
 -- Error handling helper
 logUnwrap ::
-  (Exception e, MonadIO m) =>
+  (Exception e, m ~ LotosApp IO) =>
   (String -> m ()) ->
   (e -> String) ->
   IO (Either e a) ->

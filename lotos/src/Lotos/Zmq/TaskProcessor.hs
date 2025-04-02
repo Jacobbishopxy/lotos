@@ -16,7 +16,7 @@ where
 
 import Control.Concurrent (ThreadId, forkIO)
 import Control.Monad (when)
-import Control.Monad.IO.Class (MonadIO (liftIO))
+import Control.Monad.RWS
 import Data.Map.Strict qualified as Map
 import Data.Time (getCurrentTime)
 import Lotos.Logger
@@ -79,7 +79,7 @@ runTaskProcessor ::
   TaskSchedulerData t w ->
   a ->
   LotosAppMonad ThreadId
-runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData l tq ftq wtm wsm gbb) loadBalancer = do
+runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) loadBalancer = do
   logInfoR "runTaskProcessor"
 
   -- Init receiver Pair
@@ -93,7 +93,7 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData l tq ftq wtm
   tg <- liftIO $ mkCombinedTrigger triggerAlgoMaxNotifications triggerAlgoMaxWaitingSec
   let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm gbb loadBalancer tg 0
 
-  liftIO $ forkIO $ runLotosApp l $ processorLoop config taskProcessor
+  liftIO . forkIO =<< runLotosAppWithState <$> ask <*> get <*> pure (processorLoop config taskProcessor)
 
 processorLoop ::
   forall t w.

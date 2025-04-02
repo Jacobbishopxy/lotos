@@ -14,8 +14,8 @@ where
 
 import Control.Concurrent (ThreadId, forkIO)
 import Control.Monad (when)
-import Control.Monad.RWS (liftIO)
-import Control.Monad.Reader (ReaderT, ask, lift, runReaderT)
+import Control.Monad.RWS
+import Control.Monad.Reader (ReaderT, runReaderT)
 import Data.Function ((&))
 import Lotos.Logger
 import Lotos.TSD.Map
@@ -47,7 +47,7 @@ data SocketLayer t w = SocketLayer
 
 -- main function of the socket layer
 runSocketLayer :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => SocketLayerConfig -> TaskSchedulerData t w -> LotosAppMonad ThreadId
-runSocketLayer SocketLayerConfig {..} (TaskSchedulerData l tq ftq wtm wsm gbb) = do
+runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = do
   logInfoR "runSocketLayer start!"
 
   -- Init frontend Router
@@ -67,7 +67,8 @@ runSocketLayer SocketLayerConfig {..} (TaskSchedulerData l tq ftq wtm wsm gbb) =
   let pollItems = Zmqx.the frontend & Zmqx.also backend & Zmqx.also receiverPair
       socketLayer = SocketLayer frontend backend receiverPair senderPair tq ftq wtm wsm gbb 0
 
-  liftIO $ forkIO $ runLotosApp l $ layerLoop pollItems socketLayer -- Start the event loop in a separate thread
+  -- Start the event loop in a separate thread
+  liftIO . forkIO =<< runLotosAppWithState <$> ask <*> get <*> pure (layerLoop pollItems socketLayer)
 
 -- event loop
 layerLoop :: (FromZmq t, ToZmq t, FromZmq w) => Zmqx.Sockets -> SocketLayer t w -> LotosAppMonad ()
