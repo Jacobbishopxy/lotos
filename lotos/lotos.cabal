@@ -109,6 +109,19 @@ test-suite test-event-trigger
   main-is:        EventTrigger.hs
   build-depends:  time
 
+test-suite test-simple-servant
+  import:         shared-properties, test
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        SimpleServant.hs
+  build-depends:
+    , aeson
+    , servant
+    , servant-server
+    , text
+    , wai
+    , warp
+
 ----------------------------------------------------------------------------------------------------
 -- Bin
 ----------------------------------------------------------------------------------------------------
