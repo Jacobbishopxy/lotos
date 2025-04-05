@@ -12,6 +12,7 @@ module Lotos.TSD.Map
     deleteMap,
     updateMap,
     modifyMap,
+    toMap,
     toListMap,
     isEmptyMap,
     getTSMapTVar,
@@ -51,6 +52,10 @@ updateMap k f (TSMap t) = atomically $ modifyTVar' t (Map.alter f k)
 -- Modifies the value associated with a key using the provided function.
 modifyMap :: (Ord k) => k -> (v -> v) -> TSMap k v -> IO ()
 modifyMap k f m = updateMap k (fmap f) m
+
+-- Converts the thread-safe map to a map.
+toMap :: TSMap k v -> IO (Map.Map k v)
+toMap (TSMap t) = atomically $ readTVar t
 
 -- Converts the thread-safe map to a list of key-value pairs.
 toListMap :: TSMap k v -> IO [(k, v)]

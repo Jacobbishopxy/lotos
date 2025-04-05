@@ -60,5 +60,6 @@ data TaskProcessorConfig = TaskProcessorConfig
 
 data InfoStorageConfig = InfoStorageConfig
   { httpPort :: Int,
-    loggingsBufferSize :: Int
+    loggingsBufferSize :: Int,
+    triggerFetchWaitingSec :: Int
   }

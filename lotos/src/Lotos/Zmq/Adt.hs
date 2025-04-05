@@ -58,6 +58,7 @@ module Lotos.Zmq.Adt
     modifyTSWorkerTasks',
     appendTSWorkerTasks,
     toListTSWorkerTasks,
+    toMapTSWorkerTasks,
 
     -- * event trigger
     EventTrigger,
@@ -390,6 +391,10 @@ appendTSWorkerTasks k v m = updateMap k (Just . maybe [v] (v :)) m
 -- Converts the thread-safe worker tasks map to a list of key-value pairs.
 toListTSWorkerTasks :: TSWorkerTasksMap a -> IO [(RoutingID, [a])]
 toListTSWorkerTasks = toListMap
+
+-- Converts the thread-safe worker tasks map to a map of RoutingID to lists of tasks.
+toMapTSWorkerTasks :: TSWorkerTasksMap a -> IO (Map.Map RoutingID [a])
+toMapTSWorkerTasks = toMap
 
 ----------------------------------------------------------------------------------------------------
 -- EventTrigger
