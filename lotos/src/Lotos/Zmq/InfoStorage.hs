@@ -12,10 +12,10 @@ module Lotos.Zmq.InfoStorage
   )
 where
 
+import Control.Concurrent (ThreadId, forkIO)
 import Control.Concurrent.MVar
 import Control.Monad (when)
-import Control.Monad.IO.Class (MonadIO (liftIO))
-import Control.Monad.Reader (ask, runReaderT)
+import Control.Monad.RWS
 import Data.Aeson qualified as Aeson
 import Data.Map qualified as Map
 import Data.Text qualified as Text
@@ -23,7 +23,7 @@ import Data.Text.Encoding (decodeUtf8)
 import Data.Time (getCurrentTime)
 import GHC.Base (Symbol)
 import GHC.Generics
-import GHC.TypeLits (AppendSymbol)
+import GHC.TypeLits (AppendSymbol, KnownSymbol)
 import Lotos.Logger
 import Lotos.TSD.Map
 import Lotos.TSD.Queue
@@ -31,7 +31,6 @@ import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error (zmqThrow, zmqUnwrap)
-import Network.Wai
 import Network.Wai.Handler.Warp qualified as Warp
 import Servant
 import Zmqx
@@ -71,13 +70,69 @@ data InfoStorageServer (name :: Symbol) t w = InfoStorageServer
   { loggingsSubscriber :: Zmqx.Sub,
     subscriberInfo :: SubscriberInfo,
     trigger :: EventTrigger,
-    infoStorage :: MVar (InfoStorage t w), -- Changed to MVar
+    infoStorage :: MVar (InfoStorage t w),
     loggingBufferSize :: Int,
     httpServer :: Server (HttpAPI name t w)
   }
 
 ----------------------------------------------------------------------------------------------------
--- Http API
+
+type InfoStorageConstraints name t w =
+  ( KnownSymbol name,
+    FromZmq t,
+    ToZmq t,
+    FromZmq w,
+    Aeson.ToJSON t,
+    Aeson.ToJSON w,
+    Aeson.ToJSON (Task t)
+  )
+
+runInfoStorageServer ::
+  forall (name :: Symbol) t w.
+  (InfoStorageConstraints name t w) =>
+  Proxy name ->
+  InfoStorageConfig ->
+  TaskSchedulerData t w ->
+  LotosAppMonad (ThreadId, ThreadId)
+runInfoStorageServer httpName InfoStorageConfig {..} tsd = do
+  -- 1. Create a subscriber for loggings
+  loggingsSubscriber <- zmqUnwrap $ Zmqx.Sub.open $ Zmqx.name "loggingsSubscriber"
+  zmqThrow $ Zmqx.connect loggingsSubscriber socketLayerSenderAddr
+  zmqThrow $ Zmqx.Sub.subscribe loggingsSubscriber "" -- Subscribe to all topics
+
+  -- 2. Create a shared `MVar` for `InfoStorage`
+  infoStorage <- liftIO $ newMVar newInfoStorage
+
+  -- 3. Create a trigger
+  trigger <- liftIO $ mkTimeTrigger triggerFetchWaitingSec
+
+  -- 4. Initialize the `InfoStorageServer`
+  let infoStorageServer =
+        InfoStorageServer
+          { loggingsSubscriber = loggingsSubscriber,
+            subscriberInfo = Map.empty, -- Initialize with an empty map
+            trigger = trigger,
+            infoStorage = infoStorage,
+            loggingBufferSize = loggingsBufferSize,
+            httpServer = apiServer httpName infoStorage
+          }
+      srv = serve (Proxy @(HttpAPI name t w)) (httpServer infoStorageServer)
+
+  -- 5. Run the HTTP server in a separate thread
+  t1 <- liftIO $ forkIO $ Warp.run httpPort srv
+  logInfoR $ "HTTP server started on port " <> show httpPort <> ", thread ID: " <> show t1
+
+  -- 6. Run the main loop
+  t2 <- liftIO . forkIO =<< runLotosAppWithState <$> ask <*> get <*> pure (infoLoop infoStorageServer tsd)
+  logInfoR $ "Info storage event loop started, thread ID: " <> show t2
+
+  return (t1, t2)
+
+----------------------------------------------------------------------------------------------------
+-- Private functions
+----------------------------------------------------------------------------------------------------
+
+-- HTTP
 
 type family (:<>:) (s1 :: Symbol) (s2 :: Symbol) :: Symbol where
   s1 :<>: s2 = AppendSymbol s1 s2
@@ -89,45 +144,22 @@ type family HttpAPI (name :: Symbol) t w where
       :> Summary (name :<>: " info")
       :> Get '[JSON] (InfoStorage t w)
 
+-- | The HTTP API for the info storage server
 apiServer ::
   forall name t w.
   (Aeson.ToJSON t, Aeson.ToJSON w) =>
   Proxy name ->
-  InfoStorage t w ->
+  MVar (InfoStorage t w) ->
   Server (HttpAPI name t w)
-apiServer _ is = pure is
+apiServer _ infoStorage = getInfo
+  where
+    getInfo :: Handler (InfoStorage t w)
+    getInfo = liftIO $ readMVar infoStorage
 
 ----------------------------------------------------------------------------------------------------
+-- Zmq & Event Loop
 
-runInfoStorageServer :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => InfoStorageConfig -> TaskSchedulerData t w -> LotosAppMonad ()
-runInfoStorageServer config tsd = do
-  -- 1. create a subscriber for loggings
-  loggingsSubscriber <- zmqUnwrap $ Zmqx.Sub.open $ Zmqx.name "loggingsSubscriber"
-  zmqThrow $ Zmqx.connect loggingsSubscriber socketLayerSenderAddr
-  zmqThrow $ Zmqx.Sub.subscribe loggingsSubscriber "" -- subscribe all
-
-  -- 2. create a MVar for info storage
-  infoStorage <- liftIO $ newMVar newInfoStorage
-
-  -- 3. create a trigger
-  trigger <- liftIO $ mkTimeTrigger (triggerFetchWaitingSec config)
-
-  -- 4. create an HTTP server
-  -- let httpServer = serve (Proxy @("info" :<>: "info")) (apiServer (Proxy @("info" :<>: "info")) InfoStorage {..})
-
-  -- 5. run the HTTP server in a separate thread
-  -- _ <- liftIO $ forkIO $ Warp.run (httpPort config) httpServer
-
-  -- 6. run the info loop
-  -- infoLoop InfoStorageServer {..} tsd
-
-  undefined
-
-----------------------------------------------------------------------------------------------------
--- Private functions
-----------------------------------------------------------------------------------------------------
-
--- a Zmq pollItems
+-- | The main loop of the info storage server
 infoLoop :: forall name t w. (FromZmq t, ToZmq t, FromZmq w) => InfoStorageServer name t w -> TaskSchedulerData t w -> LotosAppMonad ()
 infoLoop iss@InfoStorageServer {..} layer = do
   -- 0. record time and according to the trigger, enter into a new loop or continue
@@ -162,10 +194,7 @@ infoLoop iss@InfoStorageServer {..} layer = do
   -- 4. loop
   infoLoop iss {trigger = newTrigger} layer
 
-convertWorkerTasksMap :: forall t. TSWorkerTasksMap (TaskID, Task t, TaskStatus) -> IO (Map.Map RoutingID [Task t])
-convertWorkerTasksMap wtm =
-  Map.map (map (\(_, task, _) -> task)) <$> toMapTSWorkerTasks wtm
-
+-- | Create a new `InfoStorage` from `TaskSchedulerData` and `SubscriberInfo`
 makeInfoStorage ::
   (FromZmq t, ToZmq t, FromZmq w) =>
   TaskSchedulerData t w ->
@@ -174,7 +203,7 @@ makeInfoStorage ::
 makeInfoStorage (TaskSchedulerData tq ftq wtm wsm gbb) si = do
   tasksInQueue <- liftIO $ readQueue' tq
   tasksInFailedQueue <- liftIO $ readQueue' ftq
-  workerTasksMap <- liftIO $ convertWorkerTasksMap wtm
+  workerTasksMap <- liftIO $ Map.map (map (\(_, task, _) -> task)) <$> toMapTSWorkerTasks wtm
   workerStatusMap <- liftIO $ toMap wsm
   tasksInGarbageBin <- liftIO $ getBuffer' gbb
   workerLoggingsMap <- liftIO $ mapM getBuffer' si
