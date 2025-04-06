@@ -5,7 +5,6 @@
 
 module Lotos.Zmq.Error
   ( ZmqError (..),
-    zmqErrWrap,
     zmqUnwrap,
     zmqThrow,
     maybeToEither,

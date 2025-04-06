@@ -90,7 +90,7 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
   zmqThrow $ Zmqx.bind senderPair taskProcessorSenderAddr
 
   -- task processor cst
-  tg <- liftIO $ mkCombinedTrigger triggerAlgoMaxNotifications triggerAlgoMaxWaitingSec
+  tg <- liftIO $ mkCombinedTrigger triggerAlgoMaxNotifyCount triggerAlgoMaxWaitSec
   let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm gbb loadBalancer tg 0
 
   liftIO . forkIO =<< runLotosAppWithState <$> ask <*> get <*> pure (processorLoop config taskProcessor)

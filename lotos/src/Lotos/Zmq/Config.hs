@@ -11,10 +11,13 @@ module Lotos.Zmq.Config
     SocketLayerConfig (..),
     TaskProcessorConfig (..),
     InfoStorageConfig (..),
+    LBConstraint,
   )
 where
 
+import Data.Aeson qualified as Aeson
 import Data.Text qualified as Text
+import GHC.TypeLits (KnownSymbol)
 import Lotos.TSD.Queue
 import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
@@ -26,6 +29,18 @@ socketLayerSenderAddr = "inproc://socketLayerSender"
 
 taskProcessorSenderAddr :: Text.Text
 taskProcessorSenderAddr = "inproc://taskProcessorSender"
+
+----------------------------------------------------------------------------------------------------
+
+type LBConstraint name t w =
+  ( KnownSymbol name,
+    FromZmq t,
+    ToZmq t,
+    FromZmq w,
+    Aeson.ToJSON t,
+    Aeson.ToJSON w,
+    Aeson.ToJSON (Task t)
+  )
 
 ----------------------------------------------------------------------------------------------------
 
@@ -47,19 +62,19 @@ data TaskSchedulerConfig = TaskSchedulerConfig
 ----------------------------------------------------------------------------------------------------
 
 data SocketLayerConfig = SocketLayerConfig
-  { frontendAddr :: Text.Text,
-    backendAddr :: Text.Text
+  { frontendAddr :: Text.Text, -- client request address
+    backendAddr :: Text.Text -- worker response address
   }
 
 data TaskProcessorConfig = TaskProcessorConfig
-  { taskQueuePullNo :: Int,
-    failedTaskQueuePullNo :: Int,
-    triggerAlgoMaxNotifications :: Int, -- lower bound of process (how many workers
-    triggerAlgoMaxWaitingSec :: Int -- upper bound of process (worker status report interval
+  { taskQueuePullNo :: Int, -- task queue pull number
+    failedTaskQueuePullNo :: Int, -- failed task queue pull number
+    triggerAlgoMaxNotifyCount :: Int, -- lower bound of process (how many workers
+    triggerAlgoMaxWaitSec :: Int -- upper bound of process (worker status report interval
   }
 
 data InfoStorageConfig = InfoStorageConfig
-  { httpPort :: Int,
+  { httpPort :: Int, -- http server port
     loggingsBufferSize :: Int,
-    triggerFetchWaitingSec :: Int
+    infoFetchIntervalSec :: Int
   }

@@ -6,9 +6,7 @@
 -- brief:
 
 module Lotos.Zmq.SocketLayer
-  ( SocketLayerConfig (..),
-    SocketLayer,
-    runSocketLayer,
+  ( runSocketLayer,
   )
 where
 

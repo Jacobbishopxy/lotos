@@ -8,7 +8,7 @@
 -- brief:
 
 module Lotos.Zmq.InfoStorage
-  ( runInfoStorageServer,
+  ( runInfoStorage,
   )
 where
 
@@ -23,7 +23,7 @@ import Data.Text.Encoding (decodeUtf8)
 import Data.Time (getCurrentTime)
 import GHC.Base (Symbol)
 import GHC.Generics
-import GHC.TypeLits (AppendSymbol, KnownSymbol)
+import GHC.TypeLits (AppendSymbol)
 import Lotos.Logger
 import Lotos.TSD.Map
 import Lotos.TSD.Queue
@@ -77,24 +77,14 @@ data InfoStorageServer (name :: Symbol) t w = InfoStorageServer
 
 ----------------------------------------------------------------------------------------------------
 
-type InfoStorageConstraints name t w =
-  ( KnownSymbol name,
-    FromZmq t,
-    ToZmq t,
-    FromZmq w,
-    Aeson.ToJSON t,
-    Aeson.ToJSON w,
-    Aeson.ToJSON (Task t)
-  )
-
-runInfoStorageServer ::
+runInfoStorage ::
   forall (name :: Symbol) t w.
-  (InfoStorageConstraints name t w) =>
+  (LBConstraint name t w) =>
   Proxy name ->
   InfoStorageConfig ->
   TaskSchedulerData t w ->
   LotosAppMonad (ThreadId, ThreadId)
-runInfoStorageServer httpName InfoStorageConfig {..} tsd = do
+runInfoStorage httpName InfoStorageConfig {..} tsd = do
   -- 1. Create a subscriber for loggings
   loggingsSubscriber <- zmqUnwrap $ Zmqx.Sub.open $ Zmqx.name "loggingsSubscriber"
   zmqThrow $ Zmqx.connect loggingsSubscriber socketLayerSenderAddr
@@ -104,7 +94,7 @@ runInfoStorageServer httpName InfoStorageConfig {..} tsd = do
   infoStorage <- liftIO $ newMVar newInfoStorage
 
   -- 3. Create a trigger
-  trigger <- liftIO $ mkTimeTrigger triggerFetchWaitingSec
+  trigger <- liftIO $ mkTimeTrigger infoFetchIntervalSec
 
   -- 4. Initialize the `InfoStorageServer`
   let infoStorageServer =
