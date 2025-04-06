@@ -31,12 +31,19 @@ import Lotos.Zmq.TaskProcessor
 ----------------------------------------------------------------------------------------------------
 
 data LBSConfig = LBSConfig
-  { lbFrontendAddr :: Text.Text,
+  { -- task scheduler
+    lbTaskQueueHWM :: Int, -- TODO
+    lbFailedTaskQueueHWM :: Int, -- TODO
+    lbGarbageBinSize :: Int,
+    -- socket layer
+    lbFrontendAddr :: Text.Text,
     lbBackendAddr :: Text.Text,
+    -- task processor
     lbTaskQueuePullNo :: Int,
     lbFailedTaskQueuePullNo :: Int,
     lbTaskTriggerMaxNotifyCount :: Int,
     lbTaskTriggerMaxWaitSec :: Int,
+    -- info storage
     lbHttpPort :: Int,
     lbLoggingBufferSize :: Int,
     lbInfoFetchIntervalSec :: Int
@@ -81,7 +88,7 @@ runLBS n LBSConfig {..} loadBalancer = do
         <*> (mkTSQueue :: IO (TSQueue (Task t)))
         <*> (newTSWorkerTasksMap :: IO (TSWorkerTasksMap (TaskID, Task t, TaskStatus)))
         <*> (mkTSMap :: IO (TSWorkerStatusMap w))
-        <*> (mkTSRingBuffer lbLoggingBufferSize :: IO (TSRingBuffer (Task t)))
+        <*> (mkTSRingBuffer lbGarbageBinSize :: IO (TSRingBuffer (Task t)))
 
   -- 2. run socket layer
   t1 <- runSocketLayer socketLayerConfig taskSchedulerData
