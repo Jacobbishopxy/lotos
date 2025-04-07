@@ -47,6 +47,7 @@ library
     Lotos.Zmq.Config
     Lotos.Zmq.Error
     Lotos.Zmq.InfoStorage
+    Lotos.Zmq.LBC
     Lotos.Zmq.LBS
     Lotos.Zmq.LBW
     Lotos.Zmq.SocketLayer
