@@ -4,7 +4,8 @@
 -- brief:
 
 module Lotos.Zmq.Config
-  ( socketLayerSenderAddr,
+  ( -- loadbalancer server config
+    socketLayerSenderAddr,
     taskProcessorSenderAddr,
     TaskSchedulerData (..),
     TaskSchedulerConfig (..),
@@ -12,6 +13,10 @@ module Lotos.Zmq.Config
     TaskProcessorConfig (..),
     InfoStorageConfig (..),
     LBConstraint,
+    -- loadbalancer worker config
+    WorkerServiceConfig (..),
+    -- loadbalancer client config
+    -- TODO
   )
 where
 
@@ -22,6 +27,8 @@ import Lotos.TSD.Queue
 import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 
+----------------------------------------------------------------------------------------------------
+-- LoadBalancer Server Config
 ----------------------------------------------------------------------------------------------------
 
 socketLayerSenderAddr :: Text.Text
@@ -78,3 +85,18 @@ data InfoStorageConfig = InfoStorageConfig
     loggingsBufferSize :: Int,
     infoFetchIntervalSec :: Int
   }
+
+----------------------------------------------------------------------------------------------------
+-- LoadBalancer Worker Config
+----------------------------------------------------------------------------------------------------
+
+data WorkerServiceConfig = WorkerServiceConfig
+  { loadBalancerBackendAddr :: Text.Text, -- backend address
+    workerStatusReportIntervalSec :: Int -- heartbeat interval
+  }
+
+----------------------------------------------------------------------------------------------------
+-- LoadBalancer Client Config
+----------------------------------------------------------------------------------------------------
+
+-- TODO

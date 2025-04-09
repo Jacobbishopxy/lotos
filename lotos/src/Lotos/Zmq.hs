@@ -28,6 +28,15 @@ module Lotos.Zmq
 
     -- * load balancer server
     runLBS,
+
+    -- * load balancer worker
+    TaskAcceptor (..),
+    StatusReporter (..),
+    WorkerService,
+    mkWorkerService,
+    runWorkerService,
+
+    -- * load balancer client
   )
 where
 
@@ -35,6 +44,7 @@ import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
 import Lotos.Zmq.InfoStorage
+import Lotos.Zmq.LBC
 import Lotos.Zmq.LBS
 import Lotos.Zmq.LBW
 import Lotos.Zmq.SocketLayer
