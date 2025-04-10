@@ -113,7 +113,9 @@ runInfoStorage httpName InfoStorageConfig {..} tsd = do
   logInfoR $ "HTTP server started on port " <> show httpPort <> ", thread ID: " <> show t1
 
   -- 6. Run the main loop
-  t2 <- liftIO . forkIO =<< runLotosAppWithState <$> ask <*> get <*> pure (infoLoop infoStorageServer tsd)
+  t2 <-
+    liftIO . forkIO . Zmqx.run Zmqx.defaultOptions
+      =<< runLotosAppWithState <$> ask <*> get <*> pure (infoLoop infoStorageServer tsd)
   logInfoR $ "Info storage event loop started, thread ID: " <> show t2
 
   return (t1, t2)

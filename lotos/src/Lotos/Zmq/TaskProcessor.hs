@@ -93,7 +93,8 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
   tg <- liftIO $ mkCombinedTrigger triggerAlgoMaxNotifyCount triggerAlgoMaxWaitSec
   let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm gbb loadBalancer tg 0
 
-  liftIO . forkIO =<< runLotosAppWithState <$> ask <*> get <*> pure (processorLoop config taskProcessor)
+  liftIO . forkIO . Zmqx.run Zmqx.defaultOptions
+    =<< runLotosAppWithState <$> ask <*> get <*> pure (processorLoop config taskProcessor)
 
 processorLoop ::
   forall t w.

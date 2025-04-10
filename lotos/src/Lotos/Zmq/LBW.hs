@@ -5,9 +5,10 @@
 -- date: 2025/04/06 20:21:31 Sunday
 -- brief:
 --
--- 1. Acceptor (Dealer) asynchronously receives tasks from the frontend socket.
--- 2. Sender (Pair -> Dealer) cross thread sends tasks to the backend socket.
--- 3. Publisher (Pair -> Pub) cross thread sends logging messages to the logging socket.
+-- 1. Acceptor (Dealer) asynchronously receives tasks from the backend socket.
+-- 2. Reporter (Dealer) periodically sends worker status to the backend socket.
+-- 3. Sender (Pair -> Dealer) cross thread sends tasks to the backend socket.
+-- 4. Publisher (Pair -> Pub) cross thread sends logging messages to the logging socket.
 
 module Lotos.Zmq.LBW
   ( TaskAcceptor (..),
@@ -23,6 +24,10 @@ import Lotos.Logger
 import Lotos.TSD.Queue
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
+import Zmqx
+import Zmqx.Dealer
+import Zmqx.Pair
+import Zmqx.Pub
 
 class TaskAcceptor t where
   recvTask :: Task t -> LotosAppMonad ()
@@ -39,6 +44,15 @@ data WorkerService t w
     ver :: Int
   }
 
+data SocketLayer t w = SocketLayer
+  { workerDealer :: Zmqx.Dealer,
+    workerPub :: Zmqx.Pub,
+    workerDealerPair :: Zmqx.Pair,
+    workerPubPair :: Zmqx.Pair
+  }
+
+----------------------------------------------------------------------------------------------------
+
 mkWorkerService ::
   (TaskAcceptor (Task t), StatusReporter w) =>
   WorkerServiceConfig ->
@@ -52,3 +66,6 @@ mkWorkerService WorkerServiceConfig {..} ta sr = do
 
 runWorkerService :: WorkerServiceConfig -> LotosAppMonad ()
 runWorkerService = undefined
+
+socketLoop :: (FromZmq t, ToZmq t, ToZmq w) => Zmqx.Sockets -> SocketLayer t w -> LotosAppMonad ()
+socketLoop pollItems = undefined

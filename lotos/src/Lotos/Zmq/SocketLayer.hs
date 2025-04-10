@@ -66,7 +66,8 @@ runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = d
       socketLayer = SocketLayer frontend backend receiverPair senderPair tq ftq wtm wsm gbb 0
 
   -- Start the event loop in a separate thread
-  liftIO . forkIO =<< runLotosAppWithState <$> ask <*> get <*> pure (layerLoop pollItems socketLayer)
+  liftIO . forkIO . Zmqx.run Zmqx.defaultOptions
+    =<< runLotosAppWithState <$> ask <*> get <*> pure (layerLoop pollItems socketLayer)
 
 -- event loop
 layerLoop :: (FromZmq t, ToZmq t, FromZmq w) => Zmqx.Sockets -> SocketLayer t w -> LotosAppMonad ()
