@@ -51,11 +51,11 @@ data LBSConfig = LBSConfig
   deriving (Show, Generic, Aeson.FromJSON)
 
 runLBS ::
-  forall (name :: Symbol) t w a.
-  (LBConstraint name t w, LoadBalancerAlgo (Task t) w) =>
+  forall (name :: Symbol) lb t w.
+  (LBConstraint name t w, LoadBalancerAlgo lb (Task t) w) =>
   Proxy name ->
   LBSConfig ->
-  a ->
+  lb ->
   LotosAppMonad ()
 runLBS n LBSConfig {..} loadBalancer = do
   logInfoR "runLBS start!"

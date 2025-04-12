@@ -29,15 +29,15 @@ import Zmqx.Router
 ----------------------------------------------------------------------------------------------------
 
 data SocketLayer t w = SocketLayer
-  { frontendRouter :: Zmqx.Router,
-    backendRouter :: Zmqx.Router,
-    backendReceiver :: Zmqx.Pair,
-    backendSender :: Zmqx.Pair,
-    taskQueue :: TSQueue (Task t), -- frontend put message
-    failedTaskQueue :: TSQueue (Task t), -- backend put message
-    workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modify map
-    workerStatusMap :: TSWorkerStatusMap w, -- backend modify map
-    garbageBin :: TSRingBuffer (Task t), -- backend discard tasks
+  { frontendRouter :: Zmqx.Router, -- receives message (tasks) from clients (external)
+    backendRouter :: Zmqx.Router, -- receives message (worker status) from workers (external)
+    backendReceiver :: Zmqx.Pair, -- receives message (tasks) from TaskProcessor's load balancer (cross-threads)
+    backendSender :: Zmqx.Pair, -- sends message (notifies) to TaskProcessor's event trigger (cross-threads)
+    taskQueue :: TSQueue (Task t), -- frontend puts message
+    failedTaskQueue :: TSQueue (Task t), -- backend puts message
+    workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modifies map
+    workerStatusMap :: TSWorkerStatusMap w, -- backend modifies map
+    garbageBin :: TSRingBuffer (Task t), -- backend discards tasks
     ver :: Int
   }
 
@@ -71,9 +71,8 @@ runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = d
 
 -- event loop
 layerLoop :: (FromZmq t, ToZmq t, FromZmq w) => Zmqx.Sockets -> SocketLayer t w -> LotosAppMonad ()
-layerLoop pollItems layer = do
-  result <- liftIO $ Zmqx.poll pollItems
-  case result of
+layerLoop pollItems layer =
+  liftIO (Zmqx.poll pollItems) >>= \case
     Left e -> logErrorR $ show e
     Right ready -> do
       handleFrontend layer ready

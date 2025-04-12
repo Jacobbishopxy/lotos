@@ -15,7 +15,7 @@ module Lotos.Zmq.TaskProcessor
 where
 
 import Control.Concurrent (ThreadId, forkIO)
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import Control.Monad.RWS
 import Data.Map.Strict qualified as Map
 import Data.Time (getCurrentTime)
@@ -45,19 +45,16 @@ data ScheduledResult t w
     tasksLeft :: [t]
   }
 
-class LoadBalancerAlgo t w where
-  -- given a task, choose a worker or failed
-  scheduleTask :: [(RoutingID, w)] -> t -> Maybe RoutingID
-
+class LoadBalancerAlgo lb t w where
   -- given a list of tasks, return worker and task pairs
-  scheduleTasks :: [(RoutingID, w)] -> [t] -> ScheduledResult t w
+  scheduleTasks :: lb -> [(RoutingID, w)] -> [t] -> (lb, ScheduledResult t w)
 
 ----------------------------------------------------------------------------------------------------
 -- TaskProcessor
 ----------------------------------------------------------------------------------------------------
 
-data TaskProcessor t w
-  = forall a. (LoadBalancerAlgo (Task t) w) => TaskProcessor
+data TaskProcessor lb t w
+  = (LoadBalancerAlgo lb (Task t) w) => TaskProcessor
   { lbReceiver :: Zmqx.Pair,
     lbSender :: Zmqx.Pair,
     taskQueue :: TSQueue (Task t),
@@ -65,7 +62,7 @@ data TaskProcessor t w
     workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modify map
     workerStatusMap :: TSWorkerStatusMap w, -- backend modify map
     garbageBin :: TSRingBuffer (Task t), -- backend discard tasks
-    loadBalancer :: a,
+    loadBalancer :: lb,
     trigger :: EventTrigger,
     ver :: Int
   }
@@ -73,11 +70,11 @@ data TaskProcessor t w
 ----------------------------------------------------------------------------------------------------
 
 runTaskProcessor ::
-  forall t w a.
-  (FromZmq t, ToZmq t, FromZmq w, LoadBalancerAlgo (Task t) w) =>
+  forall lb t w.
+  (FromZmq t, ToZmq t, FromZmq w, LoadBalancerAlgo lb (Task t) w) =>
   TaskProcessorConfig ->
   TaskSchedulerData t w ->
-  a ->
+  lb ->
   LotosAppMonad ThreadId
 runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) loadBalancer = do
   logInfoR "runTaskProcessor"
@@ -97,10 +94,10 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
     =<< runLotosAppWithState <$> ask <*> get <*> pure (processorLoop config taskProcessor)
 
 processorLoop ::
-  forall t w.
-  (FromZmq t, ToZmq t, FromZmq w, LoadBalancerAlgo (Task t) w) =>
+  forall lb t w.
+  (FromZmq t, ToZmq t, FromZmq w, LoadBalancerAlgo lb (Task t) w) =>
   TaskProcessorConfig ->
-  TaskProcessor t w ->
+  TaskProcessor lb t w ->
   LotosAppMonad ()
 processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   -- 0. accumulate ack and record time; according to the trigger, enter into a new loop or continue
@@ -115,8 +112,8 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
         Right (Notify ack) -> logDebugR $ "processorLoop -> lbReceiver(ack): " <> show ack
     Nothing -> logDebugR $ "processorLoop -> lbReceiver(none): " <> show now
 
-  -- 2. only when the trigger is activated, we will call the load-balancer algo
-  when (not shouldProcess) $
+  -- 2. only when the trigger is activated, process the load-balancer algo
+  unless shouldProcess $
     processorLoop cfg tp {trigger = newTrigger}
 
   -- 3. get worker status: [w]
@@ -129,7 +126,7 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   -- 5. perform load-balancer algo: `[w] -> [t] -> ([(RoutingID, t)], [t])`
   let tasksMap = tasksToMap tasks
       failedTasksMap = tasksToMap failedTasks
-      ScheduledResult tasksTodo leftTasks = scheduleTasks workerStatuses $ tasks <> failedTasks
+      (newLoadBalancer, ScheduledResult tasksTodo leftTasks) = scheduleTasks loadBalancer workerStatuses $ tasks <> failedTasks
       (invalidTasks, leftTasks') = tasksFilter tasksMap leftTasks
       (invalidFailedTasks, leftTasks'') = tasksFilter failedTasksMap leftTasks'
       errLen = length leftTasks''
@@ -147,7 +144,7 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   liftIO $ enqueueTSs invalidFailedTasks failedTaskQueue
 
   -- 8. loop
-  processorLoop cfg tp {trigger = newTrigger}
+  processorLoop cfg tp {trigger = newTrigger, loadBalancer = newLoadBalancer}
 
 ----------------------------------------------------------------------------------------------------
 
