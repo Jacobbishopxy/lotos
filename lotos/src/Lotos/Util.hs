@@ -4,26 +4,26 @@
 -- brief:
 
 module Lotos.Util
-  ( (!?),
+  ( -- (!?),
     either2Maybe,
     maybe2Either,
   )
 where
 
 -- safe `!!`
-(!?) :: [a] -> Int -> Maybe a
-{-# INLINEABLE (!?) #-}
-xs !? n
-  | n < 0 = Nothing
-  | otherwise =
-      foldr
-        ( \x r k -> case k of
-            0 -> Just x
-            _ -> r (k - 1)
-        )
-        (const Nothing)
-        xs
-        n
+-- (!?) :: [a] -> Int -> Maybe a
+-- {-# INLINEABLE (!?) #-}
+-- xs !? n
+--   | n < 0 = Nothing
+--   | otherwise =
+--       foldr
+--         ( \x r k -> case k of
+--             0 -> Just x
+--             _ -> r (k - 1)
+--         )
+--         (const Nothing)
+--         xs
+--         n
 
 either2Maybe :: Either e a -> Maybe a
 either2Maybe d = case d of

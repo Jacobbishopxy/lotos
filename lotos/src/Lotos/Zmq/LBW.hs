@@ -22,6 +22,7 @@ where
 import Control.Concurrent (ThreadId, forkIO)
 import Control.Monad (unless)
 import Control.Monad.RWS
+import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Lotos.Logger
 import Lotos.TSD.Queue
@@ -35,17 +36,18 @@ import Zmqx.Pub
 ----------------------------------------------------------------------------------------------------
 
 class TaskAcceptor ta t where
-  processTask :: ta -> Task t -> LotosAppMonad ta
+  processTasks :: ta -> [Task t] -> LotosAppMonad ta
 
 class StatusReporter sr w where
   gatherStatus :: sr -> LotosAppMonad (sr, w)
 
 data WorkerService ta sr t w
-  = (TaskAcceptor ta (Task t), StatusReporter sr w) => WorkerService
+  = (TaskAcceptor ta t, StatusReporter sr w) => WorkerService
   { acceptor :: ta,
     reporter :: sr,
     taskQueue :: TSQueue (Task t),
     trigger :: EventTrigger,
+    -- TODO: needs a controller to tell `tasksExecLoop` when to start executing tasks
     conf :: WorkerServiceConfig
   }
 
@@ -59,7 +61,7 @@ data SocketLayer
 ----------------------------------------------------------------------------------------------------
 
 mkWorkerService ::
-  (TaskAcceptor ta (Task t), StatusReporter sr w) =>
+  (TaskAcceptor ta t, StatusReporter sr w) =>
   WorkerServiceConfig ->
   ta -> -- task acceptor
   sr -> -- status reporter
@@ -71,7 +73,7 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
 
 runWorkerService ::
   forall ta sr t w.
-  (FromZmq t, ToZmq w, TaskAcceptor ta (Task t), StatusReporter sr w) =>
+  (FromZmq t, ToZmq w, TaskAcceptor ta t, StatusReporter sr w) =>
   WorkerService ta sr t w ->
   LotosAppMonad (ThreadId, ThreadId)
 runWorkerService ws@WorkerService {..} = do
@@ -88,7 +90,7 @@ runWorkerService ws@WorkerService {..} = do
       =<< runLotosAppWithState <$> ask <*> get <*> pure (socketLoop ws sl)
 
   tid2 <-
-    liftIO . forkIO =<< runLotosAppWithState <$> ask <*> get <*> pure (tasksExecutor ws)
+    liftIO . forkIO =<< runLotosAppWithState <$> ask <*> get <*> pure (tasksExecLoop ws)
 
   return (tid1, tid2)
 
@@ -121,9 +123,20 @@ socketLoop ws@WorkerService {..} layer@SocketLayer {..} = do
   -- loop
   socketLoop (ws {trigger = newTrigger, reporter = newReporter} :: WorkerService ta sr t w) layer
 
-tasksExecutor ::
+tasksExecLoop ::
   forall ta sr t w.
-  (FromZmq t, TaskAcceptor ta (Task t)) =>
+  (FromZmq t, TaskAcceptor ta t) =>
   WorkerService ta sr t w ->
   LotosAppMonad ()
-tasksExecutor = undefined
+tasksExecLoop ws@WorkerService {..} = do
+  logDebugR "tasksExecLoop -> start dequeuing tasks..."
+  tasks <- liftIO $ dequeueN' (parallelTasksNo conf) taskQueue
+
+  -- Note: blocking should be controlled by the acceptor
+  logDebugR $ "tasksExecLoop -> start processing tasks, len: " <> show (length tasks)
+  newAcceptor <- processTasks acceptor tasks
+
+  tasksExecLoop (ws {acceptor = newAcceptor} :: WorkerService ta sr t w)
+
+pubTaskLogging :: WorkerService ta sr t w -> Text.Text -> Text.Text -> LotosAppMonad ()
+pubTaskLogging WorkerService {..} topic logText = undefined
