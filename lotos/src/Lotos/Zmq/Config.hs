@@ -4,7 +4,7 @@
 -- brief:
 
 module Lotos.Zmq.Config
-  ( -- loadbalancer server config
+  ( -- * loadbalancer server config
     socketLayerSenderAddr,
     taskProcessorSenderAddr,
     TaskSchedulerData (..),
@@ -13,10 +13,11 @@ module Lotos.Zmq.Config
     TaskProcessorConfig (..),
     InfoStorageConfig (..),
     LBConstraint,
-    -- loadbalancer worker config
+
+    -- * loadbalancer worker config
     WorkerServiceConfig (..),
-    -- loadbalancer client config
-    -- TODO
+
+    -- * loadbalancer client config
   )
 where
 
@@ -92,7 +93,9 @@ data InfoStorageConfig = InfoStorageConfig
 
 data WorkerServiceConfig = WorkerServiceConfig
   { loadBalancerBackendAddr :: Text.Text, -- backend address
-    workerStatusReportIntervalSec :: Int -- heartbeat interval
+    loadBalancerLoggingAddr :: Text.Text, -- backend logging address
+    workerStatusReportIntervalSec :: Int, -- heartbeat interval
+    parallelTasksNo :: Int -- number of parallel tasks
   }
 
 ----------------------------------------------------------------------------------------------------

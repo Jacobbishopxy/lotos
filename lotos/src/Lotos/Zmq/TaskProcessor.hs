@@ -112,9 +112,8 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
         Right (Notify ack) -> logDebugR $ "processorLoop -> lbReceiver(ack): " <> show ack
     Nothing -> logDebugR $ "processorLoop -> lbReceiver(none): " <> show now
 
-  -- 2. only when the trigger is activated, process the load-balancer algo
-  unless shouldProcess $
-    processorLoop cfg tp {trigger = newTrigger}
+  -- 2. when the trigger is inactivated, enter into a new loop
+  unless shouldProcess $ processorLoop cfg tp {trigger = newTrigger}
 
   -- 3. get worker status: [w]
   workerStatuses <- liftIO $ toListMap workerStatusMap
