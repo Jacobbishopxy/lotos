@@ -204,9 +204,11 @@ handleOtherTaskStatus wID uuid status = do
   -- check if task exists
   v <- liftIO $ lookupTSWorkerTasks' wID (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
   case v of
-    Nothing -> lift $ logErrorR $ "handleBackend -> " <> show status <> ": uuid not found: " <> show uuid
+    Nothing ->
+      lift $ logErrorR $ "handleBackend -> " <> show status <> ": uuid not found: " <> show uuid
     -- modify task status
-    Just (_, task, _) -> liftIO $ modifyTSWorkerTasks' wID (uuid, task, status) (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
+    Just (_, task, _) ->
+      liftIO $ modifyTSWorkerTasks' wID (uuid, task, status) (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
   -- notify load-balancer
   notifyLoadBalancer
 

@@ -152,7 +152,12 @@ apiServer _ infoStorage = getInfo
 -- Zmq & Event Loop
 
 -- | The main loop of the info storage server
-infoLoop :: forall name t w. (FromZmq t, ToZmq t, FromZmq w) => InfoStorageServer name t w -> TaskSchedulerData t w -> LotosAppMonad ()
+infoLoop ::
+  forall name t w.
+  (FromZmq t, ToZmq t, FromZmq w) =>
+  InfoStorageServer name t w ->
+  TaskSchedulerData t w ->
+  LotosAppMonad ()
 infoLoop iss@InfoStorageServer {..} layer = do
   -- 0. record time and according to the trigger, enter into a new loop or continue
   now <- liftIO getCurrentTime
@@ -164,37 +169,42 @@ infoLoop iss@InfoStorageServer {..} layer = do
       Just bs -> case bs of
         (topicBs : logDataBs) -> do
           let routingID = decodeUtf8 topicBs
-          case fromZmq @(WorkerLogging) logDataBs of
-            Left e -> logErrorR ("infoLoop -> loggingsSubscriber: " <> show e) >> return subscriberInfo
+          case fromZmq @WorkerLogging logDataBs of
+            Left e ->
+              logErrorR ("infoLoop -> loggingsSubscriber: " <> show e) >> return subscriberInfo
             Right wl ->
               case Map.lookup routingID subscriberInfo of
-                Just ringBuffer -> liftIO $ writeBuffer ringBuffer wl >> return subscriberInfo
+                Just ringBuffer ->
+                  liftIO $ writeBuffer ringBuffer wl >> return subscriberInfo
                 Nothing -> do
-                  newBuffer <- liftIO $ mkTSRingBuffer' loggingBufferSize wl
-                  let newSI = Map.insert routingID newBuffer subscriberInfo
                   logDebugR $ "infoLoop -> loggingsSubscriber: new buffer for " <> show routingID
-                  pure newSI
-        _ -> logErrorR "infoLoop -> loggingsSubscriber: error message type" >> return subscriberInfo
-      Nothing -> logDebugR ("infoLoop -> loggingsSubscriber(none): " <> show now) >> return subscriberInfo
+                  newBuffer <- liftIO $ mkTSRingBuffer' loggingBufferSize wl
+                  pure $ Map.insert routingID newBuffer subscriberInfo
+        _ ->
+          logErrorR "infoLoop -> loggingsSubscriber: error message type" >> return subscriberInfo
+      Nothing ->
+        logDebugR ("infoLoop -> loggingsSubscriber(none): " <> show now) >> return subscriberInfo
 
   -- 2. only when the trigger is activated, we will process the info
   when (not shouldProcess) $
     infoLoop iss {subscriberInfo = si, trigger = newTrigger} layer
 
   -- 3. process the info, `TaskSchedulerData` -> `InfoStorage`; Update the shared `infoStorage` using `MVar`
-  newIS <- makeInfoStorage layer si
+  newIS <- mkInfoStorage layer si
   liftIO $ modifyMVar_ infoStorage $ \_ -> pure newIS
 
   -- 4. loop
   infoLoop iss {trigger = newTrigger} layer
 
+----------------------------------------------------------------------------------------------------
+
 -- | Create a new `InfoStorage` from `TaskSchedulerData` and `SubscriberInfo`
-makeInfoStorage ::
+mkInfoStorage ::
   (FromZmq t, ToZmq t, FromZmq w) =>
   TaskSchedulerData t w ->
   SubscriberInfo ->
   LotosAppMonad (InfoStorage t w)
-makeInfoStorage (TaskSchedulerData tq ftq wtm wsm gbb) si = do
+mkInfoStorage (TaskSchedulerData tq ftq wtm wsm gbb) si = do
   tasksInQueue <- liftIO $ readQueue' tq
   tasksInFailedQueue <- liftIO $ readQueue' ftq
   workerTasksMap <- liftIO $ Map.map (map (\(_, task, _) -> task)) <$> toMapTSWorkerTasks wtm

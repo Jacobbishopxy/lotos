@@ -43,6 +43,10 @@ module Lotos.Zmq.Adt
     RouterBackendOut (..),
     RouterBackendIn (..),
 
+    -- * worker send message
+    WorkerReportStatus (..),
+    WorkerReportTaskStatus (..),
+
     -- * backend pair
     Notify (..),
 
@@ -283,14 +287,14 @@ data RouterBackendIn w
   = WorkerStatus
       RoutingID -- workerID
       WorkerMsgType -- msg type
-      Ack -- ack
+      Ack
       w -- worker status
   | WorkerTaskStatus
       RoutingID -- workerID
       WorkerMsgType -- msg type
-      Ack -- ack
-      UUID.UUID -- taskID
-      TaskStatus -- task status
+      Ack
+      TaskID
+      TaskStatus
 
 instance (ToZmq t) => ToZmq (RouterBackendOut t) where
   toZmq (WorkerTask workerID task) =
@@ -320,6 +324,28 @@ instance (FromZmq w) => FromZmq (RouterBackendIn w) where
             return $ WorkerTaskStatus workerID WorkerTaskStatusT ack uuid status
           _ -> Left $ ZmqParsing "Invalid format for RouterBackendIn.WorkerReplyT"
   fromZmq _ = Left $ ZmqParsing "Invalid format for RouterBackendIn"
+
+----------------------------------------------------------------------------------------------------
+-- Worker message
+
+data WorkerReportStatus w
+  = WorkerReportStatus
+      Ack
+      w
+
+data WorkerReportTaskStatus
+  = WorkerReportTaskStatus
+      Ack
+      TaskID
+      TaskStatus
+
+instance (ToZmq w) => ToZmq (WorkerReportStatus w) where
+  toZmq (WorkerReportStatus ack w) =
+    toZmq WorkerStatusT <> toZmq ack <> toZmq w
+
+instance ToZmq WorkerReportTaskStatus where
+  toZmq (WorkerReportTaskStatus ack tid ts) =
+    toZmq WorkerTaskStatusT <> toZmq ack <> [uuidToBS tid] <> toZmq ts
 
 ----------------------------------------------------------------------------------------------------
 

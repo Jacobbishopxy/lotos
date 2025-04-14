@@ -7,8 +7,8 @@
 --
 -- 1. Acceptor (Dealer) asynchronously receives tasks from the backend socket.
 -- 2. Reporter (Dealer) periodically sends worker status to the backend socket.
--- 3. Sender (Pair -> Dealer) cross thread sends tasks to the backend socket.
--- 4. Publisher (Pair -> Pub) cross thread sends logging messages to the logging socket.
+-- 3. Sender (Dealer) sends tasks to the backend socket.
+-- 4. Publisher (Pub) sends logging messages to the logging socket.
 
 module Lotos.Zmq.LBW
   ( TaskAcceptor (..),
@@ -17,6 +17,7 @@ module Lotos.Zmq.LBW
     mkWorkerService,
     runWorkerService,
     pubTaskLogging,
+    sendTaskStatus,
   )
 where
 
@@ -116,7 +117,9 @@ socketLoop ws@WorkerService {..} = do
 
   -- 3. gather & send worker status (due to EventTrigger, it sends worker status periodically
   (newReporter, workerStatus :: w) <- gatherStatus reporter
-  zmqUnwrap $ Zmqx.sends workerDealer $ toZmq workerStatus
+  -- construct `WorkerReportStatus`
+  ack <- liftIO newAck
+  zmqUnwrap $ Zmqx.sends workerDealer $ toZmq $ WorkerReportStatus ack workerStatus
 
   -- loop
   socketLoop (ws {trigger = newTrigger, reporter = newReporter} :: WorkerService ta sr t w)
@@ -139,3 +142,8 @@ tasksExecLoop ws@WorkerService {..} = do
 pubTaskLogging :: WorkerService ta sr t w -> WorkerLogging -> LotosAppMonad ()
 pubTaskLogging WorkerService {..} wl =
   zmqUnwrap $ Zmqx.sends workerPub $ toZmq wl
+
+sendTaskStatus :: WorkerService ta sr t w -> TaskID -> TaskStatus -> LotosAppMonad ()
+sendTaskStatus WorkerService {..} tid ts = do
+  ack <- liftIO newAck
+  zmqUnwrap $ Zmqx.sends workerDealer $ toZmq $ WorkerReportTaskStatus ack tid ts
