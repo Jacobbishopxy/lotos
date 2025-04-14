@@ -45,7 +45,7 @@ data InfoStorage t w = InfoStorage
     tasksInGarbageBin :: [Task t],
     workerTasksMap :: Map.Map RoutingID [Task t],
     workerStatusMap :: Map.Map RoutingID w,
-    workerLoggingsMap :: Map.Map RoutingID [Text.Text]
+    workerLoggingsMap :: Map.Map RoutingID [(Text.Text, Text.Text)] -- Value: [(taskID, logging text)]
   }
   deriving (Show, Generic)
 
@@ -64,7 +64,7 @@ instance
   (Aeson.ToJSON t, Aeson.ToJSON w, Aeson.ToJSON (Task t)) =>
   Aeson.ToJSON (InfoStorage t w)
 
-type SubscriberInfo = Map.Map RoutingID (TSRingBuffer Text.Text)
+type SubscriberInfo = Map.Map RoutingID (TSRingBuffer WorkerLogging)
 
 data InfoStorageServer (name :: Symbol) t w = InfoStorageServer
   { loggingsSubscriber :: Zmqx.Sub,
@@ -164,14 +164,16 @@ infoLoop iss@InfoStorageServer {..} layer = do
       Just bs -> case bs of
         (topicBs : logDataBs) -> do
           let routingID = decodeUtf8 topicBs
-              logText = Text.intercalate "\n" (map decodeUtf8 logDataBs)
-          case Map.lookup routingID subscriberInfo of
-            Just ringBuffer -> liftIO $ writeBuffer ringBuffer logText >> return subscriberInfo
-            Nothing -> do
-              newBuffer <- liftIO $ mkTSRingBuffer' loggingBufferSize logText
-              let newSI = Map.insert routingID newBuffer subscriberInfo
-              logDebugR $ "infoLoop -> loggingsSubscriber: new buffer for " <> show routingID
-              pure newSI
+          case fromZmq @(WorkerLogging) logDataBs of
+            Left e -> logErrorR ("infoLoop -> loggingsSubscriber: " <> show e) >> return subscriberInfo
+            Right wl ->
+              case Map.lookup routingID subscriberInfo of
+                Just ringBuffer -> liftIO $ writeBuffer ringBuffer wl >> return subscriberInfo
+                Nothing -> do
+                  newBuffer <- liftIO $ mkTSRingBuffer' loggingBufferSize wl
+                  let newSI = Map.insert routingID newBuffer subscriberInfo
+                  logDebugR $ "infoLoop -> loggingsSubscriber: new buffer for " <> show routingID
+                  pure newSI
         _ -> logErrorR "infoLoop -> loggingsSubscriber: error message type" >> return subscriberInfo
       Nothing -> logDebugR ("infoLoop -> loggingsSubscriber(none): " <> show now) >> return subscriberInfo
 
@@ -207,5 +209,5 @@ makeInfoStorage (TaskSchedulerData tq ftq wtm wsm gbb) si = do
         tasksInGarbageBin = tasksInGarbageBin,
         workerTasksMap = workerTasksMap,
         workerStatusMap = workerStatusMap,
-        workerLoggingsMap = workerLoggingsMap
+        workerLoggingsMap = Map.map (workerLoggingToTextTuple <$>) workerLoggingsMap
       }

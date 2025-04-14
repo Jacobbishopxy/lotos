@@ -92,7 +92,8 @@ data InfoStorageConfig = InfoStorageConfig
 ----------------------------------------------------------------------------------------------------
 
 data WorkerServiceConfig = WorkerServiceConfig
-  { loadBalancerBackendAddr :: Text.Text, -- backend address
+  { workerId :: Text.Text, -- worker ID for Zmq.Dealer & pub topic for Zmq.Pub
+    loadBalancerBackendAddr :: Text.Text, -- backend address
     loadBalancerLoggingAddr :: Text.Text, -- backend logging address
     workerStatusReportIntervalSec :: Int, -- heartbeat interval
     parallelTasksNo :: Int -- number of parallel tasks

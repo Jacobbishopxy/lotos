@@ -8,6 +8,8 @@ module Lotos.Zmq.Util
     textFromBS,
     intFromBS,
     intToBS,
+    uuidToBS,
+    uuidFromBS,
     uuidOptToBS,
     uuidOptFromBS,
   )
@@ -38,9 +40,17 @@ intFromBS bs = case BC.readInt bs of
   Just (i, "") -> Right i
   _ -> Left (ZmqParsing $ "Invalid Int: " <> T.pack (BC.unpack bs))
 
+uuidToBS :: UUID.UUID -> B.ByteString
+uuidToBS uuid = BC.pack (UUID.toString uuid)
+
+uuidFromBS :: B.ByteString -> Either ZmqError UUID.UUID
+uuidFromBS bs = case UUID.fromString (BC.unpack bs) of
+  Just uuid -> Right uuid
+  Nothing -> Left $ ZmqParsing "Invalid UUID format"
+
 uuidOptToBS :: Maybe UUID.UUID -> B.ByteString
 uuidOptToBS Nothing = B.empty
-uuidOptToBS (Just uuid) = BC.pack (UUID.toString uuid)
+uuidOptToBS (Just uuid) = uuidToBS uuid
 
 uuidOptFromBS :: B.ByteString -> Either ZmqError (Maybe UUID.UUID)
 uuidOptFromBS bs

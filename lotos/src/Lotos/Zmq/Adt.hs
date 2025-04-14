@@ -46,6 +46,10 @@ module Lotos.Zmq.Adt
     -- * backend pair
     Notify (..),
 
+    -- * worker logging
+    WorkerLogging (..),
+    workerLoggingToTextTuple,
+
     -- * worker tasks map
     TSWorkerTasksMap,
     newTSWorkerTasksMap,
@@ -330,6 +334,21 @@ instance ToZmq Notify where
 
 instance FromZmq Notify where
   fromZmq bs = Notify <$> fromZmq bs
+
+----------------------------------------------------------------------------------------------------
+
+data WorkerLogging = WorkerLogging TaskID Text.Text
+  deriving (Show)
+
+instance ToZmq WorkerLogging where
+  toZmq (WorkerLogging tid txt) = [uuidToBS tid, textToBS txt]
+
+instance FromZmq WorkerLogging where
+  fromZmq [tidB, txtB] = WorkerLogging <$> uuidFromBS tidB <*> textFromBS txtB
+  fromZmq _ = Left $ ZmqParsing "Invalid format for WorkerLogging"
+
+workerLoggingToTextTuple :: WorkerLogging -> (Text.Text, Text.Text)
+workerLoggingToTextTuple (WorkerLogging tid txt) = (UUID.toText tid, txt)
 
 ----------------------------------------------------------------------------------------------------
 -- WorkerTasksMap
