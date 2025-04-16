@@ -46,12 +46,12 @@ library
     Lotos.Zmq.Adt
     Lotos.Zmq.Config
     Lotos.Zmq.Error
-    Lotos.Zmq.InfoStorage
     Lotos.Zmq.LBC
     Lotos.Zmq.LBS
+    Lotos.Zmq.LBS.InfoStorage
+    Lotos.Zmq.LBS.SocketLayer
+    Lotos.Zmq.LBS.TaskProcessor
     Lotos.Zmq.LBW
-    Lotos.Zmq.SocketLayer
-    Lotos.Zmq.TaskProcessor
     Lotos.Zmq.Util
 
   -- other-extensions:

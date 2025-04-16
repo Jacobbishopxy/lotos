@@ -5,7 +5,7 @@
 -- date: 2025/03/11 09:27:59 Tuesday
 -- brief:
 
-module Lotos.Zmq.SocketLayer
+module Lotos.Zmq.LBS.SocketLayer
   ( runSocketLayer,
   )
 where

@@ -7,7 +7,7 @@
 -- date: 2025/03/25 13:06:51 Tuesday
 -- brief:
 
-module Lotos.Zmq.InfoStorage
+module Lotos.Zmq.LBS.InfoStorage
   ( runInfoStorage,
   )
 where

@@ -5,7 +5,7 @@
 -- date: 2025/03/20 21:33:41 Thursday
 -- brief:
 
-module Lotos.Zmq.TaskProcessor
+module Lotos.Zmq.LBS.TaskProcessor
   ( ScheduledResult (..),
     LoadBalancerAlgo (..),
     TaskProcessorConfig (..),

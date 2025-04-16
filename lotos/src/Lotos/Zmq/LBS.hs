@@ -27,9 +27,9 @@ import Lotos.TSD.Queue
 import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
-import Lotos.Zmq.InfoStorage
-import Lotos.Zmq.SocketLayer
-import Lotos.Zmq.TaskProcessor
+import Lotos.Zmq.LBS.InfoStorage
+import Lotos.Zmq.LBS.SocketLayer
+import Lotos.Zmq.LBS.TaskProcessor
 
 ----------------------------------------------------------------------------------------------------
 
