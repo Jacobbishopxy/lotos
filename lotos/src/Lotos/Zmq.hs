@@ -8,25 +8,16 @@ module Lotos.Zmq
     module Lotos.Zmq.Adt,
 
     -- * config
-    TaskSchedulerData (..),
-    TaskSchedulerConfig (..),
-    SocketLayerConfig (..),
-    TaskProcessorConfig (..),
-    InfoStorageConfig (..),
+    WorkerServiceConfig (..),
+    ClientServiceConfig (..),
 
     -- * error
     ZmqError (..),
 
-    -- * info storage
-    runInfoStorage,
-
-    -- * socket layer
-    runSocketLayer,
-
-    -- * task processor
-    runTaskProcessor,
-
     -- * load balancer server
+    ScheduledResult (..),
+    LoadBalancerAlgo (..),
+    LBSConfig (..),
     runLBS,
 
     -- * load balancer worker
@@ -37,15 +28,15 @@ module Lotos.Zmq
     runWorkerService,
 
     -- * load balancer client
+    ClientService,
+    mkClientService,
+    sendTaskRequest,
   )
 where
 
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
-import Lotos.Zmq.InfoStorage
 import Lotos.Zmq.LBC
 import Lotos.Zmq.LBS
 import Lotos.Zmq.LBW
-import Lotos.Zmq.SocketLayer
-import Lotos.Zmq.TaskProcessor

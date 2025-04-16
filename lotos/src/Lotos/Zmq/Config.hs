@@ -18,6 +18,7 @@ module Lotos.Zmq.Config
     WorkerServiceConfig (..),
 
     -- * loadbalancer client config
+    ClientServiceConfig (..),
   )
 where
 
@@ -103,4 +104,8 @@ data WorkerServiceConfig = WorkerServiceConfig
 -- LoadBalancer Client Config
 ----------------------------------------------------------------------------------------------------
 
--- TODO
+data ClientServiceConfig = ClientServiceConfig
+  { clientId :: Text.Text,
+    loadBalancerFrontendAddr :: Text.Text,
+    reqTimeoutSec :: Int
+  }

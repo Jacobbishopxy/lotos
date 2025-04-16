@@ -8,7 +8,10 @@
 -- brief:
 
 module Lotos.Zmq.LBS
-  ( runLBS,
+  ( ScheduledResult (..),
+    LoadBalancerAlgo (..),
+    LBSConfig (..),
+    runLBS,
   )
 where
 
