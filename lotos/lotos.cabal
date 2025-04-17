@@ -150,3 +150,50 @@ executable cron-search
     , vector
     , vty
     , vty-crossplatform
+
+------------------------------------------------------------------------------------------------
+
+executable ts-server
+  import:         shared-properties
+  hs-source-dirs: bin
+  main-is:        TaskScheduleServer.hs
+  ghc-options:    -Wall
+  other-modules:
+    TaskSchedule.Adt
+    TaskSchedule.Server
+    TaskSchedule.Util
+
+  build-depends:
+    , base
+    , lotos
+    , text
+
+executable ts-worker
+  import:         shared-properties
+  hs-source-dirs: bin
+  main-is:        TaskScheduleWorker.hs
+  ghc-options:    -Wall
+  other-modules:
+    TaskSchedule.Adt
+    TaskSchedule.Util
+    TaskSchedule.Worker
+
+  build-depends:
+    , base
+    , lotos
+    , text
+
+executable ts-client
+  import:         shared-properties
+  hs-source-dirs: bin
+  main-is:        TaskScheduleClient.hs
+  ghc-options:    -Wall
+  other-modules:
+    TaskSchedule.Adt
+    TaskSchedule.Client
+    TaskSchedule.Util
+
+  build-depends:
+    , base
+    , lotos
+    , text
