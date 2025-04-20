@@ -133,7 +133,7 @@ executable cron-search
   import:         shared-properties
   hs-source-dirs: bin
   main-is:        CronSearch.hs
-  ghc-options:    -threaded -Wall -Wcompat -O2
+  ghc-options:    -threaded -Wcompat -O2
   other-modules:
     CronSearch.Adt
     CronSearch.Util
@@ -157,7 +157,7 @@ executable ts-server
   import:         shared-properties
   hs-source-dirs: bin
   main-is:        TaskScheduleServer.hs
-  ghc-options:    -Wall
+  ghc-options:
   other-modules:
     TaskSchedule.Adt
     TaskSchedule.Server
@@ -166,13 +166,14 @@ executable ts-server
   build-depends:
     , base
     , lotos
+    , process
     , text
 
 executable ts-worker
   import:         shared-properties
   hs-source-dirs: bin
   main-is:        TaskScheduleWorker.hs
-  ghc-options:    -Wall
+  ghc-options:
   other-modules:
     TaskSchedule.Adt
     TaskSchedule.Util
@@ -181,13 +182,14 @@ executable ts-worker
   build-depends:
     , base
     , lotos
+    , process
     , text
 
 executable ts-client
   import:         shared-properties
   hs-source-dirs: bin
   main-is:        TaskScheduleClient.hs
-  ghc-options:    -Wall
+  ghc-options:
   other-modules:
     TaskSchedule.Adt
     TaskSchedule.Client
@@ -196,4 +198,5 @@ executable ts-client
   build-depends:
     , base
     , lotos
+    , process
     , text

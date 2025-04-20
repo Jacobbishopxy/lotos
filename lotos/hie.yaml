@@ -26,3 +26,39 @@ cradle:
 
     - path: "bin/CronSearch/Util.hs"
       component: "lotos:exe:cron-search"
+
+    - path: "bin/TaskScheduleServer.hs"
+      component: "lotos:exe:ts-server"
+
+    - path: "bin/TaskSchedule/Adt.hs"
+      component: "lotos:exe:ts-server"
+
+    - path: "bin/TaskSchedule/Server.hs"
+      component: "lotos:exe:ts-server"
+
+    - path: "bin/TaskSchedule/Util.hs"
+      component: "lotos:exe:ts-server"
+
+    - path: "bin/TaskScheduleWorker.hs"
+      component: "lotos:exe:ts-worker"
+
+    - path: "bin/TaskSchedule/Adt.hs"
+      component: "lotos:exe:ts-worker"
+
+    - path: "bin/TaskSchedule/Util.hs"
+      component: "lotos:exe:ts-worker"
+
+    - path: "bin/TaskSchedule/Worker.hs"
+      component: "lotos:exe:ts-worker"
+
+    - path: "bin/TaskScheduleClient.hs"
+      component: "lotos:exe:ts-client"
+
+    - path: "bin/TaskSchedule/Adt.hs"
+      component: "lotos:exe:ts-client"
+
+    - path: "bin/TaskSchedule/Client.hs"
+      component: "lotos:exe:ts-client"
+
+    - path: "bin/TaskSchedule/Util.hs"
+      component: "lotos:exe:ts-client"
