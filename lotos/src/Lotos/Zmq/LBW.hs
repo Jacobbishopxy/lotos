@@ -94,6 +94,7 @@ runWorkerService ws = do
 
   return (tid1, tid2)
 
+-- used for worker communicating with load-balancer server
 socketLoop ::
   forall ta sr t w.
   (FromZmq t, ToZmq w, StatusReporter sr w) =>
@@ -124,6 +125,7 @@ socketLoop ws@WorkerService {..} = do
   -- loop
   socketLoop (ws {trigger = newTrigger, reporter = newReporter} :: WorkerService ta sr t w)
 
+-- used for worker executing tasks
 tasksExecLoop ::
   forall ta sr t w.
   (FromZmq t, TaskAcceptor ta t) =>
@@ -139,10 +141,14 @@ tasksExecLoop ws@WorkerService {..} = do
 
   tasksExecLoop (ws {acceptor = newAcceptor} :: WorkerService ta sr t w)
 
+----------------------------------------------------------------------------------------------------
+
+-- publish task logging, used for workers
 pubTaskLogging :: WorkerService ta sr t w -> WorkerLogging -> LotosAppMonad ()
 pubTaskLogging WorkerService {..} wl =
   zmqUnwrap $ Zmqx.sends workerPub $ toZmq wl
 
+-- report task status, used for workers
 sendTaskStatus :: WorkerService ta sr t w -> TaskID -> TaskStatus -> LotosAppMonad ()
 sendTaskStatus WorkerService {..} tid ts = do
   ack <- liftIO newAck

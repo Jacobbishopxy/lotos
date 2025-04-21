@@ -9,8 +9,15 @@ module TaskSchedule.Adt
   )
 where
 
-import Data.List (isPrefixOf)
+----------------------------------------------------------------------------------------------------
+-- WorkerState
+----------------------------------------------------------------------------------------------------
+
+import Control.Exception (IOException, handle)
+import Data.Char (isDigit)
+import Data.List (isInfixOf, isPrefixOf)
 import Data.Maybe (fromMaybe, listToMaybe)
+import System.Info (os)
 import System.Process (readProcess)
 import Text.Read (readMaybe)
 
@@ -18,62 +25,86 @@ data WorkerState = WorkerState
   { loadAvg1 :: Double,
     loadAvg5 :: Double,
     loadAvg15 :: Double,
-    memTotal :: Double,
-    memUsed :: Double,
-    memFree :: Double
+    memTotal :: Double, -- In megabytes
+    memUsed :: Double, -- In megabytes
+    memAvailable :: Double -- In megabytes
   }
+  deriving (Show)
 
+data OS = Linux | MacOS | Unknown deriving (Eq)
+
+currentOS :: OS
+currentOS
+  | os == "linux" = Linux
+  | os == "darwin" = MacOS
+  | otherwise = Unknown
+
+-- Cross-platform load average reader
+getLoadAvg :: IO (Double, Double, Double)
+getLoadAvg
+  | currentOS == Linux = handle handler $ do
+      content <- readFile "/proc/loadavg"
+      case words (takeWhile (/= '\n') content) of
+        (la1 : la5 : la15 : _) -> parseLoadAvgs la1 la5 la15
+        _ -> fail "Malformed /proc/loadavg"
+  | currentOS == MacOS = handle handler $ do
+      output <- readProcess "sysctl" ["-n", "vm.loadavg"] ""
+      case words (cleanSysctlOutput output) of
+        [la1, la5, la15] -> parseLoadAvgs la1 la5 la15
+        _ -> fail "Malformed sysctl output"
+  | otherwise = fail "Unsupported OS"
+  where
+    handler :: IOException -> IO (Double, Double, Double)
+    handler e = fail $ "Failed to get load averages: " ++ show e
+
+    cleanSysctlOutput = filter (\c -> isDigit c || c `elem` (". " :: String))
+
+    parseLoadAvgs la1 la5 la15 = do
+      case (readMaybe la1, readMaybe la5, readMaybe la15) of
+        (Just a, Just b, Just c) -> return (a, b, c)
+        _ -> fail "Failed to parse load averages"
+
+-- Cross-platform memory info reader
+getMemoryInfo :: IO (Double, Double, Double)
+getMemoryInfo
+  | currentOS == Linux = handle handler $ do
+      content <- readFile "/proc/meminfo"
+      let memTotal = extractMemValue "MemTotal" content / 1024 -- Convert KB to MB
+          memAvail = extractMemValue "MemAvailable" content / 1024 -- Convert KB to MB
+      return (memTotal, memTotal - memAvail, memAvail)
+  | currentOS == MacOS = handle handler $ do
+      -- Get total memory
+      totalBytes <- fmap (read :: String -> Integer) (readProcess "sysctl" ["-n", "hw.memsize"] "")
+      let totalMB = fromIntegral totalBytes / (1024 * 1024) -- Convert bytes to MB
+
+      -- Get free memory from vm_stat
+      output <- readProcess "vm_stat" [] ""
+      let pageSize :: Int
+          pageSize = 4096 -- bytes
+          availMB = sumFreePages output * fromIntegral pageSize / (1024 * 1024) -- Convert bytes to MB
+      return (totalMB, totalMB - availMB, availMB)
+  | otherwise = fail "Unsupported OS"
+  where
+    handler :: IOException -> IO (Double, Double, Double)
+    handler e = fail $ "Failed to get memory info: " ++ show e
+
+    extractMemValue key content =
+      case filter (isPrefixOf (key ++ ":")) (lines content) of
+        [] -> 0
+        (l : _) -> case (listToMaybe . drop 1 . words $ l) >>= readMaybe of
+          Just v -> v
+          Nothing -> 0
+
+    sumFreePages output =
+      sum
+        [ fromMaybe 0 (readMaybe =<< listToMaybe (words (dropWhile (/= ':') line)))
+        | line <- lines output,
+          any (`isInfixOf` line) ["free", "inactive", "speculative"]
+        ]
+
+-- Main function to get WorkerState
 getWorkerState :: IO WorkerState
 getWorkerState = do
-  loadAvg <- getLoadAvg
-  memInfo <- getMemInfo
-  let (la1, la5, la15) = loadAvg
-      (memTot, memUsd, memFre) = memInfo
-  return $ WorkerState la1 la5 la15 memTot memUsd memFre
-
--- | Get system load average for 1, 5, and 15 minutes
-getLoadAvg :: IO (Double, Double, Double)
-getLoadAvg = do
-  -- On macOS, we use the 'sysctl' command to get load average
-  output <- readProcess "sysctl" ["-n", "vm.loadavg"] ""
-  let values = map readDouble $ words output
-      la1 = fromMaybe 0.0 $ values !! 1 -- Skip the first value which is usually a bracket
-      la5 = fromMaybe 0.0 $ values !! 2
-      la15 = fromMaybe 0.0 $ values !! 3
-  return (la1, la5, la15)
-  where
-    readDouble s = readMaybe s :: Maybe Double
-
--- | Get memory information (total, used, free) in MB
-getMemInfo :: IO (Double, Double, Double)
-getMemInfo = do
-  -- On macOS, we use 'vm_stat' for memory statistics
-  vmStatOutput <- readProcess "vm_stat" [] ""
-
-  -- Get total physical memory
-  totalOutput <- readProcess "sysctl" ["-n", "hw.memsize"] ""
-  let totalMem = (fromMaybe 0 (readMaybe totalOutput :: Maybe Integer)) `div` (1024 * 1024) -- Convert to MB
-
-      -- Parse vm_stat output
-      pageSize :: Integer
-      pageSize = 4096 -- Default page size in bytes
-      parseLine :: String -> String -> Integer
-      parseLine prefix =
-        maybe 0 id
-          . readMaybe
-          . takeWhile (/= '.')
-          . drop (length prefix)
-          . fromMaybe ""
-          . listToMaybe
-          . filter (isPrefixOf prefix)
-          . lines
-
-      freePages = parseLine "Pages free: " vmStatOutput
-      inactivePages = parseLine "Pages inactive: " vmStatOutput
-      speculativePages = parseLine "Pages speculative: " vmStatOutput
-
-      -- Calculate free memory in MB
-      usedMem = fromIntegral (freePages + inactivePages + speculativePages) * fromIntegral pageSize / (1024 * 1024)
-      freeMem = fromIntegral totalMem - usedMem
-
-  return (fromIntegral totalMem, usedMem, freeMem)
+  (la1, la5, la15) <- getLoadAvg
+  (total, used, free) <- getMemoryInfo
+  return $ WorkerState la1 la5 la15 total used free
