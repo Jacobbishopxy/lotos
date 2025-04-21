@@ -29,8 +29,7 @@ library
   default-extensions: CPP
   exposed-modules:
     Lotos
-    Lotos.Airflow.Conf
-    Lotos.Airflow.Cron
+    Lotos.Airflow
     Lotos.Csv
     Lotos.Logger
     Lotos.TSD.Map
@@ -40,6 +39,8 @@ library
     Lotos.Zmq
 
   other-modules:
+    Lotos.Airflow.Conf
+    Lotos.Airflow.Cron
     Lotos.Csv.Adt
     Lotos.Csv.Parser
     Lotos.Csv.Util

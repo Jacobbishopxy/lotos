@@ -17,7 +17,7 @@ import CronSearch.Adt
 import Data.List (elemIndex)
 import Data.Text qualified as T
 import Lens.Micro ((^.))
-import Lotos.Airflow.Cron
+import Lotos.Airflow
 
 ----------------------------------------------------------------------------------------------------
 -- Const

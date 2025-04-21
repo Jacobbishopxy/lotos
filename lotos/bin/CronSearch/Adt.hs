@@ -16,7 +16,7 @@ import Brick.Widgets.List (List)
 import Data.Text qualified as T
 import Data.Vector qualified as Vec
 import Lens.Micro.TH (makeLenses)
-import Lotos.Airflow.Cron (Activate, Conj, CronSchema)
+import Lotos.Airflow
 
 -- Source Name
 data SourceName

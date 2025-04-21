@@ -9,17 +9,18 @@ module TaskSchedule.Adt
   )
 where
 
-----------------------------------------------------------------------------------------------------
--- WorkerState
-----------------------------------------------------------------------------------------------------
-
 import Control.Exception (IOException, handle)
 import Data.Char (isDigit)
 import Data.List (isInfixOf, isPrefixOf)
 import Data.Maybe (fromMaybe, listToMaybe)
+import Lotos.Zmq
 import System.Info (os)
 import System.Process (readProcess)
 import Text.Read (readMaybe)
+
+----------------------------------------------------------------------------------------------------
+-- WorkerState
+----------------------------------------------------------------------------------------------------
 
 data WorkerState = WorkerState
   { loadAvg1 :: Double,

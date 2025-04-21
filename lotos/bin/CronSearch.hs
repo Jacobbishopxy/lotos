@@ -25,8 +25,7 @@ import Graphics.Vty qualified as V
 import Graphics.Vty.CrossPlatform (mkVty)
 import Lens.Micro
 import Lens.Micro.Mtl
-import Lotos.Airflow.Conf
-import Lotos.Airflow.Cron
+import Lotos.Airflow
 import System.Environment (getArgs)
 
 ----------------------------------------------------------------------------------------------------
