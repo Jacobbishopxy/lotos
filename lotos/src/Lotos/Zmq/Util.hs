@@ -6,8 +6,10 @@
 module Lotos.Zmq.Util
   ( textToBS,
     textFromBS,
-    intFromBS,
     intToBS,
+    intFromBS,
+    doubleToBS,
+    doubleFromBS,
     uuidToBS,
     uuidFromBS,
     uuidOptToBS,
@@ -39,6 +41,14 @@ intFromBS :: B.ByteString -> Either ZmqError Int
 intFromBS bs = case BC.readInt bs of
   Just (i, "") -> Right i
   _ -> Left (ZmqParsing $ "Invalid Int: " <> T.pack (BC.unpack bs))
+
+doubleToBS :: Double -> B.ByteString
+doubleToBS = BC.pack . show
+
+doubleFromBS :: B.ByteString -> Either ZmqError Double
+doubleFromBS bs = case reads (BC.unpack bs) of
+  [(d, "")] -> Right d
+  _ -> Left (ZmqParsing $ "Invalid Double: " <> T.pack (BC.unpack bs))
 
 uuidToBS :: UUID.UUID -> B.ByteString
 uuidToBS uuid = BC.pack (UUID.toString uuid)

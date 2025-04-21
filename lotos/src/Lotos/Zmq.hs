@@ -31,6 +31,9 @@ module Lotos.Zmq
     ClientService,
     mkClientService,
     sendTaskRequest,
+
+    -- * util
+    module Lotos.Zmq.Util,
   )
 where
 
@@ -40,3 +43,4 @@ import Lotos.Zmq.Error
 import Lotos.Zmq.LBC
 import Lotos.Zmq.LBS
 import Lotos.Zmq.LBW
+import Lotos.Zmq.Util

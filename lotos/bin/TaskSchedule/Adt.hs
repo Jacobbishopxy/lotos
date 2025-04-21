@@ -109,3 +109,13 @@ getWorkerState = do
   (la1, la5, la15) <- getLoadAvg
   (total, used, free) <- getMemoryInfo
   return $ WorkerState la1 la5 la15 total used free
+
+instance ToZmq WorkerState where
+  toZmq ws =
+    [ doubleToBS (loadAvg1 ws),
+      doubleToBS (loadAvg5 ws),
+      doubleToBS (loadAvg15 ws),
+      doubleToBS (memTotal ws),
+      doubleToBS (memUsed ws),
+      doubleToBS (memAvailable ws)
+    ]
