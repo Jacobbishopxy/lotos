@@ -10,9 +10,10 @@ module TaskSchedule.Adt
 where
 
 import Control.Exception (IOException, handle)
-import Data.Char (isDigit)
-import Data.List (isInfixOf, isPrefixOf)
-import Data.Maybe (fromMaybe, listToMaybe)
+import Control.Monad (guard)
+import Data.Char (isDigit, isSpace)
+import Data.List (isPrefixOf)
+import Data.Maybe (listToMaybe, mapMaybe)
 import Lotos.Zmq
 import System.Info (os)
 import System.Process (readProcess)
@@ -67,48 +68,54 @@ getLoadAvg
 
 -- Cross-platform memory info reader
 getMemoryInfo :: IO (Double, Double, Double)
-getMemoryInfo
-  | currentOS == Linux = handle handler $ do
-      content <- readFile "/proc/meminfo"
-      let memTotal = extractMemValue "MemTotal" content / 1024 -- Convert KB to MB
-          memAvail = extractMemValue "MemAvailable" content / 1024 -- Convert KB to MB
-      return (memTotal, memTotal - memAvail, memAvail)
-  | currentOS == MacOS = handle handler $ do
-      -- Get total memory
-      totalBytes <- fmap (read :: String -> Integer) (readProcess "sysctl" ["-n", "hw.memsize"] "")
-      let totalMB = fromIntegral totalBytes / (1024 * 1024) -- Convert bytes to MB
-
-      -- Get free memory from vm_stat
-      output <- readProcess "vm_stat" [] ""
-      let pageSize :: Int
-          pageSize = 4096 -- bytes
-          availMB = sumFreePages output * fromIntegral pageSize / (1024 * 1024) -- Convert bytes to MB
-      return (totalMB, totalMB - availMB, availMB)
-  | otherwise = fail "Unsupported OS"
+getMemoryInfo = do
+  case currentOS of
+    Linux -> do
+      contents <- readFile "/proc/meminfo"
+      let pairs = mapMaybe parseMemLine (lines contents)
+          memTotal = lookup "MemTotal" pairs
+          memAvail = lookup "MemAvailable" pairs
+      case (memTotal, memAvail) of
+        (Just t, Just a) -> return (t, t - a, a)
+        _ -> error "Could not parse MemTotal or MemAvailable from /proc/meminfo"
+    MacOS -> do
+      totalBytes <- read . filter (/= '\n') <$> readProcess "sysctl" ["-n", "hw.memsize"] "" :: IO Integer
+      pageSize <- read . filter (/= '\n') <$> readProcess "sysctl" ["-n", "hw.pagesize"] "" :: IO Integer
+      (freePages, inactivePages) <- getFreeInactivePages
+      let availableBytes = (freePages + inactivePages) * pageSize
+          totalMB = fromIntegral totalBytes / 1048576.0 -- 1024^2
+          availableMB = fromIntegral availableBytes / 1048576.0
+          usedMB = totalMB - availableMB
+      return (totalMB, usedMB, availableMB)
+    Unknown -> error "Unsupported OS"
   where
-    handler :: IOException -> IO (Double, Double, Double)
-    handler e = fail $ "Failed to get memory info: " ++ show e
-
-    extractMemValue key content =
-      case filter (isPrefixOf (key ++ ":")) (lines content) of
-        [] -> 0
-        (l : _) -> case (listToMaybe . drop 1 . words $ l) >>= readMaybe of
-          Just v -> v
-          Nothing -> 0
-
-    sumFreePages output =
-      sum
-        [ fromMaybe 0 (readMaybe =<< listToMaybe (words (dropWhile (/= ':') line)))
-        | line <- lines output,
-          any (`isInfixOf` line) ["free", "inactive", "speculative"]
-        ]
+    parseMemLine :: String -> Maybe (String, Double)
+    parseMemLine line = do
+      let (keyPart, rest) = break (== ':') line
+      guard (not (null rest))
+      let valuePart = tail rest
+          numStr = takeWhile (\c -> isDigit c || c == '.') (dropWhile isSpace valuePart)
+      num <- readMaybe numStr
+      return (keyPart, num / 1024) -- Convert kB to MB
+    getFreeInactivePages :: IO (Integer, Integer)
+    getFreeInactivePages = do
+      output <- readProcess "vm_stat" [] ""
+      let linesOfOutput = lines output
+          freeLine = listToMaybe (filter ("Pages free:" `isPrefixOf`) linesOfOutput)
+          inactiveLine = listToMaybe (filter ("Pages inactive:" `isPrefixOf`) linesOfOutput)
+          parseLine line = case line of
+            Just l ->
+              let numStr = takeWhile (/= '.') (dropWhile (not . isDigit) l)
+               in read numStr
+            Nothing -> 0
+      return (parseLine freeLine, parseLine inactiveLine)
 
 -- Main function to get WorkerState
 getWorkerState :: IO WorkerState
 getWorkerState = do
   (la1, la5, la15) <- getLoadAvg
-  (total, used, free) <- getMemoryInfo
-  return $ WorkerState la1 la5 la15 total used free
+  (total, used, available) <- getMemoryInfo
+  return $ WorkerState la1 la5 la15 total used available
 
 instance ToZmq WorkerState where
   toZmq ws =

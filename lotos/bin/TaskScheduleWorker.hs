@@ -15,4 +15,4 @@ main = do
   putStrLn $ "Current 15-minute load average: " ++ show (loadAvg15 state)
   putStrLn $ "Memory total: " ++ show (memTotal state) ++ " MB"
   putStrLn $ "Memory used: " ++ show (memUsed state) ++ " MB"
-  putStrLn $ "Memory free: " ++ show (memAvailable state) ++ " MB"
+  putStrLn $ "Memory available: " ++ show (memAvailable state) ++ " MB"
