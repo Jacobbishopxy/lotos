@@ -4,26 +4,13 @@
 -- brief:
 
 module Lotos.Util
-  ( -- (!?),
-    either2Maybe,
+  ( either2Maybe,
     maybe2Either,
+    availableCores,
   )
 where
 
--- safe `!!`
--- (!?) :: [a] -> Int -> Maybe a
--- {-# INLINEABLE (!?) #-}
--- xs !? n
---   | n < 0 = Nothing
---   | otherwise =
---       foldr
---         ( \x r k -> case k of
---             0 -> Just x
---             _ -> r (k - 1)
---         )
---         (const Nothing)
---         xs
---         n
+import GHC.Conc (numCapabilities)
 
 either2Maybe :: Either e a -> Maybe a
 either2Maybe d = case d of
@@ -34,3 +21,6 @@ maybe2Either :: e -> Maybe a -> Either e a
 maybe2Either e d = case d of
   Nothing -> Left e
   Just r -> Right r
+
+availableCores :: IO ()
+availableCores = putStrLn $ "Available cores: " ++ show numCapabilities

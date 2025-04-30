@@ -18,7 +18,9 @@ common shared-properties
 
 common test
   hs-source-dirs: test
-  build-depends:  lotos
+  build-depends:
+    , HUnit
+    , lotos
 
 ----------------------------------------------------------------------------------------------------
 -- Lib
@@ -32,6 +34,7 @@ library
     Lotos.Airflow
     Lotos.Csv
     Lotos.Logger
+    Lotos.Proc
     Lotos.TSD.Map
     Lotos.TSD.Queue
     Lotos.TSD.RingBuffer
@@ -44,6 +47,7 @@ library
     Lotos.Csv.Adt
     Lotos.Csv.Parser
     Lotos.Csv.Util
+    Lotos.Proc.ConcExecutor
     Lotos.Zmq.Adt
     Lotos.Zmq.Config
     Lotos.Zmq.Error
@@ -58,6 +62,7 @@ library
   -- other-extensions:
   build-depends:
     , aeson
+    , async
     , attoparsec
     , base
     , bytestring
@@ -66,6 +71,7 @@ library
     , dlist
     , filepath
     , mtl
+    , process
     , servant
     , servant-server
     , stm
@@ -125,6 +131,16 @@ test-suite test-simple-servant
     , text
     , wai
     , warp
+
+test-suite test-conc-executor
+  import:         shared-properties, test
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        ConcExecutor.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , async
+    , process
 
 ----------------------------------------------------------------------------------------------------
 -- Bin

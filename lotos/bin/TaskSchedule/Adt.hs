@@ -93,7 +93,7 @@ getMemoryInfo = do
     parseMemLine line = do
       let (keyPart, rest) = break (== ':') line
       guard (not (null rest))
-      let valuePart = tail rest
+      let valuePart = drop 1 rest
           numStr = takeWhile (\c -> isDigit c || c == '.') (dropWhile isSpace valuePart)
       num <- readMaybe numStr
       return (keyPart, num / 1024) -- Convert kB to MB

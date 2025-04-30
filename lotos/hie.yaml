@@ -18,6 +18,9 @@ cradle:
     - path: "test/SimpleServant.hs"
       component: "lotos:test:test-simple-servant"
 
+    - path: "test/ConcExecutor.hs"
+      component: "lotos:test:test-conc-executor"
+
     - path: "bin/CronSearch.hs"
       component: "lotos:exe:cron-search"
 
