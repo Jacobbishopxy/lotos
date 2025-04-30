@@ -19,10 +19,12 @@ test1 = do
   buf1 <- mkTSRingBuffer 10
   buf2 <- mkTSRingBuffer 10
   buf3 <- mkTSRingBuffer 10
+  buf4 <- mkTSRingBuffer 10
   let cmds =
-        [ ("bash ./scripts/rand.sh .tmp/t1 2 10", buf1),
-          ("bash ./scripts/rand.sh .tmp/t2 3 15", buf2),
-          ("bash ./scripts/fail.sh 8", buf3)
+        [ CommandRequest "bash ./scripts/rand.sh .tmp/t1 2 10" 0 buf1,
+          CommandRequest "bash ./scripts/rand.sh .tmp/t2 3 15" 0 buf2,
+          CommandRequest "bash ./scripts/fail.sh 8" 0 buf3,
+          CommandRequest "bash ./scripts/fail.sh 10" 5 buf4
         ]
   results <- executeConcurrently cmds
 
@@ -39,7 +41,5 @@ test1 = do
   -- Print buffer contents
   content1 <- getBuffer' buf1
   content2 <- getBuffer' buf2
-  content3 <- getBuffer' buf3
   putStrLn $ "Buffer 1: " ++ unlines content1
   putStrLn $ "Buffer 2: " ++ unlines content2
-  putStrLn $ "Buffer 3: " ++ unlines content3

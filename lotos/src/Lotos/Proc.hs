@@ -5,8 +5,10 @@
 
 module Lotos.Proc
   ( -- * ConcExecutor
-    executeConcurrently,
+    CommandRequest (..),
     CommandResult (..),
+    simpleCommandRequest,
+    executeConcurrently,
   )
 where
 
