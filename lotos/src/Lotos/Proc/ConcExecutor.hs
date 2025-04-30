@@ -9,19 +9,31 @@ module Lotos.Proc.ConcExecutor
   )
 where
 
-import Control.Concurrent.Async
-import Control.Exception.Base
+import Control.Concurrent.Async (async, mapConcurrently, wait)
+import Control.Exception.Base (catch, finally, throwIO)
 import Data.Time (UTCTime, getCurrentTime)
 import Lotos.TSD.RingBuffer (TSRingBuffer, writeBuffer)
-import System.Exit
+import System.Exit (ExitCode)
 import System.IO
+  ( BufferMode (LineBuffering),
+    hClose,
+    hGetLine,
+    hSetBuffering,
+  )
 import System.IO.Error (isEOFError)
 import System.Process
+  ( CreateProcess (std_err, std_out),
+    StdStream (CreatePipe),
+    createProcess,
+    shell,
+    waitForProcess,
+  )
 
 -- | Result of a command execution with combined output and timestamp
 data CommandResult = CommandResult
   { cmdExitCode :: ExitCode, -- Exit code of the command
-    cmdTimestamp :: UTCTime -- Timestamp when command execution started
+    cmdStartTime :: UTCTime, -- Timestamp when command execution started
+    cmdEndTime :: UTCTime -- Optional end time of command execution
   }
 
 -- | Execute multiple shell commands concurrently with live output streaming
@@ -34,7 +46,7 @@ executeConcurrently tasks = mapConcurrently runTask tasks
   where
     -- \| Run a single command task
     runTask (cmd, outputBuf) = do
-      timestamp <- getCurrentTime -- Capture start time
+      startT <- getCurrentTime -- Capture start time
       -- Launch the process with separate pipes for stdout and stderr
       (_, Just hout, Just herr, ph) <-
         createProcess (shell cmd) {std_out = CreatePipe, std_err = CreatePipe}
@@ -47,9 +59,9 @@ executeConcurrently tasks = mapConcurrently runTask tasks
       exitCode <-
         (concurrentlyStream hout herr ph outputBuf)
           `finally` (cleanup hout herr) -- Ensure handles are closed
-
+      endT <- getCurrentTime
       -- Return command result
-      pure $ CommandResult exitCode timestamp
+      pure $ CommandResult exitCode startT endT
 
     -- \| Stream output from both stdout and stderr concurrently
     concurrentlyStream hout herr ph buf = do

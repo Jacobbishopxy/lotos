@@ -21,6 +21,9 @@ cradle:
     - path: "test/ConcExecutor.hs"
       component: "lotos:test:test-conc-executor"
 
+    - path: "test/ConcExecutor2.hs"
+      component: "lotos:test:test-conc-executor2"
+
     - path: "bin/CronSearch.hs"
       component: "lotos:exe:cron-search"
 

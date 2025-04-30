@@ -59,6 +59,6 @@ testConcurrentExecution = do
   -- Verify all commands completed
   assertEqual "Should have 3 results" 3 (length results)
   -- Verify timestamps are in expected order
-  let times = map cmdTimestamp results
+  let times = map cmdEndTime results
   forM_ (zip times (drop 1 times)) $ \(t1, t2) ->
     assertBool "Timestamps should be in order" (t1 <= t2)
