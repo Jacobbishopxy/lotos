@@ -5,7 +5,7 @@
 
 import Control.Monad (forM_)
 import Lotos.Proc
-import Lotos.Proc.ConcExecutor (CommandRequest (CommandRequest), simpleCommandRequest)
+import Lotos.Proc.ConcExecutor
 import Lotos.TSD.RingBuffer
 import Lotos.Util
 import System.Exit (ExitCode (..))
@@ -30,7 +30,7 @@ tests =
 testSuccessfulCommand :: IO ()
 testSuccessfulCommand = do
   buf <- mkTSRingBuffer 10
-  let cmd = CommandRequest "echo 'test output'" 0 buf
+  let cmd = CommandRequestWithBuffer "echo 'test output'" 0 buf
   [result] <- executeConcurrently [cmd]
   -- Verify exit code
   assertEqual "Exit code should be ExitSuccess" ExitSuccess (cmdExitCode result)
@@ -51,9 +51,9 @@ testConcurrentExecution = do
   buf2 <- mkTSRingBuffer 10
   buf3 <- mkTSRingBuffer 10
   let cmds =
-        [ CommandRequest "sleep 1 && echo 'first'" 0 buf1,
-          CommandRequest "sleep 2 && echo 'second'" 0 buf2,
-          CommandRequest "sleep 3 && echo 'third'" 0 buf3
+        [ CommandRequestWithBuffer "sleep 1 && echo 'first'" 0 buf1,
+          CommandRequestWithBuffer "sleep 2 && echo 'second'" 0 buf2,
+          CommandRequestWithBuffer "sleep 3 && echo 'third'" 0 buf3
         ]
   results <- executeConcurrently cmds
   -- Verify all commands completed

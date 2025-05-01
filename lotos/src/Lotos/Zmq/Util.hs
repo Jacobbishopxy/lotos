@@ -4,7 +4,9 @@
 -- brief:
 
 module Lotos.Zmq.Util
-  ( textToBS,
+  ( stringToBS,
+    stringFromBS,
+    textToBS,
     textFromBS,
     intToBS,
     intFromBS,
@@ -23,6 +25,13 @@ import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.UUID qualified as UUID
 import Lotos.Zmq.Error
+
+-- String <-> ByteString
+stringToBS :: String -> B.ByteString
+stringToBS = BC.pack
+
+stringFromBS :: B.ByteString -> Either ZmqError String
+stringFromBS bs = Right $ BC.unpack bs
 
 -- Text <-> ByteString
 textToBS :: T.Text -> B.ByteString

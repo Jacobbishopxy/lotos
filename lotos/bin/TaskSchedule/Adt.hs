@@ -4,8 +4,13 @@
 -- brief:
 
 module TaskSchedule.Adt
-  ( WorkerState (..),
+  ( -- * worker state
+    WorkerState (..),
     getWorkerState,
+
+    -- * client task
+    ClientTask (..),
+    simpleClientTask,
   )
 where
 
@@ -126,3 +131,29 @@ instance ToZmq WorkerState where
       doubleToBS (memUsed ws),
       doubleToBS (memAvailable ws)
     ]
+
+----------------------------------------------------------------------------------------------------
+-- ClientTask
+----------------------------------------------------------------------------------------------------
+
+data ClientTask = ClientTask
+  { command :: String,
+    executeTimeoutSec :: Int
+  }
+  deriving (Show)
+
+simpleClientTask :: String -> ClientTask
+simpleClientTask cmd = ClientTask cmd 0
+
+instance ToZmq ClientTask where
+  toZmq (ClientTask cmd timeout) =
+    [ stringToBS cmd,
+      intToBS timeout
+    ]
+
+instance FromZmq ClientTask where
+  fromZmq [cmdBS, timeoutBS] = do
+    cmd <- stringFromBS cmdBS
+    timeout <- intFromBS timeoutBS
+    return $ ClientTask cmd timeout
+  fromZmq _ = Left $ ZmqParsing "Invalid ClientTask format"

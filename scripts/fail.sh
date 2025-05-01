@@ -12,6 +12,9 @@ fi
 # Sleep for specified duration
 sleep "$1"
 
-# Exit with failure code
+echo "Slept for $1 seconds"
+# Print error to stderr and exit with failure
+echo "Error: Failed after sleeping for $1 seconds" >&2
+echo "Exiting with failure"
 exit 1
 
