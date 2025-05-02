@@ -23,6 +23,8 @@ tests =
   TestList
     [ "testSuccessfulCommand" ~: testSuccessfulCommand,
       "testFailedCommand" ~: testFailedCommand,
+      "testStartFinish" ~: testStartFinish,
+      "testTimeout" ~: testTimeout,
       "testConcurrentExecution" ~: testConcurrentExecution
     ]
 
@@ -42,7 +44,34 @@ testFailedCommand = do
   let cmd = simpleCommandRequest "false" -- Command that fails
   [result] <- executeConcurrently [cmd]
   -- Verify exit code
-  assertEqual "Exit code should be ExitFailure" (ExitFailure 1) (cmdExitCode result)
+  assertEqual "Exit code should be ExitFailure(1)" (ExitFailure 1) (cmdExitCode result)
+
+testStartFinish :: IO ()
+testStartFinish = do
+  let cmd =
+        CommandRequest
+          { cmdString = "sleep 1",
+            cmdTimeout = 0,
+            loggingIO = \_ -> return (),
+            startIO = putStrLn "\nStart!",
+            finishIO = \_ -> putStrLn "Finish!"
+          }
+  [result] <- executeConcurrently [cmd]
+  -- Verify exit code
+  assertEqual "Exit code should be ExitSuccess" ExitSuccess (cmdExitCode result)
+
+testTimeout :: IO ()
+testTimeout = do
+  let cmd =
+        CommandRequest
+          { cmdString = "sleep 2",
+            cmdTimeout = 1,
+            loggingIO = \_ -> return (),
+            startIO = return (),
+            finishIO = \_ -> return ()
+          }
+  [result] <- executeConcurrently [cmd]
+  assertEqual "Exit code should be ExitFailure(124)" (ExitFailure 124) (cmdExitCode result)
 
 testConcurrentExecution :: IO ()
 testConcurrentExecution = do

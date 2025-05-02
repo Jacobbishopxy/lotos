@@ -119,23 +119,6 @@ runCommand cmd to handler = do
   endT <- getCurrentTime -- Record end time for CommandResult
   pure $ CommandResult exitCode startT endT
 
--- | Handle command execution with optional timeout
--- @param to Timeout in seconds (<= 0 means no timeout)
--- @param action The IO action to execute (waiting for the process)
--- @param ph ProcessHandle for timeout termination
-handleTimeout :: Int -> IO ExitCode -> ProcessHandle -> IO ExitCode
-handleTimeout to action ph
-  | to <= 0 = action -- No timeout case
-  | otherwise = do
-      let timeoutMicros = to * 1000000 -- Convert to microseconds
-      result <- timeout timeoutMicros action
-      case result of
-        Just x -> return x -- Action completed before timeout
-        Nothing -> do
-          -- Timeout occurred: terminate the process and wait for it
-          terminateProcess ph
-          waitForProcess ph
-
 -- | Continuously read lines from multiple handles and apply the handler
 -- Handles EOF and IO exceptions properly
 -- @param handles List of (Handle, prefix) pairs to read from
@@ -161,6 +144,21 @@ streamOutputs handles handler = do
             -- Continue with remaining active handles
             loop (map fst active)
   loop handles
+
+-- | Handle command execution with optional timeout
+-- @param to Timeout in seconds (<= 0 means no timeout)
+-- @param action The IO action to execute (waiting for the process)
+-- @param ph ProcessHandle for timeout termination
+handleTimeout :: Int -> IO ExitCode -> ProcessHandle -> IO ExitCode
+handleTimeout to action ph
+  | to <= 0 = action -- No timeout case
+  | otherwise =
+      -- Convert to microseconds
+      timeout (to * 1000000) action >>= \case
+        -- Action completed before timeout
+        Just x -> return x
+        -- Timeout occurred: terminate the process and wait for it
+        Nothing -> terminateProcess ph >> waitForProcess ph >> return (ExitFailure 124)
 
 -- | Safely close both stdout and stderr handles
 -- Silently handles any IO exceptions during close
