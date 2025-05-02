@@ -9,6 +9,11 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
+echo "Ready to sleep for $1 seconds"
+echo ">> 1"
+echo ">> 2"
+echo ">> 3"
+
 # Sleep for specified duration
 sleep "$1"
 

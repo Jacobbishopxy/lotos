@@ -16,7 +16,6 @@ import Control.Concurrent.Async (async, mapConcurrently, wait)
 import Control.Exception
   ( IOException,
     catch,
-    finally,
     handle,
     throwIO,
   )
@@ -105,14 +104,24 @@ runCommand cmd to handler = do
   hSetBuffering hout LineBuffering
   hSetBuffering herr LineBuffering
 
-  -- Execute with timeout handling and ensure cleanup
-  exitCode <- handleTimeout to (concurrentlyStream hout herr ph handler) ph `finally` cleanup hout herr
+  -- Start streaming output immediately
+  outputAsync <- async $ streamOutputs [(hout, "STDOUT"), (herr, "STDERR")] handler
+
+  -- Handle timeout on waiting for the process
+  exitCode <- handleTimeout to (waitForProcess ph) ph
+
+  -- Wait for output streaming to finish processing all remaining data
+  wait outputAsync
+
+  -- Cleanup handles after streaming is done
+  cleanup hout herr
+
   endT <- getCurrentTime -- Record end time for CommandResult
   pure $ CommandResult exitCode startT endT
 
 -- | Handle command execution with optional timeout
 -- @param to Timeout in seconds (<= 0 means no timeout)
--- @param action The IO action to execute (streaming command output)
+-- @param action The IO action to execute (waiting for the process)
 -- @param ph ProcessHandle for timeout termination
 handleTimeout :: Int -> IO ExitCode -> ProcessHandle -> IO ExitCode
 handleTimeout to action ph
@@ -121,27 +130,11 @@ handleTimeout to action ph
       let timeoutMicros = to * 1000000 -- Convert to microseconds
       result <- timeout timeoutMicros action
       case result of
-        Just ec -> return ec -- Command completed before timeout
+        Just x -> return x -- Action completed before timeout
         Nothing -> do
-          -- Timeout occurred
+          -- Timeout occurred: terminate the process and wait for it
           terminateProcess ph
-          _ <- waitForProcess ph
-          return $ ExitFailure 124 -- Standard timeout exit code
-
--- | Stream output from both stdout and stderr concurrently while process runs
--- @param hout Stdout handle
--- @param herr Stderr handle
--- @param ph Process handle
--- @param handler Output processing function
-concurrentlyStream :: Handle -> Handle -> ProcessHandle -> (String -> IO ()) -> IO ExitCode
-concurrentlyStream hout herr ph handler = do
-  -- Start async output processing
-  outputAsync <- async $ streamOutputs [(hout, "STDOUT"), (herr, "STDERR")] handler
-  -- Wait for process completion
-  ec <- waitForProcess ph
-  -- Ensure output processing completes
-  _ <- wait outputAsync
-  return ec
+          waitForProcess ph
 
 -- | Continuously read lines from multiple handles and apply the handler
 -- Handles EOF and IO exceptions properly
@@ -161,7 +154,7 @@ streamOutputs handles handler = do
             -- Process output from active handles
             mapM_
               ( \case
-                  (_, Just (prefix, line)) -> handler (prefix ++ ": " ++ line)
+                  (_, Just (prefix, line)) -> handler $ prefix ++ ": " ++ line
                   (_, Nothing) -> return ()
               )
               active

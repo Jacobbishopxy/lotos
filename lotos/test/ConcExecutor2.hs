@@ -44,7 +44,7 @@ test2 = do
   buf4 <- mkTSRingBuffer 10
   let cmds =
         [ simpleCommandRequestWithBuffer "bash ./scripts/rand.sh .tmp/t1 2 7" 0 buf1,
-          simpleCommandRequestWithBuffer "bash ./scripts/rand.sh .tmp/t2 3 10" 8 buf2,
+          simpleCommandRequestWithBuffer "bash ./scripts/rand.sh .tmp/t2 3 10" 5 buf2,
           simpleCommandRequestWithBuffer "bash ./scripts/fail.sh 5" 0 buf3,
           simpleCommandRequestWithBuffer "bash ./scripts/fail.sh 8" 5 buf4
         ]
