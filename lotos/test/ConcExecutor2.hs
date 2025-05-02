@@ -13,18 +13,40 @@ main = do
   availableCores
   putStrLn ""
   test1
+  putStrLn ""
+  test2
 
 test1 :: IO ()
 test1 = do
+  buf <- mkTSRingBuffer 10
+  let cmd =
+        CommandRequest
+          "echo 'test output'"
+          0
+          (writeBuffer buf . ("write buffer -> " ++))
+          (writeBuffer buf "start!")
+          (\result -> writeBuffer buf ("finish! -> " <> show result))
+
+  [result] <- executeConcurrently [cmd]
+
+  putStrLn $ show result
+  putStrLn ""
+  content <- getBuffer' buf
+  putStrLn $ "Buffer: " ++ unlines content
+
+  return ()
+
+test2 :: IO ()
+test2 = do
   buf1 <- mkTSRingBuffer 10
   buf2 <- mkTSRingBuffer 10
   buf3 <- mkTSRingBuffer 10
   buf4 <- mkTSRingBuffer 10
   let cmds =
-        [ CommandRequestWithBuffer "bash ./scripts/rand.sh .tmp/t1 2 7" 0 buf1,
-          CommandRequestWithBuffer "bash ./scripts/rand.sh .tmp/t2 3 10" 0 buf2,
-          CommandRequestWithBuffer "bash ./scripts/fail.sh 5" 0 buf3,
-          CommandRequestWithBuffer "bash ./scripts/fail.sh 8" 5 buf4
+        [ simpleCommandRequestWithBuffer "bash ./scripts/rand.sh .tmp/t1 2 7" 0 buf1,
+          simpleCommandRequestWithBuffer "bash ./scripts/rand.sh .tmp/t2 3 10" 8 buf2,
+          simpleCommandRequestWithBuffer "bash ./scripts/fail.sh 5" 0 buf3,
+          simpleCommandRequestWithBuffer "bash ./scripts/fail.sh 8" 5 buf4
         ]
   results <- executeConcurrently cmds
 

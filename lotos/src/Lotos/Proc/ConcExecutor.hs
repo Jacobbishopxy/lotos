@@ -7,6 +7,7 @@ module Lotos.Proc.ConcExecutor
   ( CommandRequest (..),
     CommandResult (..),
     simpleCommandRequest,
+    simpleCommandRequestWithBuffer,
     executeConcurrently,
   )
 where
@@ -24,7 +25,6 @@ import Data.Maybe (isJust)
 import Data.Time (UTCTime, getCurrentTime)
 import Lotos.TSD.RingBuffer
   ( TSRingBuffer,
-    mkTSRingBuffer,
     writeBuffer,
   )
 import System.Exit (ExitCode (..))
@@ -49,22 +49,23 @@ import System.Timeout (timeout)
 
 -- | Request to execute a shell command with optional timeout and output buffer
 data CommandRequest
-  = CommandRequestWithBuffer
-      { cmdString :: String, -- Command to be executed
-        cmdTimeout :: Int, -- Timeout in seconds: <= 0 means no timeout
-        cmdBuffer :: TSRingBuffer String -- Buffer to store command output
-      }
-  | CommandRequestWithIO
-      { cmdString :: String,
-        cmdTimeout :: Int,
-        extraIO :: String -> IO ()
-      }
+  = CommandRequest
+  { cmdString :: String,
+    cmdTimeout :: Int,
+    loggingIO :: String -> IO (),
+    startIO :: IO (),
+    finishIO :: CommandResult -> IO ()
+  }
 
 -- | Create a simple command request with a default timeout and buffer
-simpleCommandRequest :: String -> IO CommandRequest
-simpleCommandRequest cmd = do
-  buf <- mkTSRingBuffer 16 -- Create a ring buffer with a capacity of 16
-  return $ CommandRequestWithBuffer cmd 0 buf -- No timeout specified
+simpleCommandRequest :: String -> CommandRequest
+simpleCommandRequest cmd =
+  CommandRequest cmd 0 (\_ -> return ()) (return ()) (\_ -> return ())
+
+-- | Create a simple command request with a buffer for output logging
+simpleCommandRequestWithBuffer :: String -> Int -> TSRingBuffer String -> CommandRequest
+simpleCommandRequestWithBuffer cmd to buf =
+  CommandRequest cmd to (writeBuffer buf) (return ()) (\_ -> return ())
 
 -- | Result of a command execution with combined output and timestamp
 data CommandResult = CommandResult
@@ -72,21 +73,19 @@ data CommandResult = CommandResult
     cmdStartTime :: UTCTime, -- Timestamp when command execution started
     cmdEndTime :: UTCTime -- Optional end time of command execution
   }
+  deriving (Show)
 
 -- | Execute multiple shell commands concurrently with live output streaming
 -- Each command's STDOUT and STDERR are captured and processed according to the request type
--- (either buffered in a TSRingBuffer or handled by an IO action)
 executeConcurrently :: [CommandRequest] -> IO [CommandResult]
-executeConcurrently = mapConcurrently runTask
+executeConcurrently cmds = mapConcurrently runTask cmds
   where
-    -- \| Process a single command request based on its type
-    runTask req = case req of
-      -- Buffer variant: writes output to a thread-safe ring buffer
-      CommandRequestWithBuffer cmd to outputBuf ->
-        runCommand cmd to (writeBuffer outputBuf)
-      -- IO handler variant: processes output with a custom IO action
-      CommandRequestWithIO cmd to ioHandler ->
-        runCommand cmd to ioHandler
+    -- Process a single command request
+    runTask (CommandRequest cmd to handler start finish) = do
+      start
+      result <- runCommand cmd to handler
+      finish result
+      return result
 
 ----------------------------------------------------------------------------------------------------
 -- helpers

@@ -8,6 +8,7 @@ module Lotos.Proc
     CommandRequest (..),
     CommandResult (..),
     simpleCommandRequest,
+    simpleCommandRequestWithBuffer,
     executeConcurrently,
   )
 where
