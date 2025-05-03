@@ -11,7 +11,8 @@
 -- 4. Publisher (Pub) sends logging messages to the logging socket.
 
 module Lotos.Zmq.LBW
-  ( TaskAcceptor (..),
+  ( TaskAcceptorAPI (..),
+    TaskAcceptor (..),
     StatusReporter (..),
     WorkerService,
     mkWorkerService,
@@ -36,8 +37,17 @@ import Zmqx.Pub
 
 ----------------------------------------------------------------------------------------------------
 
+data TaskAcceptorAPI = TaskAcceptorAPI
+  { aePubTaskLogging :: WorkerLogging -> LotosAppMonad (),
+    aeSendTaskStatus :: (TaskID, TaskStatus) -> LotosAppMonad ()
+  }
+
 class TaskAcceptor ta t where
-  processTasks :: ta -> [Task t] -> LotosAppMonad ta
+  processTasks ::
+    TaskAcceptorAPI ->
+    ta ->
+    [Task t] ->
+    LotosAppMonad ta
 
 class StatusReporter sr w where
   gatherStatus :: sr -> LotosAppMonad (sr, w)
@@ -49,8 +59,13 @@ data WorkerService ta sr t w
     reporter :: sr,
     taskQueue :: TSQueue (Task t),
     trigger :: EventTrigger,
-    workerDealer :: Zmqx.Dealer, -- receives message (tasks) from LBS (load balancer server); sends message (worker status) to LBS
-    workerPub :: Zmqx.Pub, -- sends message (loggings) to LBS
+    -- receives message (tasks) from LBS (load balancer server);
+    -- sends message (worker status) to LBS.
+    workerDealer :: Zmqx.Dealer,
+    -- sends message (loggings) to LBS
+    workerPub :: Zmqx.Pub,
+    -- a wrapper for `pubTaskLogging` & `sendTaskStatus`
+    taskAcceptorEnv :: TaskAcceptorAPI,
     ver :: Int
   }
 
@@ -75,7 +90,16 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
   wPub <- zmqUnwrap $ Zmqx.Pub.open $ Zmqx.name "workerPub"
   zmqThrow $ Zmqx.connect wPub loadBalancerLoggingAddr
 
-  return $ WorkerService ws ta sr taskQueue trigger wDealer wPub 0
+  -- create taskAcceptorEnv instance
+  let taskAcceptorAPI =
+        TaskAcceptorAPI
+          { aePubTaskLogging = zmqUnwrap . Zmqx.sends wPub . toZmq,
+            aeSendTaskStatus = \(tid, ts) -> do
+              ack <- liftIO newAck
+              zmqUnwrap $ Zmqx.sends wDealer $ toZmq $ WorkerReportTaskStatus ack tid ts
+          }
+
+  return $ WorkerService ws ta sr taskQueue trigger wDealer wPub taskAcceptorAPI 0
 
 runWorkerService ::
   forall ta sr t w.
@@ -137,7 +161,7 @@ tasksExecLoop ws@WorkerService {..} = do
 
   logDebugR $ "tasksExecLoop -> start processing tasks, len: " <> show (length tasks)
   -- Note: blocking should be controlled by the acceptor
-  newAcceptor <- processTasks acceptor tasks
+  newAcceptor <- processTasks taskAcceptorEnv acceptor tasks
 
   tasksExecLoop (ws {acceptor = newAcceptor} :: WorkerService ta sr t w)
 

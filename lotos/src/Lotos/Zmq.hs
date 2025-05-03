@@ -22,10 +22,13 @@ module Lotos.Zmq
 
     -- * load balancer worker
     TaskAcceptor (..),
+    TaskAcceptorAPI (..),
     StatusReporter (..),
     WorkerService,
     mkWorkerService,
     runWorkerService,
+    pubTaskLogging,
+    sendTaskStatus,
 
     -- * load balancer client
     ClientService,
