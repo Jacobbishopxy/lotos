@@ -50,16 +50,16 @@ runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = d
 
   -- Init frontend Router
   frontend <- zmqUnwrap $ Zmqx.Router.open $ Zmqx.name "frontend"
-  zmqThrow $ Zmqx.bind frontend frontendAddr
+  zmqUnwrap $ Zmqx.bind frontend frontendAddr
   -- Init backend Router
   backend <- zmqUnwrap $ Zmqx.Router.open $ Zmqx.name "backend"
-  zmqThrow $ Zmqx.bind backend backendAddr
+  zmqUnwrap $ Zmqx.bind backend backendAddr
   -- Init receiver Pair
   receiverPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "slReceiver"
-  zmqThrow $ Zmqx.bind receiverPair taskProcessorSenderAddr
+  zmqUnwrap $ Zmqx.bind receiverPair taskProcessorSenderAddr
   -- Init sender Pair
   senderPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "slSender"
-  zmqThrow $ Zmqx.connect senderPair socketLayerSenderAddr -- Fixed to use connect
+  zmqUnwrap $ Zmqx.connect senderPair socketLayerSenderAddr -- Fixed to use connect
 
   -- pollItems & socketLayer cst
   let pollItems = Zmqx.the frontend & Zmqx.also backend & Zmqx.also receiverPair

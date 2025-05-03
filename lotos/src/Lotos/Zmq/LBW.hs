@@ -38,8 +38,8 @@ import Zmqx.Pub
 ----------------------------------------------------------------------------------------------------
 
 data TaskAcceptorAPI = TaskAcceptorAPI
-  { aePubTaskLogging :: WorkerLogging -> LotosAppMonad (),
-    aeSendTaskStatus :: (TaskID, TaskStatus) -> LotosAppMonad ()
+  { taPubTaskLogging :: WorkerLogging -> IO (),
+    taSendTaskStatus :: (TaskID, TaskStatus) -> IO ()
   }
 
 class TaskAcceptor ta t where
@@ -84,19 +84,19 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
 
   -- worker Dealer init
   wDealer <- zmqUnwrap $ Zmqx.Dealer.open $ Zmqx.name "workerDealer"
-  zmqThrow $ Zmqx.connect wDealer loadBalancerBackendAddr
+  zmqUnwrap $ Zmqx.connect wDealer loadBalancerBackendAddr
 
   -- worker Pub init
   wPub <- zmqUnwrap $ Zmqx.Pub.open $ Zmqx.name "workerPub"
-  zmqThrow $ Zmqx.connect wPub loadBalancerLoggingAddr
+  zmqUnwrap $ Zmqx.connect wPub loadBalancerLoggingAddr
 
   -- create taskAcceptorEnv instance
   let taskAcceptorAPI =
         TaskAcceptorAPI
-          { aePubTaskLogging = zmqUnwrap . Zmqx.sends wPub . toZmq,
-            aeSendTaskStatus = \(tid, ts) -> do
-              ack <- liftIO newAck
-              zmqUnwrap $ Zmqx.sends wDealer $ toZmq $ WorkerReportTaskStatus ack tid ts
+          { taPubTaskLogging = zmqThrow . Zmqx.sends wPub . toZmq,
+            taSendTaskStatus = \(tid, ts) -> do
+              ack <- newAck
+              zmqThrow $ Zmqx.sends wDealer $ toZmq $ WorkerReportTaskStatus ack tid ts
           }
 
   return $ WorkerService ws ta sr taskQueue trigger wDealer wPub taskAcceptorAPI 0

@@ -30,7 +30,7 @@ import Lotos.TSD.Queue
 import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
-import Lotos.Zmq.Error (zmqThrow, zmqUnwrap)
+import Lotos.Zmq.Error
 import Network.Wai.Handler.Warp qualified as Warp
 import Servant
 import Zmqx
@@ -87,8 +87,8 @@ runInfoStorage ::
 runInfoStorage httpName InfoStorageConfig {..} tsd = do
   -- 1. Create a subscriber for loggings
   loggingsSubscriber <- zmqUnwrap $ Zmqx.Sub.open $ Zmqx.name "loggingsSubscriber"
-  zmqThrow $ Zmqx.connect loggingsSubscriber socketLayerSenderAddr
-  zmqThrow $ Zmqx.Sub.subscribe loggingsSubscriber "" -- Subscribe to all topics
+  zmqUnwrap $ Zmqx.connect loggingsSubscriber socketLayerSenderAddr
+  zmqUnwrap $ Zmqx.Sub.subscribe loggingsSubscriber "" -- Subscribe to all topics
 
   -- 2. Create a shared `MVar` for `InfoStorage`
   infoStorage <- liftIO $ newMVar newInfoStorage

@@ -16,7 +16,7 @@ import Control.Monad.RWS
 import Lotos.Logger
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
-import Lotos.Zmq.Error (zmqThrow, zmqUnwrap)
+import Lotos.Zmq.Error
 import Zmqx
 import Zmqx.Req
 
@@ -34,7 +34,7 @@ mkClientService :: ClientServiceConfig -> LotosAppMonad ClientService
 mkClientService cs@ClientServiceConfig {..} = do
   cReq <- zmqUnwrap $ Zmqx.Req.open $ Zmqx.name "clientReq"
   liftIO $ Zmqx.setSocketOpt cReq (Zmqx.Z_RcvTimeO $ fromIntegral reqTimeoutSec)
-  zmqThrow $ Zmqx.connect cReq loadBalancerFrontendAddr
+  zmqUnwrap $ Zmqx.connect cReq loadBalancerFrontendAddr
   return $ ClientService cs cReq 0
 
 sendTaskRequest :: (ToZmq t) => ClientService -> Task t -> LotosAppMonad (Maybe Ack)

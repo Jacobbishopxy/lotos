@@ -81,10 +81,10 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
 
   -- Init receiver Pair
   receiverPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "tpReceiver"
-  zmqThrow $ Zmqx.connect receiverPair socketLayerSenderAddr
+  zmqUnwrap $ Zmqx.connect receiverPair socketLayerSenderAddr
   -- Init sender Pair
   senderPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "tpSender"
-  zmqThrow $ Zmqx.bind senderPair taskProcessorSenderAddr
+  zmqUnwrap $ Zmqx.bind senderPair taskProcessorSenderAddr
 
   -- task processor cst
   tg <- liftIO $ mkCombinedTrigger triggerAlgoMaxNotifyCount triggerAlgoMaxWaitSec

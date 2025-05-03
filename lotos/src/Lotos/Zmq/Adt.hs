@@ -21,6 +21,7 @@ module Lotos.Zmq.Adt
     defaultTask,
     fillTaskID,
     fillTaskID',
+    unsafeGetTaskID,
 
     -- * ack
     Ack,
@@ -164,6 +165,10 @@ fillTaskID' :: Task a -> IO (Task a)
 fillTaskID' task = do
   uuid <- nextRandom
   return task {taskID = Just uuid}
+
+unsafeGetTaskID :: Task a -> TaskID
+unsafeGetTaskID Task {taskID = Just uuid} = uuid
+unsafeGetTaskID _ = error "unsafeGetTaskID: taskID is Nothing"
 
 ----------------------------------------------------------------------------------------------------
 
