@@ -4,11 +4,6 @@
 -- author: Jacob Xie
 -- date: 2025/04/06 20:21:31 Sunday
 -- brief:
---
--- 1. Acceptor (Dealer) asynchronously receives tasks from the backend socket.
--- 2. Reporter (Dealer) periodically sends worker status to the backend socket.
--- 3. Sender (Dealer) sends tasks to the backend socket.
--- 4. Publisher (Pub) sends logging messages to the logging socket.
 
 module Lotos.Zmq.LBW
   ( TaskAcceptorAPI (..),
@@ -43,11 +38,19 @@ import Zmqx.Pub
 
 ----------------------------------------------------------------------------------------------------
 
+-- | API for task acceptors providing logging and status reporting capabilities
+--
+-- * taPubTaskLogging: Publishes worker logging messages
+-- * taSendTaskStatus: Sends task status updates back to the load balancer
 data TaskAcceptorAPI = TaskAcceptorAPI
   { taPubTaskLogging :: WorkerLogging -> IO (),
     taSendTaskStatus :: (TaskID, TaskStatus) -> IO ()
   }
 
+-- | Typeclass for task acceptors that process incoming tasks
+--
+-- * processTasks: Processes a batch of tasks using the provided API
+--   and returns an updated acceptor state
 class TaskAcceptor ta t where
   processTasks ::
     TaskAcceptorAPI ->
@@ -55,21 +58,43 @@ class TaskAcceptor ta t where
     [Task t] ->
     LotosAppMonad ta
 
+-- | API for status reporters containing current worker information
 data StatusReporterAPI = StatusReporterAPI
   { srReportInfo :: WorkerInfo
   }
 
+-- | Typeclass for status reporters that gather worker status
+--
+-- * gatherStatus: Collects current status information and returns
+--   an updated reporter state along with the status payload
 class StatusReporter sr w where
   gatherStatus ::
     StatusReporterAPI ->
     sr ->
     LotosAppMonad (sr, w)
 
+-- | Current worker status information
+--
+-- * wiProcessingTaskNum: Number of tasks currently being processed
+-- * wiWaitingTaskNum: Number of tasks waiting in the queue
 data WorkerInfo = WorkerInfo
   { wiProcessingTaskNum :: Int,
     wiWaitingTaskNum :: Int
   }
 
+-- | Worker service implementation combining task processing and status reporting
+--
+-- The worker service manages:
+-- * Configuration (conf)
+-- * Task acceptor (acceptor)
+-- * Status reporter (reporter)
+-- * Task queue (taskQueue)
+-- * Event trigger for periodic status updates (trigger)
+-- * ZMQ dealer socket for task/status communication (workerDealer)
+-- * ZMQ pub socket for logging (workerPub)
+-- * Task acceptor API wrapper (taskAcceptorAPI)
+-- * Current worker status (workerInfo)
+-- * Version tracking (ver)
 data WorkerService ta sr t w
   = (TaskAcceptor ta t, StatusReporter sr w) => WorkerService
   { conf :: WorkerServiceConfig,
@@ -90,11 +115,18 @@ data WorkerService ta sr t w
 
 ----------------------------------------------------------------------------------------------------
 
+-- | Creates a new WorkerService instance
+--
+-- Initializes:
+-- * Task queue and event trigger
+-- * ZMQ dealer and pub sockets
+-- * Task acceptor API
+-- * Worker status information
 mkWorkerService ::
   (TaskAcceptor ta t, StatusReporter sr w) =>
   WorkerServiceConfig ->
-  ta -> -- task acceptor
-  sr -> -- status reporter
+  ta -> -- task acceptor implementation
+  sr -> -- status reporter implementation
   LotosAppMonad (WorkerService ta sr t w)
 mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
   -- task queue & trigger
@@ -133,6 +165,11 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
       workerInfo
       0
 
+-- | Starts the worker service by launching two concurrent loops:
+-- * socketLoop: Handles ZMQ communication (receives tasks, sends status)
+-- * tasksExecLoop: Processes tasks from the queue
+--
+-- Returns thread IDs for both loops
 runWorkerService ::
   forall ta sr t w.
   (FromZmq t, ToZmq w, TaskAcceptor ta t, StatusReporter sr w) =>
@@ -151,6 +188,12 @@ runWorkerService ws = do
   return (tid1, tid2)
 
 -- used for worker communicating with load-balancer server
+
+-- | Main communication loop for the worker service
+--
+-- 1. Receives tasks from the load balancer (blocking)
+-- 2. Periodically sends worker status updates
+-- 3. Handles task queue operations
 socketLoop ::
   forall ta sr t w.
   (FromZmq t, ToZmq w, StatusReporter sr w) =>
@@ -184,6 +227,12 @@ socketLoop ws@WorkerService {..} = do
   socketLoop (ws {trigger = newTrigger, reporter = newReporter} :: WorkerService ta sr t w)
 
 -- used for worker executing tasks
+
+-- | Task execution loop that:
+-- 1. Dequeues tasks in batches
+-- 2. Updates worker status information
+-- 3. Processes tasks through the acceptor
+-- 4. Repeats the loop
 tasksExecLoop ::
   forall ta sr t w.
   (FromZmq t, TaskAcceptor ta t) =>
