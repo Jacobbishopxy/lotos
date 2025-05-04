@@ -35,7 +35,8 @@ data WorkerState = WorkerState
     memTotal :: Double, -- In megabytes
     memUsed :: Double, -- In megabytes
     memAvailable :: Double, -- In megabytes
-    currentTaskNum :: Int -- Number of tasks currently being processed
+    processingTaskNum :: Int, -- Number of tasks currently being processed
+    waitingTaskNum :: Int -- Number of tasks waiting to be processed
   }
   deriving (Show)
 
@@ -121,7 +122,7 @@ getWorkerState :: IO WorkerState
 getWorkerState = do
   (la1, la5, la15) <- getLoadAvg
   (total, used, available) <- getMemoryInfo
-  return $ WorkerState la1 la5 la15 total used available 0
+  return $ WorkerState la1 la5 la15 total used available 0 0
 
 instance ToZmq WorkerState where
   toZmq ws =
@@ -131,7 +132,8 @@ instance ToZmq WorkerState where
       doubleToBS (memTotal ws),
       doubleToBS (memUsed ws),
       doubleToBS (memAvailable ws),
-      intToBS (currentTaskNum ws)
+      intToBS (processingTaskNum ws),
+      intToBS (waitingTaskNum ws)
     ]
 
 ----------------------------------------------------------------------------------------------------

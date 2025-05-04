@@ -13,16 +13,22 @@
 module Lotos.Zmq.LBW
   ( TaskAcceptorAPI (..),
     TaskAcceptor (..),
+    WorkerInfo (..),
+    StatusReporterAPI (..),
     StatusReporter (..),
     WorkerService,
     mkWorkerService,
     runWorkerService,
+    getAcceptor,
+    getReporter,
+    listTasksInQueue,
     pubTaskLogging,
     sendTaskStatus,
   )
 where
 
 import Control.Concurrent (ThreadId, forkIO)
+import Control.Concurrent.STM
 import Control.Monad (unless)
 import Control.Monad.RWS
 import Data.Time (getCurrentTime)
@@ -49,8 +55,20 @@ class TaskAcceptor ta t where
     [Task t] ->
     LotosAppMonad ta
 
+data StatusReporterAPI = StatusReporterAPI
+  { srReportInfo :: WorkerInfo
+  }
+
 class StatusReporter sr w where
-  gatherStatus :: sr -> LotosAppMonad (sr, w)
+  gatherStatus ::
+    StatusReporterAPI ->
+    sr ->
+    LotosAppMonad (sr, w)
+
+data WorkerInfo = WorkerInfo
+  { wiProcessingTaskNum :: Int,
+    wiWaitingTaskNum :: Int
+  }
 
 data WorkerService ta sr t w
   = (TaskAcceptor ta t, StatusReporter sr w) => WorkerService
@@ -65,7 +83,8 @@ data WorkerService ta sr t w
     -- sends message (loggings) to LBS
     workerPub :: Zmqx.Pub,
     -- a wrapper for `pubTaskLogging` & `sendTaskStatus`
-    taskAcceptorEnv :: TaskAcceptorAPI,
+    taskAcceptorAPI :: TaskAcceptorAPI,
+    workerInfo :: TVar WorkerInfo,
     ver :: Int
   }
 
@@ -90,7 +109,7 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
   wPub <- zmqUnwrap $ Zmqx.Pub.open $ Zmqx.name "workerPub"
   zmqUnwrap $ Zmqx.connect wPub loadBalancerLoggingAddr
 
-  -- create taskAcceptorEnv instance
+  -- create taskAcceptorAPI instance
   let taskAcceptorAPI =
         TaskAcceptorAPI
           { taPubTaskLogging = zmqThrow . Zmqx.sends wPub . toZmq,
@@ -98,8 +117,21 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
               ack <- newAck
               zmqThrow $ Zmqx.sends wDealer $ toZmq $ WorkerReportTaskStatus ack tid ts
           }
+  -- init workerInfo
+  workerInfo <- liftIO $ newTVarIO WorkerInfo {wiProcessingTaskNum = 0, wiWaitingTaskNum = 0}
 
-  return $ WorkerService ws ta sr taskQueue trigger wDealer wPub taskAcceptorAPI 0
+  return $
+    WorkerService
+      ws
+      ta
+      sr
+      taskQueue
+      trigger
+      wDealer
+      wPub
+      taskAcceptorAPI
+      workerInfo
+      0
 
 runWorkerService ::
   forall ta sr t w.
@@ -141,7 +173,9 @@ socketLoop ws@WorkerService {..} = do
   unless shouldProcess $ socketLoop (ws {trigger = newTrigger} :: WorkerService ta sr t w)
 
   -- 3. gather & send worker status (due to EventTrigger, it sends worker status periodically
-  (newReporter, workerStatus :: w) <- gatherStatus reporter
+  wInfo <- liftIO $ readTVarIO workerInfo
+  let statusReporterAPI = StatusReporterAPI {srReportInfo = wInfo}
+  (newReporter, workerStatus :: w) <- gatherStatus statusReporterAPI reporter
   -- construct `WorkerReportStatus`
   ack <- liftIO newAck
   zmqUnwrap $ Zmqx.sends workerDealer $ toZmq $ WorkerReportStatus ack workerStatus
@@ -158,12 +192,37 @@ tasksExecLoop ::
 tasksExecLoop ws@WorkerService {..} = do
   logDebugR "tasksExecLoop -> start dequeuing tasks..."
   tasks <- liftIO $ dequeueN' (parallelTasksNo conf) taskQueue
+  -- number of tasks to be processed & number of tasks is waiting
+  let tasksTodo = length tasks
+  tasksRemain <- liftIO $ getQueueSize taskQueue
+  logDebugR $
+    "tasksExecLoop -> start processing tasks, len: "
+      <> show tasksTodo
+      <> ", remain: "
+      <> show tasksRemain
+  -- update workerInfo
+  liftIO $ atomically $ do
+    modifyTVar workerInfo $
+      \wi -> wi {wiProcessingTaskNum = tasksTodo, wiWaitingTaskNum = tasksRemain}
 
-  logDebugR $ "tasksExecLoop -> start processing tasks, len: " <> show (length tasks)
   -- Note: blocking should be controlled by the acceptor
-  newAcceptor <- processTasks taskAcceptorEnv acceptor tasks
+  newAcceptor <- processTasks taskAcceptorAPI acceptor tasks
 
   tasksExecLoop (ws {acceptor = newAcceptor} :: WorkerService ta sr t w)
+
+----------------------------------------------------------------------------------------------------
+-- Public API
+----------------------------------------------------------------------------------------------------
+
+getAcceptor :: WorkerService ta sr t w -> ta
+getAcceptor WorkerService {acceptor} = acceptor
+
+getReporter :: WorkerService ta sr t w -> sr
+getReporter WorkerService {reporter} = reporter
+
+listTasksInQueue :: WorkerService ta sr t w -> LotosAppMonad [Task t]
+listTasksInQueue WorkerService {taskQueue} =
+  liftIO $ readQueue' taskQueue
 
 ----------------------------------------------------------------------------------------------------
 

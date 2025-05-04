@@ -11,7 +11,7 @@
 -- Both implement typeclasses from Lotos.Zmq.LBW for integration with the worker service.
 
 module TaskSchedule.Worker
-  (
+  ( SimpleWorker,
   )
 where
 
@@ -23,16 +23,10 @@ import Lotos.Zmq
 import TaskSchedule.Adt
 import TaskSchedule.Util (cvtCommandResult2TaskStatus)
 
--- | Simple task acceptor type that implements TaskAcceptor for ClientTask
-data Acceptor = Acceptor
-
 -- | Worker status reporter that tracks active tasks count
-data Reporter = Reporter
-  { -- | Number of tasks currently being processed
-    currentActivatedTasksNum :: Int
-  }
+data SimpleWorker
 
-instance TaskAcceptor Acceptor ClientTask where
+instance TaskAcceptor SimpleWorker ClientTask where
   -- \| Process a batch of tasks by:
   -- 1. Logging task details
   -- 2. Executing commands concurrently
@@ -55,14 +49,18 @@ instance TaskAcceptor Acceptor ClientTask where
               taSendTaskStatus (unsafeGetTaskID task, cvtCommandResult2TaskStatus res)
           }
 
-instance StatusReporter Reporter WorkerState where
+instance StatusReporter SimpleWorker WorkerState where
   -- \| Gather worker status by:
   -- 1. Getting system state
   -- 2. Combining with task count
   -- 3. Logging final status
-  gatherStatus r = do
+  gatherStatus StatusReporterAPI {..} r = do
     logInfoR "Gathering worker status..."
     status <- liftIO getWorkerState
-    let statusWithTaskNum = status {currentTaskNum = currentActivatedTasksNum r}
+    let statusWithTaskNum =
+          status
+            { processingTaskNum = wiProcessingTaskNum srReportInfo,
+              waitingTaskNum = wiWaitingTaskNum srReportInfo
+            }
     logInfoR $ "Worker status: " ++ show statusWithTaskNum
     return (r, statusWithTaskNum)

@@ -21,12 +21,17 @@ module Lotos.Zmq
     runLBS,
 
     -- * load balancer worker
-    TaskAcceptor (..),
     TaskAcceptorAPI (..),
+    TaskAcceptor (..),
+    WorkerInfo (..),
+    StatusReporterAPI (..),
     StatusReporter (..),
     WorkerService,
     mkWorkerService,
     runWorkerService,
+    getAcceptor,
+    getReporter,
+    listTasksInQueue,
     pubTaskLogging,
     sendTaskStatus,
 

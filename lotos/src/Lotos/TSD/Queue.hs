@@ -17,6 +17,7 @@ module Lotos.TSD.Queue
     readQueue,
     readQueue',
     isEmptyQueue,
+    getQueueSize,
   )
 where
 
@@ -88,3 +89,6 @@ readQueue' (TSQueue t) = atomically $ toList <$> readTVar t
 -- Checks if the thread-safe queue is empty.
 isEmptyQueue :: TSQueue a -> IO Bool
 isEmptyQueue (TSQueue t) = atomically $ Seq.null <$> readTVar t
+
+getQueueSize :: TSQueue a -> IO Int
+getQueueSize (TSQueue t) = atomically $ Seq.length <$> readTVar t

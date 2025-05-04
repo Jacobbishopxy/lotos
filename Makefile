@@ -4,6 +4,9 @@
 
 include Makefile.env
 
+tree:
+	tree ./lotos --gitignore
+
 build-all:
 	cabal build all
 
