@@ -187,6 +187,8 @@ runWorkerService ws WorkerServiceConfig {..} = do
   tid1 <-
     liftIO . forkIO
       =<< runLotosAppWithState <$> ask <*> get <*> pure do
+        liftIO $ putStrLn "??? 1.1"
+
         -- worker Dealer init in a separate thread
         wDealer <- zmqUnwrap $ Zmqx.Dealer.open $ Zmqx.name "workerDealer"
         zmqUnwrap $ Zmqx.connect wDealer loadBalancerBackendAddr

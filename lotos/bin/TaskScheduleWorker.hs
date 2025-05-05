@@ -31,10 +31,12 @@ run logConf = do
     runLotosApp logConf do
       service <- mkWorkerService conf worker worker :: LotosAppMonad (WorkerService SimpleWorker SimpleWorker ClientTask WorkerState)
 
+      -- TODO: BUG! zmq context is gone
       -- Run the worker service
       runWorkerService service conf
 
   putStrLn $ "Worker service started, t1: " ++ show t1 ++ ", t2: " ++ show t2
+  return ()
 
 main :: IO ()
 main = do
