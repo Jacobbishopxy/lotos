@@ -11,7 +11,7 @@
 -- Both implement typeclasses from Lotos.Zmq.LBW for integration with the worker service.
 
 module TaskSchedule.Worker
-  ( SimpleWorker,
+  ( SimpleWorker (..),
   )
 where
 
@@ -24,7 +24,7 @@ import TaskSchedule.Adt
 import TaskSchedule.Util (cvtCommandResult2TaskStatus)
 
 -- | Worker status reporter that tracks active tasks count
-data SimpleWorker
+data SimpleWorker = SimpleWorker
 
 instance TaskAcceptor SimpleWorker ClientTask where
   -- \| Process a batch of tasks by:

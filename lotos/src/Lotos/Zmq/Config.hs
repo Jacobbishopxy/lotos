@@ -94,6 +94,7 @@ data InfoStorageConfig = InfoStorageConfig
 
 data WorkerServiceConfig = WorkerServiceConfig
   { workerId :: Text.Text, -- worker ID for Zmq.Dealer & pub topic for Zmq.Pub
+    workerDealerPairAddr :: Text.Text,
     loadBalancerBackendAddr :: Text.Text, -- backend address
     loadBalancerLoggingAddr :: Text.Text, -- backend logging address
     workerStatusReportIntervalSec :: Int, -- heartbeat interval

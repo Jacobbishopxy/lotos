@@ -22,6 +22,22 @@ unwrap action =
     Left err -> throwIO err
     Right value -> pure value
 
+receiveLoop :: Zmqx.Sub -> Zmqx.Pair -> IO ()
+receiveLoop sub pair2 = do
+  putStrLn "Waiting for messages..."
+  result <- Zmqx.receivesFor sub 2_000
+  case result of
+    Right (Just msgs) -> do
+      putStrLn $ "Received: " ++ show msgs
+      _ <- Zmqx.sends pair2 msgs
+      receiveLoop sub pair2
+    Right Nothing -> do
+      putStrLn "Timeout occurred"
+      receiveLoop sub pair2
+    Left err -> do
+      putStrLn $ "Error: " ++ show err
+      receiveLoop sub pair2
+
 main :: IO ()
 main = do
   putStrLn "Testing receivesFor with SUB socket"
@@ -39,16 +55,7 @@ main = do
       pair2 <- unwrap $ Zmqx.Pair.open $ Zmqx.name "pair2"
       unwrap $ Zmqx.connect pair2 "inproc://pair-test"
 
-      forever do
-        putStrLn "Waiting for messages..."
-        result <- Zmqx.receivesFor sub 2_000 -- 2s timeout
-        case result of
-          Right (Just msgs) -> do
-            putStrLn $ "Received: " ++ show msgs
-            _ <- Zmqx.sends pair2 msgs
-            pure ()
-          Right Nothing -> putStrLn "Timeout occurred"
-          Left err -> putStrLn $ "Error: " ++ show err
+      receiveLoop sub pair2
 
     void $ forkIO do
       pub <- unwrap $ Zmqx.Pub.open $ Zmqx.name "pub"

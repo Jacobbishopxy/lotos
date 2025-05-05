@@ -352,6 +352,14 @@ instance ToZmq WorkerReportTaskStatus where
   toZmq (WorkerReportTaskStatus ack tid ts) =
     toZmq WorkerTaskStatusT <> toZmq ack <> [uuidToBS tid] <> toZmq ts
 
+instance FromZmq WorkerReportTaskStatus where
+  fromZmq (ackBs : uuidBs : tsBs) = do
+    ack <- fromZmq [ackBs]
+    uuid <- uuidOptFromBS uuidBs >>= maybeToEither (ZmqParsing "Invalid format for WorkerReportTaskStatus")
+    status <- fromZmq tsBs
+    return $ WorkerReportTaskStatus ack uuid status
+  fromZmq _ = Left $ ZmqParsing "Invalid format for WorkerReportTaskStatus"
+
 ----------------------------------------------------------------------------------------------------
 
 -- used for backend to notify load-balancer pulling tasks
