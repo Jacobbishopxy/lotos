@@ -148,6 +148,16 @@ test-suite test-conc-executor2
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
 
+test-suite test-zmq-xt
+  import:         shared-properties, test
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        ZmqXT.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , bytestring
+    , zmqx
+
 ----------------------------------------------------------------------------------------------------
 -- Bin
 ----------------------------------------------------------------------------------------------------

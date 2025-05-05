@@ -16,6 +16,7 @@ module Lotos.Zmq.Util
     uuidFromBS,
     uuidOptToBS,
     uuidOptFromBS,
+    runZmqContextIO,
   )
 where
 
@@ -25,6 +26,7 @@ import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.UUID qualified as UUID
 import Lotos.Zmq.Error
+import Zmqx
 
 -- String <-> ByteString
 stringToBS :: String -> B.ByteString
@@ -77,3 +79,9 @@ uuidOptFromBS bs
   | otherwise = case UUID.fromString (BC.unpack bs) of
       Just uuid -> Right (Just uuid)
       Nothing -> Left $ ZmqParsing "Invalid UUID format"
+
+----------------------------------------------------------------------------------------------------
+
+runZmqContextIO :: IO a -> IO a
+runZmqContextIO action = do
+  Zmqx.run Zmqx.defaultOptions action

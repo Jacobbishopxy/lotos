@@ -24,6 +24,9 @@ cradle:
     - path: "test/ConcExecutor2.hs"
       component: "lotos:test:test-conc-executor2"
 
+    - path: "test/ZmqXT.hs"
+      component: "lotos:test:test-zmq-xt"
+
     - path: "bin/CronSearch.hs"
       component: "lotos:exe:cron-search"
 
