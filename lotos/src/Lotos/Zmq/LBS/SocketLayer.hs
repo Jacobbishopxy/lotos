@@ -44,9 +44,9 @@ data SocketLayer t w = SocketLayer
 ----------------------------------------------------------------------------------------------------
 
 -- main function of the socket layer
-runSocketLayer :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => SocketLayerConfig -> TaskSchedulerData t w -> LotosAppMonad ThreadId
+runSocketLayer :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => SocketLayerConfig -> TaskSchedulerData t w -> LotosApp ThreadId
 runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = do
-  logInfoR "runSocketLayer start!"
+  logApp INFO "runSocketLayer start!"
 
   -- Init frontend Router
   frontend <- zmqUnwrap $ Zmqx.Router.open $ Zmqx.name "frontend"
@@ -67,32 +67,32 @@ runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = d
 
   -- Start the event loop in a separate thread
   liftIO . forkIO . Zmqx.run Zmqx.defaultOptions
-    =<< runLotosAppWithState <$> ask <*> get <*> pure (layerLoop pollItems socketLayer)
+    =<< runApp <$> ask <*> pure (layerLoop pollItems socketLayer)
 
 -- event loop
-layerLoop :: (FromZmq t, ToZmq t, FromZmq w) => Zmqx.Sockets -> SocketLayer t w -> LotosAppMonad ()
+layerLoop :: (FromZmq t, ToZmq t, FromZmq w) => Zmqx.Sockets -> SocketLayer t w -> LotosApp ()
 layerLoop pollItems layer =
   liftIO (Zmqx.poll pollItems) >>= \case
-    Left e -> logErrorR $ show e
+    Left e -> logApp ERROR $ show e
     Right ready -> do
       handleFrontend layer ready
       handleBackend layer ready
       layerLoop pollItems layer -- Recursive call within ReaderT context
 
 -- ⭐⭐ handle message from clients
-handleFrontend :: forall t w. (FromZmq t) => SocketLayer t w -> Zmqx.Ready -> LotosAppMonad ()
+handleFrontend :: forall t w. (FromZmq t) => SocketLayer t w -> Zmqx.Ready -> LotosApp ()
 handleFrontend SocketLayer {..} (Zmqx.Ready ready) =
   -- 📩 receive message from a client
   when (ready frontendRouter) $ do
-    logDebugR "handleFrontend: recv client request"
+    logApp DEBUG "handleFrontend: recv client request"
     fromZmq @(Task t) <$> zmqUnwrap (Zmqx.receives frontendRouter) >>= \case
-      Left e -> logErrorR $ show e
+      Left e -> logApp ERROR $ show e
       Right task -> do
         filledTask <- liftIO $ fillTaskID' task
         liftIO $ enqueueTS filledTask taskQueue -- Ensure proper enqueueing
 
 -- ⭐⭐ handle message from load-balancer or workers
-handleBackend :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => SocketLayer t w -> Zmqx.Ready -> LotosAppMonad ()
+handleBackend :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => SocketLayer t w -> Zmqx.Ready -> LotosApp ()
 handleBackend layer@SocketLayer {..} (Zmqx.Ready ready) = do
   -- 📩 receive message from load-balancer
   when (ready backendReceiver) $
@@ -105,11 +105,11 @@ handleBackend layer@SocketLayer {..} (Zmqx.Ready ready) = do
 ----------------------------------------------------------------------------------------------------
 
 -- Handle messages coming from the load balancer
-handleLoadBalancerMessage :: forall t w. (FromZmq t, ToZmq t) => SocketLayer t w -> LotosAppMonad ()
+handleLoadBalancerMessage :: forall t w. (FromZmq t, ToZmq t) => SocketLayer t w -> LotosApp ()
 handleLoadBalancerMessage SocketLayer {..} = do
-  logDebugR "handleBackend: recv load-balancer request"
+  logApp DEBUG "handleBackend: recv load-balancer request"
   fromZmq @(RouterBackendOut t) <$> zmqUnwrap (Zmqx.receives backendReceiver) >>= \case
-    Left e -> logErrorR $ show e
+    Left e -> logApp ERROR $ show e
     Right wt@(WorkerTask wID task) -> do
       -- send to worker first
       zmqUnwrap $ Zmqx.sends backendRouter $ toZmq wt
@@ -118,11 +118,11 @@ handleLoadBalancerMessage SocketLayer {..} = do
       liftIO $ appendTSWorkerTasks wID (uuid, task, TaskInit) workerTasksMap
 
 -- Handle messages coming from workers
-handleWorkerMessage :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => SocketLayer t w -> LotosAppMonad ()
+handleWorkerMessage :: forall t w. (FromZmq t, ToZmq t, FromZmq w) => SocketLayer t w -> LotosApp ()
 handleWorkerMessage layer@SocketLayer {..} = do
-  logDebugR "handleBackend: recv worker request"
+  logApp DEBUG "handleBackend: recv worker request"
   fromZmq @(RouterBackendIn w) <$> zmqUnwrap (Zmqx.receives backendRouter) >>= \case
-    Left e -> logErrorR $ show e
+    Left e -> logApp ERROR $ show e
     -- 💾 worker status changed
     Right (WorkerStatus wID mt a st) ->
       handleWorkerStatus wID mt a st workerStatusMap
@@ -142,7 +142,7 @@ data TaskContext t w = TaskContext
   }
 
 -- Define a Reader monad for task handling operations
-type TaskHandlerM t w a = ReaderT (TaskContext t w) LotosAppMonad a
+type TaskHandlerM t w a = ReaderT (TaskContext t w) LotosApp a
 
 -- Extract TaskContext from SocketLayer
 getTaskContext :: SocketLayer t w -> TaskContext t w
@@ -158,15 +158,15 @@ getTaskContext SocketLayer {..} =
 ----------------------------------------------------------------------------------------------------
 
 -- Handle worker status updates
-handleWorkerStatus :: (FromZmq w) => RoutingID -> WorkerMsgType -> Ack -> w -> TSWorkerStatusMap w -> LotosAppMonad ()
+handleWorkerStatus :: (FromZmq w) => RoutingID -> WorkerMsgType -> Ack -> w -> TSWorkerStatusMap w -> LotosApp ()
 handleWorkerStatus wID mt a st workerStatusMap = do
-  logDebugR $ "handleBackend -> WorkerStatus: " <> show wID <> " " <> show mt <> " " <> show a
+  logApp DEBUG $ "handleBackend -> WorkerStatus: " <> show wID <> " " <> show mt <> " " <> show a
   when (mt == WorkerStatusT) $ liftIO $ insertMap wID st workerStatusMap
 
 -- Handle worker task status updates using Reader monad
-handleWorkerTaskStatus :: (FromZmq t, ToZmq t) => SocketLayer t w -> RoutingID -> WorkerMsgType -> Ack -> TaskID -> TaskStatus -> LotosAppMonad ()
+handleWorkerTaskStatus :: (FromZmq t, ToZmq t) => SocketLayer t w -> RoutingID -> WorkerMsgType -> Ack -> TaskID -> TaskStatus -> LotosApp ()
 handleWorkerTaskStatus socketLayer wID mt a uuid tst = do
-  logDebugR $ "handleBackend -> WorkerTaskStatus: " <> show wID <> " " <> show mt <> " " <> show a
+  logApp DEBUG $ "handleBackend -> WorkerTaskStatus: " <> show wID <> " " <> show mt <> " " <> show a
   when (mt == WorkerTaskStatusT) $
     runReaderT (handleTaskStatus wID uuid tst) (getTaskContext socketLayer)
 
@@ -187,10 +187,10 @@ handleFailedTask wID uuid = do
   -- delete the task
   v <- liftIO $ deleteTSWorkerTasks' wID (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
   case v of
-    Nothing -> lift $ logErrorR $ "handleBackend -> TaskFailed: uuid not found: " <> show uuid
+    Nothing -> lift $ logApp ERROR $ "handleBackend -> TaskFailed: uuid not found: " <> show uuid
     Just (tID, task, _) -> do
       let retry = taskRetry task
-      lift $ logDebugR $ "handleBackend -> retry: taskID [" <> show tID <> "], retry [" <> show retry <> "]"
+      lift $ logApp DEBUG $ "handleBackend -> retry: taskID [" <> show tID <> "], retry [" <> show retry <> "]"
       if retry > 0
         then liftIO $ enqueueTS task {taskRetry = retry - 1} tcFailedTaskQueue
         else liftIO $ writeBuffer tcGarbageBin task
@@ -205,7 +205,7 @@ handleOtherTaskStatus wID uuid status = do
   v <- liftIO $ lookupTSWorkerTasks' wID (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
   case v of
     Nothing ->
-      lift $ logErrorR $ "handleBackend -> " <> show status <> ": uuid not found: " <> show uuid
+      lift $ logApp ERROR $ "handleBackend -> " <> show status <> ": uuid not found: " <> show uuid
     -- modify task status
     Just (_, task, _) ->
       liftIO $ modifyTSWorkerTasks' wID (uuid, task, status) (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap

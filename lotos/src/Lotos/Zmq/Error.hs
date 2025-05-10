@@ -13,6 +13,7 @@ module Lotos.Zmq.Error
   )
 where
 
+import Control.Monad.IO.Class
 import Data.Text qualified as Text
 import Data.UUID qualified as UUID
 import Lotos.Logger
@@ -29,8 +30,13 @@ zmqErrWrap :: Either Zmqx.Error a -> Either ZmqError a
 zmqErrWrap (Left e) = Left $ ZmqErr e
 zmqErrWrap (Right a) = Right a
 
-zmqUnwrap :: IO (Either Zmqx.Error a) -> LotosAppMonad a
-zmqUnwrap = logUnwrap logErrorR show
+zmqUnwrap :: IO (Either Zmqx.Error a) -> LotosApp a
+zmqUnwrap action = do
+  liftIO action >>= \case
+    Left err -> do
+      logApp ERROR $ "ZMQ error: " <> show err
+      error $ show err
+    Right a -> return a
 
 zmqThrow :: IO (Either Zmqx.Error a) -> IO a
 zmqThrow action = do

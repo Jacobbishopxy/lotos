@@ -7,16 +7,28 @@
 
 module Main where
 
-import Control.Concurrent (threadDelay)
-import Control.Monad
+import Control.Concurrent
+import Control.Monad.IO.Class
 import Lotos.Logger
 import Lotos.Zmq
 import TaskSchedule.Adt
 import TaskSchedule.Worker
 
-run :: LogConfig -> IO ()
-run logConf = do
-  let conf =
+run :: WorkerServiceConfig -> LotosApp ()
+run wsConfig = do
+  tid <- liftIO myThreadId
+  logApp INFO $ "runLotosApp on thread: " <> show tid
+
+  let worker = SimpleWorker
+  -- Create a worker service
+  service <- mkWorkerService wsConfig worker worker :: LotosApp (WorkerService SimpleWorker SimpleWorker ClientTask WorkerState)
+  -- Run the worker service
+  runWorkerService service wsConfig
+
+main :: IO ()
+main = do
+  logConfig <- initLocalTimeLogger "./logs/taskScheduleWorker.log" DEBUG True
+  let wsConfig =
         WorkerServiceConfig
           { workerId = "simpleWorker_1",
             workerDealerPairAddr = "inproc://TaskScheduleWorker",
@@ -25,29 +37,5 @@ run logConf = do
             workerStatusReportIntervalSec = 5,
             parallelTasksNo = 4
           }
-      worker = SimpleWorker
 
-  ((t1, t2), _) <- runZmqContextIO do
-    runLotosApp logConf do
-      service <- mkWorkerService conf worker worker :: LotosAppMonad (WorkerService SimpleWorker SimpleWorker ClientTask WorkerState)
-
-      -- TODO: BUG! zmq context is gone
-      -- Run the worker service
-      runWorkerService service conf
-
-  putStrLn $ "Worker service started, t1: " ++ show t1 ++ ", t2: " ++ show t2
-  return ()
-
-main :: IO ()
-main = do
-  let logConfig =
-        LogConfig
-          { confLogLevel = L_DEBUG,
-            confLogDir = "task_schedule_worker",
-            confBufferSize = 1000
-          }
-
-  _ <- run logConfig
-
-  -- Block the main thread indefinitely
-  forever $ threadDelay $ 60 * 1_000_000
+  runZmqContextIO $ runApp logConfig $ run wsConfig

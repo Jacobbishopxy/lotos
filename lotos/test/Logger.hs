@@ -5,45 +5,23 @@
 
 module Main where
 
-import Control.Concurrent (forkIO)
-import Control.Monad (forM_, void)
-import Control.Monad.RWS
+import Control.Concurrent
+import Control.Monad
 import Lotos.Logger
 
-app :: LotosAppMonad ()
-app = do
-  logDebugR "This debug message won't be logged"
-  logInfoR "This info message will be logged"
-  logWarnR "This warning message will be logged"
-  logErrorR "This error message will be logged"
-
-  liftIO $ putStrLn "Running multi-threaded logging test..."
-  threadedApp
-
--- A test application that logs messages from multiple threads
-threadedApp :: LotosAppMonad ()
-threadedApp = do
-  let threadCount = 5
-
-  -- Get the current configuration and logger state
-  config <- ask
-  loggerState <- get
-
-  -- Spawn multiple threads
-  liftIO $ forM_ [(1 :: Int) .. threadCount] $ \threadId -> do
-    forkIO $
-      runLotosAppWithState config loggerState $ do
-        logInfoR $ "Thread " ++ show threadId ++ " logging info"
-        logWarnR $ "Thread " ++ show threadId ++ " logging warning"
-        logErrorR $ "Thread " ++ show threadId ++ " logging error"
-
 main :: IO ()
-main = do
-  let config =
-        LogConfig
-          { confLogLevel = L_INFO,
-            confLogDir = "./logs",
-            confBufferSize = 10
-          }
-  putStrLn "Running logging tests..."
-  void $ runLotosApp config app
+main = withLocalTimeLogger "./logs/test.log" INFO True $ \logger -> do
+  putStrLn $ "Logging to: " ++ getCurrentLogPath logger
+
+  -- Log some messages with local timestamps
+  logMessage logger INFO "Application starting with local time rotation"
+
+  let loop count = when (count < (10 :: Integer)) $ do
+        logMessage logger INFO "Heartbeat message"
+        threadDelay (5 * 1000000) -- 5 seconds
+        logMessage logger DEBUG "Debug information"
+        loop (count + 1)
+
+  loop 0
+
+  logMessage logger INFO "Application shutting down after 10 iterations"

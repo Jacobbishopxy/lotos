@@ -32,9 +32,9 @@ instance TaskAcceptor SimpleWorker ClientTask where
   -- 2. Executing commands concurrently
   -- 3. Updating task status via callbacks
   processTasks TaskAcceptorAPI {..} a tasks = do
-    logInfoR $ "Processing tasks: " ++ show tasks
+    logApp INFO $ "Processing tasks: " ++ show tasks
     results <- liftIO $ executeConcurrently [genCommandRequest task | task <- tasks]
-    logInfoR $ "Tasks processed: " ++ show results
+    logApp INFO $ "Tasks processed: " ++ show results
     return a
     where
       genCommandRequest :: Task ClientTask -> CommandRequest
@@ -55,12 +55,12 @@ instance StatusReporter SimpleWorker WorkerState where
   -- 2. Combining with task count
   -- 3. Logging final status
   gatherStatus StatusReporterAPI {..} r = do
-    logInfoR "Gathering worker status..."
+    logApp INFO "Gathering worker status..."
     status <- liftIO getWorkerState
     let statusWithTaskNum =
           status
             { processingTaskNum = wiProcessingTaskNum srReportInfo,
               waitingTaskNum = wiWaitingTaskNum srReportInfo
             }
-    logInfoR $ "Worker status: " ++ show statusWithTaskNum
+    logApp INFO $ "Worker status: " ++ show statusWithTaskNum
     return (r, statusWithTaskNum)

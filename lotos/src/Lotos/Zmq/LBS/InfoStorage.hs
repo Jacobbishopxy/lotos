@@ -83,7 +83,7 @@ runInfoStorage ::
   Proxy name ->
   InfoStorageConfig ->
   TaskSchedulerData t w ->
-  LotosAppMonad (ThreadId, ThreadId)
+  LotosApp (ThreadId, ThreadId)
 runInfoStorage httpName InfoStorageConfig {..} tsd = do
   -- 1. Create a subscriber for loggings
   loggingsSubscriber <- zmqUnwrap $ Zmqx.Sub.open $ Zmqx.name "loggingsSubscriber"
@@ -110,13 +110,13 @@ runInfoStorage httpName InfoStorageConfig {..} tsd = do
 
   -- 5. Run the HTTP server in a separate thread
   t1 <- liftIO $ forkIO $ Warp.run httpPort srv
-  logInfoR $ "HTTP server started on port " <> show httpPort <> ", thread ID: " <> show t1
+  logApp INFO $ "HTTP server started on port " <> show httpPort <> ", thread ID: " <> show t1
 
   -- 6. Run the main loop
   t2 <-
     liftIO . forkIO . Zmqx.run Zmqx.defaultOptions
-      =<< runLotosAppWithState <$> ask <*> get <*> pure (infoLoop infoStorageServer tsd)
-  logInfoR $ "Info storage event loop started, thread ID: " <> show t2
+      =<< runApp <$> ask <*> pure (infoLoop infoStorageServer tsd)
+  logApp INFO $ "Info storage event loop started, thread ID: " <> show t2
 
   return (t1, t2)
 
@@ -157,7 +157,7 @@ infoLoop ::
   (FromZmq t, ToZmq t, FromZmq w) =>
   InfoStorageServer name t w ->
   TaskSchedulerData t w ->
-  LotosAppMonad ()
+  LotosApp ()
 infoLoop iss@InfoStorageServer {..} layer = do
   -- 0. record time and according to the trigger, enter into a new loop or continue
   now <- liftIO getCurrentTime
@@ -171,19 +171,19 @@ infoLoop iss@InfoStorageServer {..} layer = do
           let routingID = decodeUtf8 topicBs
           case fromZmq @WorkerLogging logDataBs of
             Left e ->
-              logErrorR ("infoLoop -> loggingsSubscriber: " <> show e) >> return subscriberInfo
+              logApp INFO ("infoLoop -> loggingsSubscriber: " <> show e) >> return subscriberInfo
             Right wl ->
               case Map.lookup routingID subscriberInfo of
                 Just ringBuffer ->
                   liftIO $ writeBuffer ringBuffer wl >> return subscriberInfo
                 Nothing -> do
-                  logDebugR $ "infoLoop -> loggingsSubscriber: new buffer for " <> show routingID
+                  logApp DEBUG $ "infoLoop -> loggingsSubscriber: new buffer for " <> show routingID
                   newBuffer <- liftIO $ mkTSRingBuffer' loggingBufferSize wl
                   pure $ Map.insert routingID newBuffer subscriberInfo
         _ ->
-          logErrorR "infoLoop -> loggingsSubscriber: error message type" >> return subscriberInfo
+          logApp ERROR "infoLoop -> loggingsSubscriber: error message type" >> return subscriberInfo
       Nothing ->
-        logDebugR ("infoLoop -> loggingsSubscriber(none): " <> show now) >> return subscriberInfo
+        logApp DEBUG ("infoLoop -> loggingsSubscriber(none): " <> show now) >> return subscriberInfo
 
   -- 2. only when the trigger is activated, we will process the info
   when (not shouldProcess) $
@@ -203,7 +203,7 @@ mkInfoStorage ::
   (FromZmq t, ToZmq t, FromZmq w) =>
   TaskSchedulerData t w ->
   SubscriberInfo ->
-  LotosAppMonad (InfoStorage t w)
+  LotosApp (InfoStorage t w)
 mkInfoStorage (TaskSchedulerData tq ftq wtm wsm gbb) si = do
   tasksInQueue <- liftIO $ readQueue' tq
   tasksInFailedQueue <- liftIO $ readQueue' ftq

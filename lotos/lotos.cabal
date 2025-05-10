@@ -83,7 +83,7 @@ library
     , wai
     , warp
     , yaml
-    , zmqx
+    , zmqx, fast-logger
 
   hs-source-dirs:     src
 
@@ -157,6 +157,7 @@ test-suite test-zmq-xt
   build-depends:
     , bytestring
     , zmqx
+    , mtl
 
 ----------------------------------------------------------------------------------------------------
 -- Bin

@@ -23,7 +23,7 @@ module Lotos.Zmq.LBW
   )
 where
 
-import Control.Concurrent (ThreadId, forkIO, threadDelay)
+import Control.Concurrent (forkIO, myThreadId, threadDelay)
 import Control.Concurrent.STM
 import Control.Monad (unless, when)
 import Control.Monad.RWS
@@ -59,7 +59,7 @@ class TaskAcceptor ta t where
     TaskAcceptorAPI ->
     ta ->
     [Task t] ->
-    LotosAppMonad ta
+    LotosApp ta
 
 -- | API for status reporters containing current worker information
 data StatusReporterAPI = StatusReporterAPI
@@ -74,7 +74,7 @@ class StatusReporter sr w where
   gatherStatus ::
     StatusReporterAPI ->
     sr ->
-    LotosAppMonad (sr, w)
+    LotosApp (sr, w)
 
 -- | Current worker status information
 --
@@ -131,8 +131,11 @@ mkWorkerService ::
   WorkerServiceConfig ->
   ta -> -- task acceptor implementation
   sr -> -- status reporter implementation
-  LotosAppMonad (WorkerService ta sr t w)
+  LotosApp (WorkerService ta sr t w)
 mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
+  tid1 <- liftIO myThreadId
+  logApp INFO $ "mkWorkerService on thread: " <> show tid1
+
   -- task queue & trigger
   taskQueue <- liftIO $ mkTSQueue
   trigger <- liftIO $ mkTimeTrigger workerStatusReportIntervalSec
@@ -179,37 +182,24 @@ runWorkerService ::
   (FromZmq t, ToZmq w, TaskAcceptor ta t, StatusReporter sr w) =>
   WorkerService ta sr t w ->
   WorkerServiceConfig ->
-  LotosAppMonad (ThreadId, ThreadId)
+  LotosApp ()
 runWorkerService ws WorkerServiceConfig {..} = do
-  liftIO $ putStrLn "??? 1"
-
-  -- socket loop
-  tid1 <-
-    liftIO . forkIO
-      =<< runLotosAppWithState <$> ask <*> get <*> pure do
-        liftIO $ putStrLn "??? 1.1"
-
-        -- worker Dealer init in a separate thread
-        wDealer <- zmqUnwrap $ Zmqx.Dealer.open $ Zmqx.name "workerDealer"
-        zmqUnwrap $ Zmqx.connect wDealer loadBalancerBackendAddr
-        -- worker Dealer Pair init in a separate thread
-        wDealerPair' <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "workerDealerPair'"
-        zmqUnwrap $ Zmqx.connect wDealerPair' workerDealerPairAddr
-
-        -- start the socket loop
-        socketLoop ws wDealer wDealerPair' 0
-
-  liftIO $ putStrLn "??? 2"
+  tid <- liftIO myThreadId
+  logApp INFO $ "runWorkerService on thread: " <> show tid
 
   -- tasks execute loop
-  tid2 <-
-    liftIO . forkIO =<< runLotosAppWithState <$> ask <*> get <*> pure (tasksExecLoop ws)
+  tid2 <- forkApp $ tasksExecLoop ws
+  logApp INFO $ "tasksExecLoop on thread: " <> show tid2
 
-  liftIO $ putStrLn "??? 3"
+  -- worker Dealer init in a separate thread
+  wDealer <- zmqUnwrap $ Zmqx.Dealer.open $ Zmqx.name "workerDealer"
+  zmqUnwrap $ Zmqx.connect wDealer loadBalancerBackendAddr
+  -- worker Dealer Pair init in a separate thread
+  wDealerPair' <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "workerDealerPair'"
+  zmqUnwrap $ Zmqx.connect wDealerPair' workerDealerPairAddr
 
-  return (tid1, tid2)
-
--- used for worker communicating with load-balancer server
+  -- start the socket loop
+  socketLoop ws wDealer wDealerPair'
 
 -- | Main communication loop for the worker service
 --
@@ -222,59 +212,50 @@ socketLoop ::
   WorkerService ta sr t w ->
   Zmqx.Dealer ->
   Zmqx.Pair ->
-  Int ->
-  LotosAppMonad ()
+  LotosApp ()
 socketLoop
   ws@WorkerService {..}
   workerDealer
-  workerDealerPair'
-  cnt = do
-    liftIO $ putStrLn $ ">>> 0, cnt: " <> show cnt
+  workerDealerPair' =
+    do
+      -- 0. according to the trigger, deciding enter into a new loop or continue
+      now <- liftIO getCurrentTime
+      (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger now
+      logApp DEBUG $ "socketLoop -> start, now: " <> show now <> ", shouldProcess: " <> show shouldProcess
 
-    -- 0. according to the trigger, deciding enter into a new loop or continue
-    now <- liftIO getCurrentTime
-    (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger now
-    logDebugR $ "socketLoop -> start, now: " <> show now <> ", shouldProcess: " <> show shouldProcess
+      let pollItems = Zmqx.the workerDealer & Zmqx.also workerDealerPair'
+      rdy <- zmqUnwrap (Zmqx.pollFor pollItems $ timeoutInterval newTrigger now)
 
-    liftIO $ putStrLn ">>> 1"
-    -- 1. receiving task or send task status
-    let pollItems = Zmqx.the workerDealer & Zmqx.also workerDealerPair'
-    liftIO $ putStrLn ">>> 2"
-    rdy <- zmqUnwrap (Zmqx.pollFor pollItems $ timeoutInterval newTrigger now)
-    liftIO $ putStrLn ">>> 3"
+      case rdy of
+        Just (Zmqx.Ready ready) -> do
+          -- receive message from external
+          when (ready workerDealer) do
+            logApp DEBUG $ "socketLoop -> workerDealer: " <> show now
+            fromZmq @(Task t) <$> zmqUnwrap (Zmqx.receives workerDealer) >>= \case
+              Left e -> logApp ERROR $ show e
+              Right task -> liftIO $ enqueueTS task taskQueue
+          -- receive message from internal
+          when (ready workerDealerPair') do
+            logApp DEBUG $ "socketLoop -> workerDealerPair: " <> show now
+            zmqUnwrap (Zmqx.receives workerDealerPair') >>= \msg ->
+              case (fromZmq msg :: Either ZmqError WorkerReportTaskStatus) of
+                Left e -> logApp ERROR $ show e
+                Right _ -> zmqUnwrap $ Zmqx.sends workerDealer msg
+        Nothing -> logApp DEBUG $ "socketLoop -> none: " <> show now
 
-    case rdy of
-      Just (Zmqx.Ready ready) -> do
-        -- receive message from external
-        when (ready workerDealer) do
-          logDebugR $ "socketLoop -> workerDealer: " <> show now
-          fromZmq @(Task t) <$> zmqUnwrap (Zmqx.receives workerDealer) >>= \case
-            Left e -> logErrorR $ show e
-            Right task -> liftIO $ enqueueTS task taskQueue
-        -- receive message from internal
-        when (ready workerDealerPair') do
-          logDebugR $ "socketLoop -> workerDealerPair: " <> show now
-          zmqUnwrap (Zmqx.receives workerDealerPair') >>= \msg ->
-            case (fromZmq msg :: Either ZmqError WorkerReportTaskStatus) of
-              Left e -> logErrorR $ show e
-              Right _ -> zmqUnwrap $ Zmqx.sends workerDealer msg
-      Nothing -> logDebugR $ "socketLoop -> none: " <> show now
+      -- 2. when the trigger is inactivated, enter into a new loop
+      unless shouldProcess $ socketLoop (ws {trigger = newTrigger} :: WorkerService ta sr t w) workerDealer workerDealerPair'
 
-    liftIO $ putStrLn ">>> 4"
-    -- 2. when the trigger is inactivated, enter into a new loop
-    unless shouldProcess $ socketLoop (ws {trigger = newTrigger} :: WorkerService ta sr t w) workerDealer workerDealerPair' (cnt + 1)
-    liftIO $ putStrLn ">>> 5"
+      -- 3. gather & send worker status (due to EventTrigger, it sends worker status periodically
+      wInfo <- liftIO $ readTVarIO workerInfo
+      let statusReporterAPI = StatusReporterAPI {srReportInfo = wInfo}
+      (newReporter, workerStatus :: w) <- gatherStatus statusReporterAPI reporter
+      -- construct `WorkerReportStatus`
+      ack <- liftIO newAck
+      zmqUnwrap $ Zmqx.sends workerDealer $ toZmq $ WorkerReportStatus ack workerStatus
 
-    -- 3. gather & send worker status (due to EventTrigger, it sends worker status periodically
-    wInfo <- liftIO $ readTVarIO workerInfo
-    let statusReporterAPI = StatusReporterAPI {srReportInfo = wInfo}
-    (newReporter, workerStatus :: w) <- gatherStatus statusReporterAPI reporter
-    -- construct `WorkerReportStatus`
-    ack <- liftIO newAck
-    zmqUnwrap $ Zmqx.sends workerDealer $ toZmq $ WorkerReportStatus ack workerStatus
-
-    -- loop
-    socketLoop (ws {trigger = newTrigger, reporter = newReporter} :: WorkerService ta sr t w) workerDealer workerDealerPair' (cnt + 1)
+      -- loop
+      socketLoop (ws {trigger = newTrigger, reporter = newReporter} :: WorkerService ta sr t w) workerDealer workerDealerPair'
 
 -- used for worker executing tasks
 
@@ -287,19 +268,19 @@ tasksExecLoop ::
   forall ta sr t w.
   (FromZmq t, TaskAcceptor ta t) =>
   WorkerService ta sr t w ->
-  LotosAppMonad ()
+  LotosApp ()
 tasksExecLoop ws@WorkerService {..} = do
-  logDebugR "tasksExecLoop -> start dequeuing tasks..."
+  logApp DEBUG "tasksExecLoop -> start dequeuing tasks..."
   tasksInQueue <- liftIO $ getQueueSize taskQueue
   when (tasksInQueue == 0) do
-    logDebugR "tasksExecLoop -> no tasks in queue, sleep for a while..."
+    logApp DEBUG "tasksExecLoop -> no tasks in queue, sleep for a while..."
     liftIO $ threadDelay $ 10 * 1_000_000 -- sleep for 10 seconds
     tasksExecLoop ws
   tasks <- liftIO $ dequeueN' (parallelTasksNo conf) taskQueue
   -- number of tasks to be processed & number of tasks is waiting
   let tasksTodo = length tasks
   tasksRemain <- liftIO $ getQueueSize taskQueue
-  logDebugR $
+  logApp DEBUG $
     "tasksExecLoop -> start processing tasks, len: "
       <> show tasksTodo
       <> ", remain: "
@@ -324,19 +305,19 @@ getAcceptor WorkerService {acceptor} = acceptor
 getReporter :: WorkerService ta sr t w -> sr
 getReporter WorkerService {reporter} = reporter
 
-listTasksInQueue :: WorkerService ta sr t w -> LotosAppMonad [Task t]
+listTasksInQueue :: WorkerService ta sr t w -> LotosApp [Task t]
 listTasksInQueue WorkerService {taskQueue} =
   liftIO $ readQueue' taskQueue
 
 ----------------------------------------------------------------------------------------------------
 
 -- -- publish task logging, used for workers
--- pubTaskLogging :: WorkerService ta sr t w -> WorkerLogging -> LotosAppMonad ()
+-- pubTaskLogging :: WorkerService ta sr t w -> WorkerLogging -> LotosApp ()
 -- pubTaskLogging WorkerService {..} wl =
 --   zmqUnwrap $ Zmqx.sends workerPub $ toZmq wl
 
 -- -- report task status, used for workers
--- sendTaskStatus :: WorkerService ta sr t w -> TaskID -> TaskStatus -> LotosAppMonad ()
+-- sendTaskStatus :: WorkerService ta sr t w -> TaskID -> TaskStatus -> LotosApp ()
 -- sendTaskStatus WorkerService {..} tid ts = do
 --   ack <- liftIO newAck
 --   zmqUnwrap $ Zmqx.sends workerDealer $ toZmq $ WorkerReportTaskStatus ack tid ts
