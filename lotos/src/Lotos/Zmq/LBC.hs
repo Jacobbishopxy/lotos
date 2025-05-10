@@ -30,18 +30,18 @@ data ClientService = ClientService
 
 ----------------------------------------------------------------------------------------------------
 
-mkClientService :: ClientServiceConfig -> LotosAppMonad ClientService
+mkClientService :: ClientServiceConfig -> LotosApp ClientService
 mkClientService cs@ClientServiceConfig {..} = do
   cReq <- zmqUnwrap $ Zmqx.Req.open $ Zmqx.name "clientReq"
   liftIO $ Zmqx.setSocketOpt cReq (Zmqx.Z_RcvTimeO $ fromIntegral reqTimeoutSec)
   zmqUnwrap $ Zmqx.connect cReq loadBalancerFrontendAddr
   return $ ClientService cs cReq 0
 
-sendTaskRequest :: (ToZmq t) => ClientService -> Task t -> LotosAppMonad (Maybe Ack)
+sendTaskRequest :: (ToZmq t) => ClientService -> Task t -> LotosApp (Maybe Ack)
 sendTaskRequest ClientService {..} t = do
   -- send task
   zmqUnwrap $ Zmqx.sends clientReq $ toZmq t
   -- recv ack
   fromZmq @Ack <$> zmqUnwrap (Zmqx.receives clientReq) >>= \case
-    Left e -> logErrorR (show e) >> pure Nothing
-    Right ack -> logInfoR ("recv ack from load-balancer: " <> show ack) >> return (Just ack)
+    Left e -> logApp ERROR (show e) >> pure Nothing
+    Right ack -> logApp INFO ("recv ack from load-balancer: " <> show ack) >> return (Just ack)

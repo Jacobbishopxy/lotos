@@ -5,174 +5,190 @@
 
 module Lotos.Logger
   ( LogLevel (..),
-    LogConfig (..),
-    LotosApp (..),
-    LotosAppMonad,
-    LoggerState,
-    runLotosApp,
-    runLotosAppWithState,
-    logDebugR,
-    logInfoR,
-    logWarnR,
-    logErrorR,
-
-    -- * unwrap
-    logUnwrap,
+    LoggerEnv,
+    LotosApp,
+    runApp,
+    forkApp,
+    logApp,
+    initLocalTimeLogger,
+    withLocalTimeLogger,
+    initConsoleLogger,
+    withConsoleLogger,
+    logMessage,
+    closeLogger,
+    getCurrentLogPath,
   )
 where
 
-import Control.Concurrent.STM
-import Control.Exception (Exception, throwIO)
-import Control.Monad (unless, when)
-import Control.Monad.IO.Class
-import Control.Monad.RWS
+import Control.Concurrent (ThreadId, forkIO, myThreadId, threadDelay)
+import Control.Concurrent.Async (Async, async, cancel)
+import Control.Exception (SomeException, bracket, handle)
+import Control.Monad (forever, when)
 import Control.Monad.Reader
-import Control.Monad.State
-import Data.DList qualified as DL
 import Data.Time
-import System.Directory
-import System.FilePath
-import System.IO
+import System.Directory (createDirectoryIfMissing, doesFileExist, getModificationTime, renameFile)
+import System.FilePath (takeDirectory)
+import System.Log.FastLogger
 
-data LogLevel = L_DEBUG | L_INFO | L_WARN | L_ERROR
-  deriving (Eq, Ord, Show, Enum)
+-- Log level definitions
+data LogLevel = DEBUG | INFO | WARN | ERROR deriving (Show, Eq, Ord)
 
-newtype LotosApp m a = LotosApp
-  { runLotosAppMonad :: StateT LoggerState (ReaderT LogConfig m) a
-  }
-  deriving
-    ( Functor,
-      Applicative,
-      Monad,
-      MonadIO,
-      MonadReader LogConfig,
-      MonadState LoggerState
-    )
-
-type LotosAppMonad = LotosApp IO
-
-data LogConfig = LogConfig
-  { confLogLevel :: LogLevel,
-    confLogDir :: FilePath,
-    confBufferSize :: Int
+-- Logger environment
+data LoggerEnv = LoggerEnv
+  { loggerSet :: LoggerSet,
+    consoleLogger :: Maybe LoggerSet,
+    minLogLevel :: LogLevel,
+    currentLogPath :: FilePath,
+    rotationThread :: Maybe (Async ())
   }
 
-data LoggerState = LoggerState
-  { logEntries :: TVar (DL.DList LogEntry),
-    currentDate :: TVar Day,
-    logHandle :: TVar Handle
+newtype LotosApp a = LotosApp
+  { unApp :: ReaderT LoggerEnv IO a
   }
+  deriving (Functor, Applicative, Monad, MonadIO, MonadReader LoggerEnv)
 
-data LogEntry = LogEntry LogLevel ZonedTime String
+runApp :: LoggerEnv -> LotosApp a -> IO a
+runApp env app = runReaderT (unApp app) env
 
--- Initialize the logger
-initLoggerState :: LogConfig -> IO LoggerState
-initLoggerState config = do
-  now <- getZonedTime
-  let day = localDay (zonedTimeToLocalTime now)
-  createDirectoryIfMissing True (confLogDir config)
-  handle <- openLogFile config day
-  LoggerState
-    <$> newTVarIO DL.empty
-    <*> newTVarIO day
-    <*> newTVarIO handle
+-- Fork an App action as a new thread
+forkApp :: LotosApp () -> LotosApp ThreadId
+forkApp action = do
+  env <- ask -- Capture the current environment
+  liftIO $ forkIO (runApp env action) -- Run the action in the new thread
 
-openLogFile :: LogConfig -> Day -> IO Handle
-openLogFile config day = do
-  let fileName = formatTime defaultTimeLocale "%Y-%m-%d.log" day
-      path = confLogDir config </> fileName
-  openFile path AppendMode
+-- Helper function for logging
+logApp :: LogLevel -> String -> LotosApp ()
+logApp level msg = do
+  logger <- ask
+  liftIO $ logMessage logger level msg
 
-formatEntry :: LogEntry -> String
-formatEntry (LogEntry lvl t msg) =
-  let timeStr = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" t
-   in "[" ++ timeStr ++ "] " ++ show lvl ++ ": " ++ msg
+----------------------------------------------------------------------------------------------------
 
-flushLogs :: LoggerState -> IO ()
-flushLogs st = do
-  (entries, handle) <- atomically $ do
-    entries <- readTVar (logEntries st)
-    handle <- readTVar (logHandle st)
-    writeTVar (logEntries st) DL.empty
-    return (entries, handle)
-  unless (null entries) $ do
-    mapM_ (hPutStrLn handle) (map formatEntry (DL.toList entries))
-    hFlush handle
+-- Initialize logger with local time daily rotation
+initLocalTimeLogger :: FilePath -> LogLevel -> Bool -> IO LoggerEnv
+initLocalTimeLogger logPath minLevel withConsole = do
+  -- Ensure directory exists
+  createDirectoryIfMissing True (takeDirectory logPath)
 
-rotateIfNeeded :: LogConfig -> LoggerState -> IO ()
-rotateIfNeeded config st = do
-  now <- getZonedTime
-  let today = localDay (zonedTimeToLocalTime now)
+  -- Rotate if needed based on local time
+  rotateIfNeededLocal logPath
 
-  -- Atomically check and update the current date
-  shouldRotate <- atomically $ do
-    currentDay <- readTVar (currentDate st)
-    if currentDay /= today
-      then do
-        writeTVar (currentDate st) today
-        return True
-      else return False
+  -- Create logger set
+  set <- newFileLoggerSet defaultBufSize logPath
 
-  -- If the date has changed, rotate the log file
-  when shouldRotate $ do
-    -- Flush any remaining logs
-    flushLogs st
+  -- Create console logger if requested
+  console <- if withConsole then Just <$> newStdoutLoggerSet defaultBufSize else return Nothing
 
-    -- Close the current log file
-    oldHandle <- atomically $ readTVar (logHandle st)
-    hClose oldHandle
+  -- Start rotation monitor thread using local time
+  rotationThread <- async (localTimeRotationMonitor logPath set)
 
-    -- Open a new log file for the new date
-    newHandle <- openLogFile config today
-    atomically $ writeTVar (logHandle st) newHandle
+  return $ LoggerEnv set console minLevel logPath (Just rotationThread)
 
-logMessage :: LogLevel -> String -> LotosApp IO ()
-logMessage level msg = do
-  config <- ask
-  when (level >= confLogLevel config) $ do
-    now <- liftIO getZonedTime
-    st <- get
-    liftIO $ atomically $ modifyTVar' (logEntries st) (`DL.snoc` LogEntry level now msg)
+-- Initialize logger with console output only
+initConsoleLogger :: LogLevel -> IO LoggerEnv
+initConsoleLogger minLevel = do
+  set <- newStdoutLoggerSet defaultBufSize
+  return $ LoggerEnv set Nothing minLevel "" Nothing
 
-    entries <- liftIO $ atomically $ readTVar (logEntries st)
-    when (length entries >= confBufferSize config) $
-      liftIO $
-        flushLogs st
+-- Resource-safe logger usage
+withLocalTimeLogger :: FilePath -> LogLevel -> Bool -> (LoggerEnv -> IO a) -> IO a
+withLocalTimeLogger path level withConsole =
+  bracket (initLocalTimeLogger path level withConsole) closeLogger
 
-    liftIO $ rotateIfNeeded config st
+-- Resource-safe console logger usage
+withConsoleLogger :: LogLevel -> (LoggerEnv -> IO a) -> IO a
+withConsoleLogger level =
+  bracket (initConsoleLogger level) closeLogger
 
--- Public logging functions
-logDebugR, logInfoR, logWarnR, logErrorR :: String -> LotosApp IO ()
-logDebugR = logMessage L_DEBUG
-logInfoR = logMessage L_INFO
-logWarnR = logMessage L_WARN
-logErrorR = logMessage L_ERROR
+-- Close logger and cleanup
+closeLogger :: LoggerEnv -> IO ()
+closeLogger env = do
+  case rotationThread env of
+    Just t -> cancel t
+    Nothing -> return ()
+  rmLoggerSet (loggerSet env)
 
--- Runner function
-runLotosApp :: LogConfig -> LotosAppMonad a -> IO (a, LoggerState)
-runLotosApp config (LotosApp action) = do
-  initialState <- initLoggerState config
-  result <- runReaderT (evalStateT action initialState) config
-  -- Rotate logs if needed and flush remaining logs
-  rotateIfNeeded config initialState
-  flushLogs initialState
-  return (result, initialState)
+-- Core logging function with local timestamps
+logMessage :: (MonadIO m) => LoggerEnv -> LogLevel -> String -> m ()
+logMessage env level msg
+  | level < minLogLevel env = return ()
+  | otherwise = liftIO $ do
+      now <- getZonedTime
+      tid <- myThreadId
+      let timeStr = formatTime defaultTimeLocale "%F %T.%q" now
+          levelStr = padRight 5 ' ' (show level)
+          tidStr = drop 9 (show tid)
+          logEntry = "[" ++ timeStr ++ "][" ++ tidStr ++ "][" ++ levelStr ++ "] " ++ msg ++ "\n"
+      -- Log to file
+      pushLogStr (loggerSet env) $ toLogStr logEntry
+      -- Log to console if configured
+      case consoleLogger env of
+        Just console -> pushLogStr console $ toLogStr logEntry
+        Nothing -> return ()
+  where
+    padRight n c s = s ++ replicate (n - length s) c
 
-runLotosAppWithState :: LogConfig -> LoggerState -> LotosAppMonad a -> IO a
-runLotosAppWithState config st (LotosApp action) =
-  runReaderT (evalStateT action st) config
+-- Get the current log path
+getCurrentLogPath :: LoggerEnv -> FilePath
+getCurrentLogPath = currentLogPath
 
--- Error handling helper
-logUnwrap ::
-  (Exception e, m ~ LotosApp IO) =>
-  (String -> m ()) ->
-  (e -> String) ->
-  IO (Either e a) ->
-  m a
-logUnwrap logger formatErr action = do
-  result <- liftIO action
-  case result of
-    Left err -> do
-      logger (formatErr err)
-      liftIO $ throwIO err
-    Right x -> return x
+-- Local time rotation monitor thread
+localTimeRotationMonitor :: FilePath -> LoggerSet -> IO ()
+localTimeRotationMonitor logPath set =
+  handle (\(_ :: SomeException) -> return ()) $ -- Prevent thread death
+    forever $ do
+      now <- getZonedTime
+      let localTime = zonedTimeToLocalTime now
+          today = localDay localTime
+          tomorrow = addDays 1 today
+          midnightTonight = LocalTime tomorrow midnight
+          nextRotation = localTimeToUTC (zonedTimeZone now) midnightTonight
+
+      -- Wait until local midnight
+      nowUTC <- getCurrentTime
+      let diff = diffUTCTime nextRotation nowUTC
+      threadDelay (floor (diff * 1000000)) -- Convert to microseconds
+
+      -- Rotate logs
+      rotateLogLocalTime logPath set
+
+      -- Recreate logger set for new day
+      rmLoggerSet set
+      newFileLoggerSet defaultBufSize logPath
+
+-- Rotate logs if needed based on local time
+rotateIfNeededLocal :: FilePath -> IO ()
+rotateIfNeededLocal logPath = do
+  exists <- doesFileExist logPath
+  when exists $ do
+    modTimeUTC <- getModificationTime logPath
+    timeZone <- getCurrentTimeZone
+    let modTimeLocal = utcToLocalTime timeZone modTimeUTC
+        modDay = localDay modTimeLocal
+
+    currentLocalTime <- getZonedTime
+    let currentDay = localDay (zonedTimeToLocalTime currentLocalTime)
+
+    when (modDay < currentDay) $ do
+      let suffix = formatTime defaultTimeLocale "%Y-%m-%d" modTimeLocal
+          newName = logPath ++ "." ++ suffix
+      renameFile logPath newName
+
+-- Perform log rotation using local time
+rotateLogLocalTime :: FilePath -> LoggerSet -> IO ()
+rotateLogLocalTime logPath set = do
+  -- Flush current logs
+  flushLogStr set
+
+  -- Close current file
+  rmLoggerSet set
+
+  -- Rotate if file exists
+  exists <- doesFileExist logPath
+  when exists $ do
+    modTimeUTC <- getModificationTime logPath
+    timeZone <- getCurrentTimeZone
+    let modTimeLocal = utcToLocalTime timeZone modTimeUTC
+        suffix = formatTime defaultTimeLocale "%Y-%m-%d" modTimeLocal
+        newName = logPath ++ "." ++ suffix
+    renameFile logPath newName

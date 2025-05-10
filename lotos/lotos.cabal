@@ -83,7 +83,7 @@ library
     , wai
     , warp
     , yaml
-    , zmqx
+    , zmqx, fast-logger
 
   hs-source-dirs:     src
 
@@ -157,6 +157,7 @@ test-suite test-zmq-xt
   build-depends:
     , bytestring
     , zmqx
+    , mtl
 
 ----------------------------------------------------------------------------------------------------
 -- Bin
@@ -206,7 +207,7 @@ executable ts-worker
   import:         shared-properties
   hs-source-dirs: bin
   main-is:        TaskScheduleWorker.hs
-  ghc-options:
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   other-modules:
     TaskSchedule.Adt
     TaskSchedule.Util

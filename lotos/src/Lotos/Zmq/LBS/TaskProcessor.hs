@@ -75,9 +75,9 @@ runTaskProcessor ::
   TaskProcessorConfig ->
   TaskSchedulerData t w ->
   lb ->
-  LotosAppMonad ThreadId
+  LotosApp ThreadId
 runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) loadBalancer = do
-  logInfoR "runTaskProcessor"
+  logApp INFO "runTaskProcessor"
 
   -- Init receiver Pair
   receiverPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "tpReceiver"
@@ -91,14 +91,14 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
   let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm gbb loadBalancer tg 0
 
   liftIO . forkIO . Zmqx.run Zmqx.defaultOptions
-    =<< runLotosAppWithState <$> ask <*> get <*> pure (processorLoop config taskProcessor)
+    =<< runApp <$> ask <*> pure (processorLoop config taskProcessor)
 
 processorLoop ::
   forall lb t w.
   (FromZmq t, ToZmq t, FromZmq w, LoadBalancerAlgo lb (Task t) w) =>
   TaskProcessorConfig ->
   TaskProcessor lb t w ->
-  LotosAppMonad ()
+  LotosApp ()
 processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   -- 0. accumulate ack and record time; according to the trigger, enter into a new loop or continue
   now <- liftIO getCurrentTime
@@ -108,9 +108,9 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   zmqUnwrap (Zmqx.receivesFor lbReceiver $ timeoutInterval newTrigger now) >>= \case
     Just bs ->
       case (fromZmq bs) of
-        Left e -> logErrorR $ show e
-        Right (Notify ack) -> logDebugR $ "processorLoop -> lbReceiver(ack): " <> show ack
-    Nothing -> logDebugR $ "processorLoop -> lbReceiver(none): " <> show now
+        Left e -> logApp ERROR $ show e
+        Right (Notify ack) -> logApp DEBUG $ "processorLoop -> lbReceiver(ack): " <> show ack
+    Nothing -> logApp DEBUG $ "processorLoop -> lbReceiver(none): " <> show now
 
   -- 2. when the trigger is inactivated, enter into a new loop
   unless shouldProcess $ processorLoop cfg tp {trigger = newTrigger}
@@ -132,7 +132,7 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
       workerTasks = [WorkerTask rid t | (rid, t) <- tasksTodo]
 
   when (errLen > 0) $
-    logErrorR $
+    logApp ERROR $
       "processorLoop.leftTasks: " <> show errLen
 
   -- 6. send to backend router

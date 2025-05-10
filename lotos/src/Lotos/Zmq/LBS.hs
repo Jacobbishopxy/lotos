@@ -59,9 +59,9 @@ runLBS ::
   Proxy name ->
   LBSConfig ->
   lb ->
-  LotosAppMonad ()
+  LotosApp ()
 runLBS n LBSConfig {..} loadBalancer = do
-  logInfoR "runLBS start!"
+  logApp INFO "runLBS start!"
 
   -- 0. config
   let socketLayerConfig =
@@ -95,14 +95,14 @@ runLBS n LBSConfig {..} loadBalancer = do
 
   -- 2. run socket layer
   t1 <- runSocketLayer socketLayerConfig taskSchedulerData
-  logInfoR $ "runSocketLayer threadID: " <> show t1
+  logApp INFO $ "runSocketLayer threadID: " <> show t1
 
   -- 3. run task processor
   t2 <- runTaskProcessor taskProcessorConfig taskSchedulerData loadBalancer
-  logInfoR $ "runTaskProcessor threadID: " <> show t2
+  logApp INFO $ "runTaskProcessor threadID: " <> show t2
 
   -- 4. run info storage
   (t3, t4) <- runInfoStorage n infoStorageConfig taskSchedulerData
-  logInfoR $ "runInfoStorage threadID 1: " <> show t3 <> ", threadID 2: " <> show t4
+  logApp INFO $ "runInfoStorage threadID 1: " <> show t3 <> ", threadID 2: " <> show t4
 
   pure ()

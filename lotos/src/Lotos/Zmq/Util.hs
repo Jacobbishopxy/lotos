@@ -17,6 +17,7 @@ module Lotos.Zmq.Util
     uuidOptToBS,
     uuidOptFromBS,
     runZmqContextIO,
+    runZmqContextWithThreadIO,
   )
 where
 
@@ -25,6 +26,7 @@ import Data.ByteString.Char8 qualified as BC
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.UUID qualified as UUID
+import GHC.Natural (Natural)
 import Lotos.Zmq.Error
 import Zmqx
 
@@ -85,3 +87,7 @@ uuidOptFromBS bs
 runZmqContextIO :: IO a -> IO a
 runZmqContextIO action = do
   Zmqx.run Zmqx.defaultOptions action
+
+runZmqContextWithThreadIO :: Natural -> IO a -> IO a
+runZmqContextWithThreadIO threadNum action = do
+  Zmqx.run (Zmqx.ioThreads threadNum) action

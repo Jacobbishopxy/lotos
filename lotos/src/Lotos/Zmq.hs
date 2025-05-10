@@ -32,8 +32,8 @@ module Lotos.Zmq
     getAcceptor,
     getReporter,
     listTasksInQueue,
-    pubTaskLogging,
-    sendTaskStatus,
+    -- pubTaskLogging,
+    -- sendTaskStatus,
 
     -- * load balancer client
     ClientService,

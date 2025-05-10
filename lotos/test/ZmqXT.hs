@@ -10,7 +10,10 @@ module Main where
 import Control.Concurrent
 import Control.Exception
 import Control.Monad
+import Control.Monad.RWS
 import Data.ByteString.Char8 qualified as C
+import Lotos.Logger
+import Lotos.Zmq
 import Zmqx
 import Zmqx.Pair
 import Zmqx.Pub
@@ -22,44 +25,63 @@ unwrap action =
     Left err -> throwIO err
     Right value -> pure value
 
+receiveLoop :: Zmqx.Sub -> Zmqx.Pair -> LotosApp ()
+receiveLoop sub pair2 = do
+  tid <- liftIO myThreadId
+  logApp INFO $ "$$$ 3 > " <> show tid
+  logApp INFO "Waiting for messages..."
+
+  result <- liftIO $ Zmqx.receivesFor sub 2000
+  case result of
+    Right (Just msgs) -> do
+      logApp INFO $ "Received: " ++ show msgs
+      _ <- liftIO $ Zmqx.sends pair2 msgs
+      receiveLoop sub pair2
+    Right Nothing -> do
+      logApp INFO "Timeout occurred"
+      receiveLoop sub pair2
+    Left err -> do
+      logApp INFO $ "Error: " ++ show err
+      receiveLoop sub pair2
+
 main :: IO ()
 main = do
-  putStrLn "Testing receivesFor with SUB socket"
+  logConfig <- initConsoleLogger DEBUG
 
-  Zmqx.run Zmqx.defaultOptions do
-    pair1 <- unwrap $ Zmqx.Pair.open $ Zmqx.name "pair1"
-    unwrap $ Zmqx.bind pair1 "inproc://pair-test"
+  runZmqContextIO do
+    _ <- runApp logConfig do
+      tid <- liftIO myThreadId
+      logApp INFO $ "$$$ 1 > " <> show tid
+      pair1 <- liftIO $ unwrap $ Zmqx.Pair.open $ Zmqx.name "pair1"
+      liftIO $ unwrap $ Zmqx.bind pair1 "inproc://pair-test"
 
-    void $ forkIO do
-      -- declare in a separate thread
-      sub <- unwrap $ Zmqx.Sub.open (Zmqx.name "sub")
-      unwrap $ Zmqx.Sub.subscribe sub (C.pack "")
-      unwrap $ Zmqx.connect sub "tcp://127.0.0.1:5555"
+      t1 <- forkApp do
+        tid' <- liftIO myThreadId
+        logApp INFO $ "$$$ 2 > " <> show tid'
+        -- declare in a separate thread
+        sub <- liftIO $ unwrap $ Zmqx.Sub.open (Zmqx.name "sub")
+        liftIO $ unwrap $ Zmqx.Sub.subscribe sub (C.pack "")
+        liftIO $ unwrap $ Zmqx.connect sub "tcp://127.0.0.1:5555"
 
-      pair2 <- unwrap $ Zmqx.Pair.open $ Zmqx.name "pair2"
-      unwrap $ Zmqx.connect pair2 "inproc://pair-test"
+        pair2 <- liftIO $ unwrap $ Zmqx.Pair.open $ Zmqx.name "pair2"
+        liftIO $ unwrap $ Zmqx.connect pair2 "inproc://pair-test"
 
-      forever do
-        putStrLn "Waiting for messages..."
-        result <- Zmqx.receivesFor sub 2_000 -- 2s timeout
-        case result of
-          Right (Just msgs) -> do
-            putStrLn $ "Received: " ++ show msgs
-            _ <- Zmqx.sends pair2 msgs
-            pure ()
-          Right Nothing -> putStrLn "Timeout occurred"
-          Left err -> putStrLn $ "Error: " ++ show err
+        receiveLoop sub pair2
 
-    void $ forkIO do
-      pub <- unwrap $ Zmqx.Pub.open $ Zmqx.name "pub"
-      unwrap $ Zmqx.bind pub "tcp://127.0.0.1:5555"
+      logApp INFO $ "t1: " <> show t1
+
+      t2 <- forkApp do
+        pub <- liftIO $ unwrap $ Zmqx.Pub.open $ Zmqx.name "pub"
+        liftIO $ unwrap $ Zmqx.bind pub "tcp://127.0.0.1:5555"
+        void $ forever do
+          liftIO $ unwrap $ Zmqx.send pub (C.pack "Hello from PUB")
+          liftIO $ threadDelay $ 5 * 1_000_000 -- 5s between publishes
+      logApp INFO $ "t2: " <> show t2
+
+      -- receive messages from pair2
       void $ forever do
-        unwrap $ Zmqx.send pub (C.pack "Hello from PUB")
-        threadDelay $ 5 * 1_000_000 -- 5s between publishes
-
-    -- receive messages from pair2
-    void $ forever do
-      result <- Zmqx.receives pair1
-      case result of
-        Right msgs -> putStrLn $ "Received from pair1: " ++ show msgs
-        Left err -> putStrLn $ "Error: " ++ show err
+        result <- liftIO $ Zmqx.receives pair1
+        case result of
+          Right msgs -> logApp INFO $ "Received from pair1: " ++ show msgs
+          Left err -> logApp INFO $ "Error: " ++ show err
+    return ()
