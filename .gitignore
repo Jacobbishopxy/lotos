@@ -27,3 +27,4 @@ cabal.project.local~
 lotos/app/*
 !lotos/app/.gitkeep
 *.log
+logs/

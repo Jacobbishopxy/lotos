@@ -69,6 +69,7 @@ library
     , containers
     , directory
     , dlist
+    , fast-logger
     , filepath
     , mtl
     , process
@@ -83,7 +84,7 @@ library
     , wai
     , warp
     , yaml
-    , zmqx, fast-logger
+    , zmqx
 
   hs-source-dirs:     src
 
@@ -156,8 +157,8 @@ test-suite test-zmq-xt
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     , bytestring
-    , zmqx
     , mtl
+    , zmqx
 
 ----------------------------------------------------------------------------------------------------
 -- Bin
@@ -198,6 +199,7 @@ executable ts-server
     TaskSchedule.Util
 
   build-depends:
+    , aeson
     , base
     , lotos
     , process
@@ -214,6 +216,7 @@ executable ts-worker
     TaskSchedule.Worker
 
   build-depends:
+    , aeson
     , base
     , lotos
     , process
@@ -230,6 +233,7 @@ executable ts-client
     TaskSchedule.Util
 
   build-depends:
+    , aeson
     , base
     , lotos
     , process
