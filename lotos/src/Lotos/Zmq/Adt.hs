@@ -80,6 +80,7 @@ module Lotos.Zmq.Adt
 where
 
 import Control.Concurrent.STM
+import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as Char8
 import Data.List (find)
@@ -136,6 +137,27 @@ data Task t = Task
     taskProp :: t
   }
   deriving (Show)
+
+instance (Aeson.ToJSON t) => Aeson.ToJSON (Task t) where
+  toJSON task =
+    Aeson.object
+      [ "taskID" Aeson..= taskID task,
+        "taskContent" Aeson..= taskContent task,
+        "taskRetry" Aeson..= taskRetry task,
+        "taskRetryInterval" Aeson..= taskRetryInterval task,
+        "taskTimeout" Aeson..= taskTimeout task,
+        "taskProp" Aeson..= taskProp task
+      ]
+
+instance (Aeson.FromJSON t) => Aeson.FromJSON (Task t) where
+  parseJSON = Aeson.withObject "Task" $ \v ->
+    Task
+      <$> v Aeson..: "taskID"
+      <*> v Aeson..: "taskContent"
+      <*> v Aeson..: "taskRetry"
+      <*> v Aeson..: "taskRetryInterval"
+      <*> v Aeson..: "taskTimeout"
+      <*> v Aeson..: "taskProp"
 
 instance (ToZmq t) => ToZmq (Task t) where
   toZmq (Task uuid ctt rty ri to prop) =

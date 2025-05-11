@@ -4,6 +4,20 @@
 -- brief:
 
 module TaskSchedule.Server
-  (
+  ( SimpleServer (..),
   )
 where
+
+import Control.Monad.IO.Class
+import Data.Text qualified as Text
+import Lotos.Logger
+import Lotos.Proc
+import Lotos.Zmq
+import TaskSchedule.Adt
+import TaskSchedule.Util
+
+data SimpleServer = SimpleServer
+
+instance LoadBalancerAlgo SimpleServer ClientTask WorkerState where
+  -- scheduleTasks :: lb -> [(RoutingID, w)] -> [t] -> (lb, ScheduledResult t w)
+  scheduleTasks = undefined

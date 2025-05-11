@@ -47,14 +47,14 @@ data ScheduledResult t w
 
 class LoadBalancerAlgo lb t w where
   -- given a list of tasks, return worker and task pairs
-  scheduleTasks :: lb -> [(RoutingID, w)] -> [t] -> (lb, ScheduledResult t w)
+  scheduleTasks :: lb -> [(RoutingID, w)] -> [Task t] -> (lb, ScheduledResult (Task t) w)
 
 ----------------------------------------------------------------------------------------------------
 -- TaskProcessor
 ----------------------------------------------------------------------------------------------------
 
 data TaskProcessor lb t w
-  = (LoadBalancerAlgo lb (Task t) w) => TaskProcessor
+  = (LoadBalancerAlgo lb t w) => TaskProcessor
   { lbReceiver :: Zmqx.Pair,
     lbSender :: Zmqx.Pair,
     taskQueue :: TSQueue (Task t),
@@ -71,7 +71,7 @@ data TaskProcessor lb t w
 
 runTaskProcessor ::
   forall lb t w.
-  (FromZmq t, ToZmq t, FromZmq w, LoadBalancerAlgo lb (Task t) w) =>
+  (FromZmq t, ToZmq t, FromZmq w, LoadBalancerAlgo lb t w) =>
   TaskProcessorConfig ->
   TaskSchedulerData t w ->
   lb ->
@@ -95,7 +95,7 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
 
 processorLoop ::
   forall lb t w.
-  (FromZmq t, ToZmq t, FromZmq w, LoadBalancerAlgo lb (Task t) w) =>
+  (FromZmq t, ToZmq t, FromZmq w, LoadBalancerAlgo lb t w) =>
   TaskProcessorConfig ->
   TaskProcessor lb t w ->
   LotosApp ()

@@ -55,7 +55,7 @@ data LBSConfig = LBSConfig
 
 runLBS ::
   forall (name :: Symbol) lb t w.
-  (LBConstraint name t w, LoadBalancerAlgo lb (Task t) w) =>
+  (LBConstraint name t w, LoadBalancerAlgo lb t w) =>
   Proxy name ->
   LBSConfig ->
   lb ->

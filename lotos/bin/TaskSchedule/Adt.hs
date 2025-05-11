@@ -2,6 +2,8 @@
 -- author: Jacob Xie
 -- date: 2025/04/16 14:04:21 Wednesday
 -- brief:
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module TaskSchedule.Adt
   ( -- * worker state
@@ -16,9 +18,11 @@ where
 
 import Control.Exception (IOException, handle)
 import Control.Monad (guard)
+import Data.Aeson qualified as Aeson
 import Data.Char (isDigit, isSpace)
 import Data.List (isPrefixOf)
 import Data.Maybe (listToMaybe, mapMaybe)
+import GHC.Generics (Generic)
 import Lotos.Zmq
 import System.Info (os)
 import System.Process (readProcess)
@@ -38,7 +42,7 @@ data WorkerState = WorkerState
     processingTaskNum :: Int, -- Number of tasks currently being processed
     waitingTaskNum :: Int -- Number of tasks waiting to be processed
   }
-  deriving (Show)
+  deriving (Show, Generic, Aeson.ToJSON)
 
 data OS = Linux | MacOS | Unknown deriving (Eq)
 
@@ -144,7 +148,7 @@ data ClientTask = ClientTask
   { command :: String,
     executeTimeoutSec :: Int
   }
-  deriving (Show)
+  deriving (Show, Generic, Aeson.ToJSON, Aeson.FromJSON)
 
 simpleClientTask :: String -> ClientTask
 simpleClientTask cmd = ClientTask cmd 0

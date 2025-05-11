@@ -23,7 +23,7 @@ module Lotos.Zmq.LBW
   )
 where
 
-import Control.Concurrent (forkIO, myThreadId, threadDelay)
+import Control.Concurrent (myThreadId, threadDelay)
 import Control.Concurrent.STM
 import Control.Monad (unless, when)
 import Control.Monad.RWS
@@ -105,7 +105,6 @@ data WorkerService ta sr t w
     reporter :: sr,
     taskQueue :: TSQueue (Task t),
     trigger :: EventTrigger,
-    -- TODO: use pair to communicate with Dealer & Pub
     -- receives message (tasks) from LBS (load balancer server);
     -- sends message (worker status) to LBS.
     workerDealerPair :: Zmqx.Pair,
