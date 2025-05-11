@@ -5,6 +5,43 @@
 
 module Main where
 
+import Data.Data (Proxy (..))
+import Lotos.Logger
+import Lotos.Zmq
+import TaskSchedule.Adt
+import TaskSchedule.Server
+
+run :: LBSConfig -> LotosApp ()
+run lbsConfig = do
+  let simpleServer = SimpleServer
+
+  -- runLBS n lbsConfig simpleServer
+
+  return ()
+  where
+    n = Proxy @"SimpleServer"
+
 main :: IO ()
 main = do
-  putStrLn "whatever"
+  logConfig <- initLocalTimeLogger "./logs/taskScheduleWorker.log" DEBUG True
+  let lbsConfig =
+        LBSConfig
+          { -- task scheduler
+            lbTaskQueueHWM = 1000,
+            lbFailedTaskQueueHWM = 1000,
+            lbGarbageBinSize = 100,
+            -- socket layer
+            lbFrontendAddr = "tcp://localhost:5555",
+            lbBackendAddr = "tcp://localhost:5556",
+            -- task processor
+            lbTaskQueuePullNo = 10,
+            lbFailedTaskQueuePullNo = 10,
+            lbTaskTriggerMaxNotifyCount = 10,
+            lbTaskTriggerMaxWaitSec = 10,
+            -- info storage
+            lbHttpPort = 8081,
+            lbLoggingBufferSize = 1000,
+            lbInfoFetchIntervalSec = 10
+          }
+
+  runZmqContextIO $ runApp logConfig $ run lbsConfig

@@ -19,5 +19,5 @@ import TaskSchedule.Util
 data SimpleServer = SimpleServer
 
 instance LoadBalancerAlgo SimpleServer ClientTask WorkerState where
-  -- scheduleTasks :: lb -> [(RoutingID, w)] -> [t] -> (lb, ScheduledResult t w)
-  scheduleTasks = undefined
+  scheduleTasks :: lb -> [(RoutingID, w)] -> [Task t] -> (lb, ScheduledResult t w)
+  scheduleTasks lb workers tasks = undefined

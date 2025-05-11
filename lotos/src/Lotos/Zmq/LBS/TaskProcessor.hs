@@ -41,13 +41,13 @@ type TaskMap t = Map.Map TaskID (Task t)
 
 data ScheduledResult t w
   = ScheduledResult
-  { workerTaskPairs :: [(RoutingID, t)],
-    tasksLeft :: [t]
+  { workerTaskPairs :: [(RoutingID, Task t)],
+    tasksLeft :: [Task t]
   }
 
 class LoadBalancerAlgo lb t w where
   -- given a list of tasks, return worker and task pairs
-  scheduleTasks :: lb -> [(RoutingID, w)] -> [Task t] -> (lb, ScheduledResult (Task t) w)
+  scheduleTasks :: lb -> [(RoutingID, w)] -> [Task t] -> (lb, ScheduledResult t w)
 
 ----------------------------------------------------------------------------------------------------
 -- TaskProcessor
