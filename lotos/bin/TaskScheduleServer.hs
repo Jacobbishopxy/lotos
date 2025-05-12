@@ -5,6 +5,8 @@
 
 module Main where
 
+import Control.Concurrent (myThreadId)
+import Control.Monad.IO.Class
 import Data.Data (Proxy (..))
 import Lotos.Logger
 import Lotos.Zmq
@@ -13,9 +15,11 @@ import TaskSchedule.Server
 
 run :: LBSConfig -> LotosApp ()
 run lbsConfig = do
-  let simpleServer = SimpleServer
+  tid <- liftIO myThreadId
+  logApp INFO $ "runLotosApp on thread: " <> show tid
 
-  -- runLBS n lbsConfig simpleServer
+  let simpleServer = SimpleServer
+  runLBS @"SimpleServer" @SimpleServer @ClientTask @WorkerState n lbsConfig simpleServer :: LotosApp ()
 
   return ()
   where
@@ -23,7 +27,7 @@ run lbsConfig = do
 
 main :: IO ()
 main = do
-  logConfig <- initLocalTimeLogger "./logs/taskScheduleWorker.log" DEBUG True
+  logConfig <- initLocalTimeLogger "./logs/taskScheduleServer.log" DEBUG True
   let lbsConfig =
         LBSConfig
           { -- task scheduler

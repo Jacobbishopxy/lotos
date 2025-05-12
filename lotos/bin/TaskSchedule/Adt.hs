@@ -140,6 +140,19 @@ instance ToZmq WorkerState where
       intToBS (waitingTaskNum ws)
     ]
 
+instance FromZmq WorkerState where
+  fromZmq [la1BS, la5BS, la15BS, totalBS, usedBS, availableBS, processingTaskNumBS, waitingTaskNumBS] = do
+    la1 <- doubleFromBS la1BS
+    la5 <- doubleFromBS la5BS
+    la15 <- doubleFromBS la15BS
+    total <- doubleFromBS totalBS
+    used <- doubleFromBS usedBS
+    available <- doubleFromBS availableBS
+    processingTaskNum <- intFromBS processingTaskNumBS
+    waitingTaskNum <- intFromBS waitingTaskNumBS
+    return $ WorkerState la1 la5 la15 total used available processingTaskNum waitingTaskNum
+  fromZmq _ = Left $ ZmqParsing "Invalid WorkerState format"
+
 ----------------------------------------------------------------------------------------------------
 -- ClientTask
 ----------------------------------------------------------------------------------------------------

@@ -47,7 +47,7 @@ data ScheduledResult t w
 
 class LoadBalancerAlgo lb t w where
   -- given a list of tasks, return worker and task pairs
-  scheduleTasks :: lb -> [(RoutingID, w)] -> [Task t] -> (lb, ScheduledResult t w)
+  scheduleTasks :: lb -> [(RoutingID, w)] -> [Task t] -> LotosApp (lb, ScheduledResult t w)
 
 ----------------------------------------------------------------------------------------------------
 -- TaskProcessor
@@ -125,8 +125,9 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   -- 5. perform load-balancer algo: `[w] -> [t] -> ([(RoutingID, t)], [t])`
   let tasksMap = tasksToMap tasks
       failedTasksMap = tasksToMap failedTasks
-      (newLoadBalancer, ScheduledResult tasksTodo leftTasks) = scheduleTasks loadBalancer workerStatuses $ tasks <> failedTasks
-      (invalidTasks, leftTasks') = tasksFilter tasksMap leftTasks
+  (newLoadBalancer, ScheduledResult tasksTodo leftTasks) <- scheduleTasks loadBalancer workerStatuses $ tasks <> failedTasks
+
+  let (invalidTasks, leftTasks') = tasksFilter tasksMap leftTasks
       (invalidFailedTasks, leftTasks'') = tasksFilter failedTasksMap leftTasks'
       errLen = length leftTasks''
       workerTasks = [WorkerTask rid t | (rid, t) <- tasksTodo]
