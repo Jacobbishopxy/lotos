@@ -16,7 +16,5 @@ install-cron-search:
 		--install-method=copy \
 		--installdir=./app
 
-hie-lotos:
-	cd lotos && gen-hie > hie.yaml
-
-hie: hie-lotos
+hie:
+	gen-hie > hie.yaml

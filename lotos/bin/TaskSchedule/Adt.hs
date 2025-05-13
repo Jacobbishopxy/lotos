@@ -1,9 +1,10 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+
 -- file: Adt.hs
 -- author: Jacob Xie
 -- date: 2025/04/16 14:04:21 Wednesday
 -- brief:
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
 
 module TaskSchedule.Adt
   ( -- * worker state
