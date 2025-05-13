@@ -20,8 +20,6 @@ run lbsConfig = do
 
   let simpleServer = SimpleServer
   runLBS @"SimpleServer" @SimpleServer @ClientTask @WorkerState n lbsConfig simpleServer :: LotosApp ()
-
-  return ()
   where
     n = Proxy @"SimpleServer"
 

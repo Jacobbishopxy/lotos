@@ -3,28 +3,28 @@ cradle:
     - path: "lotos/src"
       component: "lib:lotos"
 
-    - path: "lotos/./"
+    - path: "lotos/test/ReadCron.hs"
       component: "lotos:test:test-read-cron"
 
-    - path: "lotos/./"
+    - path: "lotos/test/Airflow.hs"
       component: "lotos:test:test-airflow"
 
-    - path: "lotos/test"
+    - path: "lotos/test/Logger.hs"
       component: "lotos:test:test-logger"
 
-    - path: "lotos/test"
+    - path: "lotos/test/EventTrigger.hs"
       component: "lotos:test:test-event-trigger"
 
-    - path: "lotos/test"
+    - path: "lotos/test/SimpleServant.hs"
       component: "lotos:test:test-simple-servant"
 
-    - path: "lotos/test"
+    - path: "lotos/test/ConcExecutor.hs"
       component: "lotos:test:test-conc-executor"
 
-    - path: "lotos/test"
+    - path: "lotos/test/ConcExecutor2.hs"
       component: "lotos:test:test-conc-executor2"
 
-    - path: "lotos/test"
+    - path: "lotos/test/ZmqXT.hs"
       component: "lotos:test:test-zmq-xt"
 
     - path: "lotos/bin/CronSearch.hs"
