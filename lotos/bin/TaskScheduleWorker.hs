@@ -32,8 +32,8 @@ main = do
         WorkerServiceConfig
           { workerId = "simpleWorker_1",
             workerDealerPairAddr = "inproc://TaskScheduleWorker",
-            loadBalancerBackendAddr = "tcp://localhost:5555",
-            loadBalancerLoggingAddr = "tcp://localhost:5556",
+            loadBalancerBackendAddr = "tcp://127.0.0.1:5555",
+            loadBalancerLoggingAddr = "tcp://127.0.0.1:5556",
             workerStatusReportIntervalSec = 5,
             parallelTasksNo = 4
           }

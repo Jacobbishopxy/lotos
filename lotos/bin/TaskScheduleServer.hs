@@ -33,8 +33,8 @@ main = do
             lbFailedTaskQueueHWM = 1000,
             lbGarbageBinSize = 100,
             -- socket layer
-            lbFrontendAddr = "tcp://localhost:5555",
-            lbBackendAddr = "tcp://localhost:5556",
+            lbFrontendAddr = "tcp://127.0.0.1:5555",
+            lbBackendAddr = "tcp://127.0.0.1:5556",
             -- task processor
             lbTaskQueuePullNo = 10,
             lbFailedTaskQueuePullNo = 10,

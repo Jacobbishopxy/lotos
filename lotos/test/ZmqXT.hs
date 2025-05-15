@@ -71,28 +71,28 @@ receivePairMessages pair1 = void $ forever do
         Left err -> logApp INFO $ "Error: " ++ show err
 
 main :: IO ()
-main = do
+main = runZmqContextIO do
   logConfig <- initConsoleLogger DEBUG
 
-  runZmqContextIO do
-    _ <- runApp logConfig do
-      tid <- liftIO myThreadId
-      logApp INFO $ "$$$ 1 > " <> show tid
-      pair1 <- liftIO $ unwrap $ Zmqx.Pair.open $ Zmqx.name "pair1"
-      liftIO $ unwrap $ Zmqx.bind pair1 "inproc://pair-test"
+  _ <- runApp logConfig do
+    tid <- liftIO myThreadId
+    logApp INFO $ "$$$ 1 > " <> show tid
+    pair1 <- liftIO $ unwrap $ Zmqx.Pair.open $ Zmqx.name "pair1"
+    liftIO $ unwrap $ Zmqx.bind pair1 "inproc://pair-test"
 
-      t1 <- forkApp do
-        (sub, pair2) <- setupSubAndPair
-        receiveLoop sub pair2
+    t1 <- forkApp do
+      (sub, pair2) <- setupSubAndPair
+      receiveLoop sub pair2
 
-      logApp INFO $ "t1: " <> show t1
+    logApp INFO $ "t1: " <> show t1
 
-      t2 <- forkApp do
-        pub <- liftIO $ unwrap $ Zmqx.Pub.open $ Zmqx.name "pub"
-        liftIO $ unwrap $ Zmqx.bind pub "tcp://127.0.0.1:5555"
-        publisherLoop pub
-      logApp INFO $ "t2: " <> show t2
+    t2 <- forkApp do
+      pub <- liftIO $ unwrap $ Zmqx.Pub.open $ Zmqx.name "pub"
+      liftIO $ unwrap $ Zmqx.bind pub "tcp://127.0.0.1:5555"
+      publisherLoop pub
+    logApp INFO $ "t2: " <> show t2
 
-      -- receive messages from pair2
-      receivePairMessages pair1
-    return ()
+    -- receive messages from pair2
+    receivePairMessages pair1
+
+  return ()

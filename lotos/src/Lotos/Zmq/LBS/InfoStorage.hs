@@ -114,7 +114,7 @@ runInfoStorage httpName InfoStorageConfig {..} tsd = do
 
   -- 6. Run the main loop
   t2 <-
-    liftIO . forkIO . Zmqx.run Zmqx.defaultOptions
+    liftIO . forkIO
       =<< runApp <$> ask <*> pure (infoLoop infoStorageServer tsd)
   logApp INFO $ "Info storage event loop started, thread ID: " <> show t2
 

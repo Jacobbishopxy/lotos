@@ -10,7 +10,7 @@ module Lotos.Zmq.LBS.SocketLayer
   )
 where
 
-import Control.Concurrent (ThreadId, forkIO)
+import Control.Concurrent
 import Control.Monad (when)
 import Control.Monad.RWS
 import Control.Monad.Reader (ReaderT, runReaderT)
@@ -55,26 +55,23 @@ runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = d
 
   -- Init frontend Router
   frontend <- zmqUnwrap $ Zmqx.Router.open $ Zmqx.name "frontend"
-  logApp INFO $ "frontendAddr: " <> show frontendAddr
   zmqUnwrap $ Zmqx.bind frontend frontendAddr
   -- Init backend Router
   backend <- zmqUnwrap $ Zmqx.Router.open $ Zmqx.name "backend"
-  logApp INFO $ "backendAddr: " <> show backendAddr
   zmqUnwrap $ Zmqx.bind backend backendAddr
   -- Init receiver Pair
   receiverPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "slReceiver"
   zmqUnwrap $ Zmqx.bind receiverPair taskProcessorSenderAddr
   -- Init sender Pair
   senderPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "slSender"
-  zmqUnwrap $ Zmqx.connect senderPair socketLayerSenderAddr -- Fixed to use connect
+  zmqUnwrap $ Zmqx.bind senderPair socketLayerSenderAddr -- Fixed to use connect
 
   -- pollItems & socketLayer cst
   let pollItems = Zmqx.the frontend & Zmqx.also backend & Zmqx.also receiverPair
       socketLayer = SocketLayer frontend backend receiverPair senderPair tq ftq wtm wsm gbb 0
 
   -- Start the event loop in a separate thread
-  liftIO . forkIO . Zmqx.run Zmqx.defaultOptions
-    =<< runApp <$> ask <*> pure (layerLoop pollItems socketLayer)
+  forkApp $ layerLoop pollItems socketLayer
 
 -- event loop
 layerLoop ::
@@ -83,12 +80,11 @@ layerLoop ::
   SocketLayer t w ->
   LotosApp ()
 layerLoop pollItems layer =
-  liftIO (Zmqx.poll pollItems) >>= \case
-    Left e -> logApp ERROR $ show e
-    Right ready -> do
-      handleFrontend layer ready
-      handleBackend layer ready
-      layerLoop pollItems layer -- Recursive call within ReaderT context
+  zmqUnwrap (Zmqx.poll pollItems) >>= \ready -> do
+    liftIO $ putStrLn "> poll"
+    handleFrontend layer ready
+    handleBackend layer ready
+    layerLoop pollItems layer -- Recursive call within ReaderT context
 
 -- ⭐⭐ handle message from clients
 handleFrontend ::
