@@ -14,7 +14,7 @@ module Lotos.Zmq.LBS.TaskProcessor
   )
 where
 
-import Control.Concurrent (ThreadId, forkIO)
+import Control.Concurrent
 import Control.Monad (unless, when)
 import Control.Monad.RWS
 import Data.Map.Strict qualified as Map
@@ -90,8 +90,7 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
   tg <- liftIO $ mkCombinedTrigger triggerAlgoMaxNotifyCount triggerAlgoMaxWaitSec
   let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm gbb loadBalancer tg 0
 
-  liftIO . forkIO
-    =<< runApp <$> ask <*> pure (processorLoop config taskProcessor)
+  forkApp $ processorLoop config taskProcessor
 
 processorLoop ::
   forall lb t w.

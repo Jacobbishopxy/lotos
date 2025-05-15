@@ -113,9 +113,7 @@ runInfoStorage httpName InfoStorageConfig {..} tsd = do
   logApp INFO $ "HTTP server started on port " <> show httpPort <> ", thread ID: " <> show t1
 
   -- 6. Run the main loop
-  t2 <-
-    liftIO . forkIO
-      =<< runApp <$> ask <*> pure (infoLoop infoStorageServer tsd)
+  t2 <- forkApp $ infoLoop infoStorageServer tsd
   logApp INFO $ "Info storage event loop started, thread ID: " <> show t2
 
   return (t1, t2)

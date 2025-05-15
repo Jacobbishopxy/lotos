@@ -5,7 +5,8 @@
 
 module Main where
 
-import Control.Concurrent (myThreadId)
+import Control.Concurrent
+import Control.Monad
 import Control.Monad.IO.Class
 import Data.Data (Proxy (..))
 import Lotos.Logger
@@ -24,7 +25,7 @@ run lbsConfig = do
     n = Proxy @"SimpleServer"
 
 main :: IO ()
-main = do
+main = runZmqContextIO $ do
   logConfig <- initLocalTimeLogger "./logs/taskScheduleServer.log" DEBUG True
   let lbsConfig =
         LBSConfig
@@ -46,4 +47,6 @@ main = do
             lbInfoFetchIntervalSec = 10
           }
 
-  runZmqContextIO $ runApp logConfig $ run lbsConfig
+  runApp logConfig $ run lbsConfig
+
+  forever $ threadDelay 60_000_000
