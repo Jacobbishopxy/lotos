@@ -1,5 +1,4 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE GADTs #-}
 
 -- file: Parser.hs
 -- author: Jacob Xie

@@ -1,5 +1,4 @@
 {-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE GADTs #-}
 
 -- file: Adt.hs
 -- author: Jacob Xie

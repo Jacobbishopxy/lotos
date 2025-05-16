@@ -16,6 +16,7 @@ import Control.Concurrent (ThreadId, forkIO)
 import Control.Concurrent.MVar
 import Control.Monad (when)
 import Control.Monad.RWS
+import Data.Aeson ((.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Map qualified as Map
 import Data.Text qualified as Text
@@ -124,15 +125,87 @@ runInfoStorage httpName InfoStorageConfig {..} tsd = do
 
 -- HTTP
 
+data InfoOptions t w where
+  TaskQueues :: [Task t] -> [Task t] -> InfoOptions t w
+  Garbage :: [Task t] -> InfoOptions t w
+  WorkerTasks :: Map.Map RoutingID [Task t] -> InfoOptions t w
+  WorkerStat :: Map.Map RoutingID w -> InfoOptions t w
+  TaskLogging :: [Text.Text] -> InfoOptions t w -- TODO: need a better way to get logs
+
+instance (Aeson.ToJSON t, Aeson.ToJSON w, Aeson.ToJSON (Task t)) => Aeson.ToJSON (InfoOptions t w) where
+  toJSON (TaskQueues queued running) =
+    Aeson.object
+      [ "type" .= ("TaskQueues" :: Text.Text),
+        "queued" .= queued,
+        "running" .= running
+      ]
+  toJSON (Garbage tasks) =
+    Aeson.object
+      [ "type" .= ("Garbage" :: Text.Text),
+        "tasks" .= tasks
+      ]
+  toJSON (WorkerTasks workerMap) =
+    Aeson.object
+      [ "type" .= ("WorkerTasks" :: Text.Text),
+        "workers" .= workerMap
+      ]
+  toJSON (WorkerStat stats) =
+    Aeson.object
+      [ "type" .= ("WorkerStat" :: Text.Text),
+        "stats" .= stats
+      ]
+  toJSON (TaskLogging logs) =
+    Aeson.object
+      [ "type" .= ("TaskLogging" :: Text.Text),
+        "logs" .= logs
+      ]
+
+instance
+  (Aeson.FromJSON t, Aeson.FromJSON w, Aeson.FromJSON (Task t), Aeson.FromJSONKey RoutingID) =>
+  Aeson.FromJSON (InfoOptions t w)
+  where
+  parseJSON = Aeson.withObject "InfoOptions" $ \v -> do
+    typ <- v .: "type"
+    case typ of
+      "TaskQueues" -> TaskQueues <$> v .: "queued" <*> v .: "running"
+      "Garbage" -> Garbage <$> v .: "tasks"
+      "WorkerTasks" -> WorkerTasks <$> v .: "workers"
+      "WorkerStat" -> WorkerStat <$> v .: "stats"
+      "TaskLogging" -> TaskLogging <$> v .: "logs"
+      _ -> fail $ "Unknown InfoOptions type: " ++ Text.unpack typ
+
+----------------------------------------------------------------------------------------------------
+
 type family (:<>:) (s1 :: Symbol) (s2 :: Symbol) :: Symbol where
   s1 :<>: s2 = AppendSymbol s1 s2
 
 type family HttpAPI (name :: Symbol) t w where
   HttpAPI name t w =
+    -- /<name>/info
     name
       :> "info"
       :> Summary (name :<>: " info")
       :> Get '[JSON] (InfoStorage t w)
+      -- /<name>/tasks
+      :<|> name
+        :> "tasks"
+        :> Summary (name :<>: " tasks")
+        :> Get '[JSON] (InfoOptions t w)
+      -- /<name>/garbage
+      :<|> name
+        :> "garbage"
+        :> Summary (name :<>: " garbage")
+        :> Get '[JSON] (InfoOptions t w)
+      -- /<name>/worker_tasks
+      :<|> name
+        :> "worker_tasks"
+        :> Summary (name :<>: " worker's tasks")
+        :> Get '[JSON] (InfoOptions t w)
+      -- /<name>/worker_stats
+      :<|> name
+        :> "worker_stats"
+        :> Summary (name :<>: " worker's status")
+        :> Get '[JSON] (InfoOptions t w)
 
 -- | The HTTP API for the info storage server
 apiServer ::
@@ -141,10 +214,26 @@ apiServer ::
   Proxy name ->
   MVar (InfoStorage t w) ->
   Server (HttpAPI name t w)
-apiServer _ infoStorage = getInfo
+apiServer _ infoStorage =
+  getInfo
+    :<|> getTasks
+    :<|> getGarbage
+    :<|> getWorkerTasks
+    :<|> getWorkerStats
   where
     getInfo :: Handler (InfoStorage t w)
     getInfo = liftIO $ readMVar infoStorage
+    getTasks :: Handler (InfoOptions t w)
+    getTasks =
+      liftIO $
+        readMVar infoStorage >>= \is ->
+          pure $ TaskQueues (tasksInQueue is) (tasksInFailedQueue is)
+    getGarbage :: Handler (InfoOptions t w)
+    getGarbage = Garbage . tasksInGarbageBin <$> liftIO (readMVar infoStorage)
+    getWorkerTasks :: Handler (InfoOptions t w)
+    getWorkerTasks = WorkerTasks . workerTasksMap <$> liftIO (readMVar infoStorage)
+    getWorkerStats :: Handler (InfoOptions t w)
+    getWorkerStats = WorkerStat . workerStatusMap <$> liftIO (readMVar infoStorage)
 
 ----------------------------------------------------------------------------------------------------
 -- Zmq & Event Loop
