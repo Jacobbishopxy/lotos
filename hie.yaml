@@ -9,17 +9,17 @@ cradle:
     - path: "applications/CronSearch/./CronSearch/Util.hs"
       component: "CronSearch:exe:cron-search"
 
-    - path: "applications/TaskSchedule/./TaskScheduleBroker.hs"
-      component: "TaskSchedule:exe:ts-broker"
+    - path: "applications/TaskSchedule/./TaskScheduleServer.hs"
+      component: "TaskSchedule:exe:ts-server"
 
     - path: "applications/TaskSchedule/./TaskSchedule/Adt.hs"
-      component: "TaskSchedule:exe:ts-broker"
+      component: "TaskSchedule:exe:ts-server"
 
-    - path: "applications/TaskSchedule/./TaskSchedule/Broker.hs"
-      component: "TaskSchedule:exe:ts-broker"
+    - path: "applications/TaskSchedule/./TaskSchedule/Server.hs"
+      component: "TaskSchedule:exe:ts-server"
 
     - path: "applications/TaskSchedule/./TaskSchedule/Util.hs"
-      component: "TaskSchedule:exe:ts-broker"
+      component: "TaskSchedule:exe:ts-server"
 
     - path: "applications/TaskSchedule/./TaskScheduleWorker.hs"
       component: "TaskSchedule:exe:ts-worker"

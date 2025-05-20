@@ -15,13 +15,13 @@ common shared-properties
   hs-source-dirs:     .
   default-extensions: OverloadedStrings
 
-executable ts-broker
+executable ts-server
   import:        shared-properties
-  main-is:       TaskScheduleBroker.hs
+  main-is:       TaskScheduleServer.hs
   ghc-options:   -threaded -rtsopts -with-rtsopts=-N
   other-modules:
     TaskSchedule.Adt
-    TaskSchedule.Broker
+    TaskSchedule.Server
     TaskSchedule.Util
 
   build-depends:
