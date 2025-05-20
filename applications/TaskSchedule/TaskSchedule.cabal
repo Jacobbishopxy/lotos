@@ -1,0 +1,64 @@
+cabal-version:   3.4
+name:            TaskSchedule
+version:         0.1.0.0
+license:         BSD-3-Clause
+license-file:    LICENSE
+author:          JacobX
+maintainer:      jacobbishopxy@gmail.com
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+common shared-properties
+  default-language:   GHC2024
+  build-depends:      base >=4 && <5
+  ghc-options:        -Wall
+  hs-source-dirs:     .
+  default-extensions: OverloadedStrings
+
+executable ts-broker
+  import:        shared-properties
+  main-is:       TaskScheduleBroker.hs
+  ghc-options:   -threaded -rtsopts -with-rtsopts=-N
+  other-modules:
+    TaskSchedule.Adt
+    TaskSchedule.Broker
+    TaskSchedule.Util
+
+  build-depends:
+    , aeson
+    , base
+    , lotos
+    , process
+    , text
+
+executable ts-worker
+  import:        shared-properties
+  main-is:       TaskScheduleWorker.hs
+  ghc-options:   -threaded -rtsopts -with-rtsopts=-N
+  other-modules:
+    TaskSchedule.Adt
+    TaskSchedule.Util
+    TaskSchedule.Worker
+
+  build-depends:
+    , aeson
+    , base
+    , lotos
+    , process
+    , text
+
+executable ts-client
+  import:        shared-properties
+  main-is:       TaskScheduleClient.hs
+  ghc-options:
+  other-modules:
+    TaskSchedule.Adt
+    TaskSchedule.Client
+    TaskSchedule.Util
+
+  build-depends:
+    , aeson
+    , base
+    , lotos
+    , process
+    , text

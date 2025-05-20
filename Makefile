@@ -5,13 +5,13 @@
 include Makefile.env
 
 tree:
-	tree ./lotos --gitignore
+	tree . --gitignore
 
 build-all:
 	cabal build all
 
 install-cron-search:
-	cd lotos && cabal install lotos:exe:cron-search -j \
+	cd applications && cabal install CronSearch:exe:cron-search -j \
 		--overwrite-policy=always \
 		--install-method=copy \
 		--installdir=./app

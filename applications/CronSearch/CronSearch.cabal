@@ -1,0 +1,37 @@
+cabal-version:   3.4
+name:            CronSearch
+version:         0.1.0.0
+license:         BSD-3-Clause
+license-file:    LICENSE
+author:          JacobX
+maintainer:      jacobbishopxy@gmail.com
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+common shared-properties
+  default-language:   GHC2024
+  build-depends:      base >=4 && <5
+  ghc-options:        -Wall
+  default-extensions: OverloadedStrings
+
+executable cron-search
+  import:         shared-properties
+  hs-source-dirs: .
+  main-is:        CronSearch.hs
+  ghc-options:    -threaded -Wcompat -O2
+  other-modules:
+    CronSearch.Adt
+    CronSearch.Util
+
+  build-depends:
+    , base
+    , brick
+    , lotos
+    , microlens
+    , microlens-mtl
+    , microlens-th
+    , mtl
+    , text
+    , vector
+    , vty
+    , vty-crossplatform

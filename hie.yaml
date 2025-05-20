@@ -1,73 +1,73 @@
 cradle:
   cabal:
+    - path: "applications/CronSearch/./CronSearch.hs"
+      component: "CronSearch:exe:cron-search"
+
+    - path: "applications/CronSearch/./CronSearch/Adt.hs"
+      component: "CronSearch:exe:cron-search"
+
+    - path: "applications/CronSearch/./CronSearch/Util.hs"
+      component: "CronSearch:exe:cron-search"
+
+    - path: "applications/TaskSchedule/./TaskScheduleBroker.hs"
+      component: "TaskSchedule:exe:ts-broker"
+
+    - path: "applications/TaskSchedule/./TaskSchedule/Adt.hs"
+      component: "TaskSchedule:exe:ts-broker"
+
+    - path: "applications/TaskSchedule/./TaskSchedule/Broker.hs"
+      component: "TaskSchedule:exe:ts-broker"
+
+    - path: "applications/TaskSchedule/./TaskSchedule/Util.hs"
+      component: "TaskSchedule:exe:ts-broker"
+
+    - path: "applications/TaskSchedule/./TaskScheduleWorker.hs"
+      component: "TaskSchedule:exe:ts-worker"
+
+    - path: "applications/TaskSchedule/./TaskSchedule/Adt.hs"
+      component: "TaskSchedule:exe:ts-worker"
+
+    - path: "applications/TaskSchedule/./TaskSchedule/Util.hs"
+      component: "TaskSchedule:exe:ts-worker"
+
+    - path: "applications/TaskSchedule/./TaskSchedule/Worker.hs"
+      component: "TaskSchedule:exe:ts-worker"
+
+    - path: "applications/TaskSchedule/./TaskScheduleClient.hs"
+      component: "TaskSchedule:exe:ts-client"
+
+    - path: "applications/TaskSchedule/./TaskSchedule/Adt.hs"
+      component: "TaskSchedule:exe:ts-client"
+
+    - path: "applications/TaskSchedule/./TaskSchedule/Client.hs"
+      component: "TaskSchedule:exe:ts-client"
+
+    - path: "applications/TaskSchedule/./TaskSchedule/Util.hs"
+      component: "TaskSchedule:exe:ts-client"
+
     - path: "lotos/src"
       component: "lib:lotos"
 
-    - path: "lotos/test/ReadCron.hs"
+    - path: "lotos/./"
       component: "lotos:test:test-read-cron"
 
-    - path: "lotos/test/Airflow.hs"
+    - path: "lotos/./"
       component: "lotos:test:test-airflow"
 
-    - path: "lotos/test/Logger.hs"
+    - path: "lotos/test"
       component: "lotos:test:test-logger"
 
-    - path: "lotos/test/EventTrigger.hs"
+    - path: "lotos/test"
       component: "lotos:test:test-event-trigger"
 
-    - path: "lotos/test/SimpleServant.hs"
+    - path: "lotos/test"
       component: "lotos:test:test-simple-servant"
 
-    - path: "lotos/test/ConcExecutor.hs"
+    - path: "lotos/test"
       component: "lotos:test:test-conc-executor"
 
-    - path: "lotos/test/ConcExecutor2.hs"
+    - path: "lotos/test"
       component: "lotos:test:test-conc-executor2"
 
-    - path: "lotos/test/ZmqXT.hs"
+    - path: "lotos/test"
       component: "lotos:test:test-zmq-xt"
-
-    - path: "lotos/bin/CronSearch.hs"
-      component: "lotos:exe:cron-search"
-
-    - path: "lotos/bin/CronSearch/Adt.hs"
-      component: "lotos:exe:cron-search"
-
-    - path: "lotos/bin/CronSearch/Util.hs"
-      component: "lotos:exe:cron-search"
-
-    - path: "lotos/bin/TaskScheduleServer.hs"
-      component: "lotos:exe:ts-server"
-
-    - path: "lotos/bin/TaskSchedule/Adt.hs"
-      component: "lotos:exe:ts-server"
-
-    - path: "lotos/bin/TaskSchedule/Server.hs"
-      component: "lotos:exe:ts-server"
-
-    - path: "lotos/bin/TaskSchedule/Util.hs"
-      component: "lotos:exe:ts-server"
-
-    - path: "lotos/bin/TaskScheduleWorker.hs"
-      component: "lotos:exe:ts-worker"
-
-    - path: "lotos/bin/TaskSchedule/Adt.hs"
-      component: "lotos:exe:ts-worker"
-
-    - path: "lotos/bin/TaskSchedule/Util.hs"
-      component: "lotos:exe:ts-worker"
-
-    - path: "lotos/bin/TaskSchedule/Worker.hs"
-      component: "lotos:exe:ts-worker"
-
-    - path: "lotos/bin/TaskScheduleClient.hs"
-      component: "lotos:exe:ts-client"
-
-    - path: "lotos/bin/TaskSchedule/Adt.hs"
-      component: "lotos:exe:ts-client"
-
-    - path: "lotos/bin/TaskSchedule/Client.hs"
-      component: "lotos:exe:ts-client"
-
-    - path: "lotos/bin/TaskSchedule/Util.hs"
-      component: "lotos:exe:ts-client"

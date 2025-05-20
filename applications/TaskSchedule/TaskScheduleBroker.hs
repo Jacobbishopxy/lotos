@@ -12,7 +12,7 @@ import Data.Data (Proxy (..))
 import Lotos.Logger
 import Lotos.Zmq
 import TaskSchedule.Adt
-import TaskSchedule.Server
+import TaskSchedule.Broker
 
 run :: LBSConfig -> LotosApp ()
 run lbsConfig = do
@@ -25,7 +25,7 @@ run lbsConfig = do
     n = Proxy @"SimpleServer"
 
 main :: IO ()
-main = runZmqContextIO $ do
+main = do
   logConfig <- initLocalTimeLogger "./logs/taskScheduleServer.log" DEBUG True
   let lbsConfig =
         LBSConfig
@@ -47,6 +47,6 @@ main = runZmqContextIO $ do
             lbInfoFetchIntervalSec = 10
           }
 
-  runApp logConfig $ run lbsConfig
+  runZmqContextIO $ runApp logConfig $ run lbsConfig
 
   forever $ threadDelay 60_000_000
