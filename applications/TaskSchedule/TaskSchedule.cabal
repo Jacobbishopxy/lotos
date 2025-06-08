@@ -59,6 +59,7 @@ executable ts-client
   build-depends:
     , aeson
     , base
+    , bytestring
     , lotos
     , process
     , text

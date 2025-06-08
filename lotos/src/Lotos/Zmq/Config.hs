@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveAnyClass #-}
 -- file: Config.hs
 -- author: Jacob Xie
 -- date: 2025/03/20 22:56:04 Thursday
@@ -14,20 +15,28 @@ module Lotos.Zmq.Config
     InfoStorageConfig (..),
     LBConstraint,
 
+    -- * loadbalancer server config
+    BrokerServiceConfig (..),
+    readBrokerConfig,
+
     -- * loadbalancer worker config
     WorkerServiceConfig (..),
+    readWorkerConfig,
 
     -- * loadbalancer client config
     ClientServiceConfig (..),
+    readClientConfig,
   )
 where
 
+import GHC.Generics (Generic)
 import Data.Aeson qualified as Aeson
-import Data.Text qualified as Text
 import GHC.TypeLits (KnownSymbol)
+import Data.Text qualified as Text
 import Lotos.TSD.Queue
 import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
+import Lotos.Util
 
 ----------------------------------------------------------------------------------------------------
 -- LoadBalancer Server Config
@@ -67,13 +76,13 @@ data TaskSchedulerConfig = TaskSchedulerConfig
     failedTaskQueueHWM :: Int,
     garbageBinSize :: Int
   }
-
-----------------------------------------------------------------------------------------------------
+  deriving (Show, Generic, Aeson.FromJSON)
 
 data SocketLayerConfig = SocketLayerConfig
   { frontendAddr :: Text.Text, -- client request address
     backendAddr :: Text.Text -- worker response address
   }
+  deriving (Show, Generic, Aeson.FromJSON)
 
 data TaskProcessorConfig = TaskProcessorConfig
   { taskQueuePullNo :: Int, -- task queue pull number
@@ -81,12 +90,29 @@ data TaskProcessorConfig = TaskProcessorConfig
     triggerAlgoMaxNotifyCount :: Int, -- lower bound of process (how many workers
     triggerAlgoMaxWaitSec :: Int -- upper bound of process (worker status report interval
   }
+  deriving (Show, Generic, Aeson.FromJSON)
 
 data InfoStorageConfig = InfoStorageConfig
   { httpPort :: Int, -- http server port
     loggingsBufferSize :: Int,
     infoFetchIntervalSec :: Int
   }
+  deriving (Show, Generic, Aeson.FromJSON)
+
+data BrokerServiceConfig = BrokerServiceConfig
+  { -- task scheduler
+    taskScheduler :: TaskSchedulerConfig,
+    -- socket layer
+    socketLayer :: SocketLayerConfig,
+    -- task processor
+    taskProcessor :: TaskProcessorConfig,
+    -- info storage
+    infoStorage:: InfoStorageConfig
+  }
+  deriving (Show, Generic, Aeson.FromJSON)
+
+readBrokerConfig :: FilePath -> IO BrokerServiceConfig
+readBrokerConfig = readJsonConfig
 
 ----------------------------------------------------------------------------------------------------
 -- LoadBalancer Worker Config
@@ -100,6 +126,10 @@ data WorkerServiceConfig = WorkerServiceConfig
     workerStatusReportIntervalSec :: Int, -- heartbeat interval
     parallelTasksNo :: Int -- number of parallel tasks
   }
+  deriving (Show, Generic, Aeson.FromJSON)
+
+readWorkerConfig :: FilePath -> IO WorkerServiceConfig
+readWorkerConfig = readJsonConfig
 
 ----------------------------------------------------------------------------------------------------
 -- LoadBalancer Client Config
@@ -110,3 +140,7 @@ data ClientServiceConfig = ClientServiceConfig
     loadBalancerFrontendAddr :: Text.Text,
     reqTimeoutSec :: Int
   }
+  deriving (Show, Generic, Aeson.FromJSON)
+
+readClientConfig :: FilePath -> IO ClientServiceConfig
+readClientConfig = readJsonConfig

@@ -8,6 +8,7 @@ module Lotos.Zmq
     module Lotos.Zmq.Adt,
 
     -- * config
+    BrokerServiceConfig (..),
     WorkerServiceConfig (..),
     ClientServiceConfig (..),
 
@@ -17,7 +18,6 @@ module Lotos.Zmq
     -- * load balancer server
     ScheduledResult (..),
     LoadBalancerAlgo (..),
-    LBSConfig (..),
     runLBS,
 
     -- * load balancer worker

@@ -7,10 +7,13 @@ module Lotos.Util
   ( either2Maybe,
     maybe2Either,
     availableCores,
+    readJsonConfig,
   )
 where
 
 import GHC.Conc (numCapabilities)
+import Data.Aeson qualified as Aeson
+import qualified Data.ByteString.Lazy as BL
 
 either2Maybe :: Either e a -> Maybe a
 either2Maybe d = case d of
@@ -24,3 +27,10 @@ maybe2Either e d = case d of
 
 availableCores :: IO ()
 availableCores = putStrLn $ "Available cores: " ++ show numCapabilities
+
+readJsonConfig :: Aeson.FromJSON a  =>  FilePath -> IO a
+readJsonConfig fp = do
+  content <- BL.readFile fp
+  case Aeson.eitherDecode content of
+    Left err -> error $ "Failed to parse JSON: " ++ err
+    Right d -> return d

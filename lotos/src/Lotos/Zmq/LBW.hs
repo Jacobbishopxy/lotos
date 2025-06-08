@@ -18,8 +18,8 @@ module Lotos.Zmq.LBW
     getAcceptor,
     getReporter,
     listTasksInQueue,
-    -- pubTaskLogging,
-    -- sendTaskStatus,
+    pubTaskLogging,
+    sendTaskStatus,
   )
 where
 
@@ -310,13 +310,13 @@ listTasksInQueue WorkerService {taskQueue} =
 
 ----------------------------------------------------------------------------------------------------
 
--- -- publish task logging, used for workers
--- pubTaskLogging :: WorkerService ta sr t w -> WorkerLogging -> LotosApp ()
--- pubTaskLogging WorkerService {..} wl =
---   zmqUnwrap $ Zmqx.sends workerPub $ toZmq wl
+-- publish task logging, used for workers
+pubTaskLogging :: WorkerService ta sr t w -> WorkerLogging -> LotosApp ()
+pubTaskLogging WorkerService {..} wl =
+  zmqUnwrap $ Zmqx.sends workerPub $ toZmq wl
 
--- -- report task status, used for workers
--- sendTaskStatus :: WorkerService ta sr t w -> TaskID -> TaskStatus -> LotosApp ()
--- sendTaskStatus WorkerService {..} tid ts = do
---   ack <- liftIO newAck
---   zmqUnwrap $ Zmqx.sends workerDealer $ toZmq $ WorkerReportTaskStatus ack tid ts
+-- report task status, used for workers
+sendTaskStatus :: WorkerService ta sr t w -> TaskID -> TaskStatus -> LotosApp ()
+sendTaskStatus WorkerService {..} tid ts = do
+  ack <- liftIO newAck
+  zmqUnwrap $ Zmqx.sends workerDealerPair $ toZmq $ WorkerReportTaskStatus ack tid ts

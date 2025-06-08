@@ -1,5 +1,4 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE RecordWildCards #-}
 
 -- file: LBS.hs
@@ -10,17 +9,13 @@
 module Lotos.Zmq.LBS
   ( ScheduledResult (..),
     LoadBalancerAlgo (..),
-    LBSConfig (..),
     runLBS,
   )
 where
 
 import Control.Monad.IO.Class (MonadIO (liftIO))
-import Data.Aeson qualified as Aeson
 import Data.Proxy
-import Data.Text qualified as Text
 import GHC.Base (Symbol)
-import GHC.Generics (Generic)
 import Lotos.Logger
 import Lotos.TSD.Map
 import Lotos.TSD.Queue
@@ -33,54 +28,40 @@ import Lotos.Zmq.LBS.TaskProcessor
 
 ----------------------------------------------------------------------------------------------------
 
-data LBSConfig = LBSConfig
-  { -- task scheduler
-    lbTaskQueueHWM :: Int, -- TODO
-    lbFailedTaskQueueHWM :: Int, -- TODO
-    lbGarbageBinSize :: Int,
-    -- socket layer
-    lbFrontendAddr :: Text.Text,
-    lbBackendAddr :: Text.Text,
-    -- task processor
-    lbTaskQueuePullNo :: Int,
-    lbFailedTaskQueuePullNo :: Int,
-    lbTaskTriggerMaxNotifyCount :: Int,
-    lbTaskTriggerMaxWaitSec :: Int,
-    -- info storage
-    lbHttpPort :: Int,
-    lbLoggingBufferSize :: Int,
-    lbInfoFetchIntervalSec :: Int
-  }
-  deriving (Show, Generic, Aeson.FromJSON)
-
 runLBS ::
   forall (name :: Symbol) lb t w.
   (LBConstraint name t w, LoadBalancerAlgo lb t w) =>
   Proxy name ->
-  LBSConfig ->
+  BrokerServiceConfig ->
   lb ->
   LotosApp ()
-runLBS n LBSConfig {..} loadBalancer = do
+runLBS n BrokerServiceConfig {..} loadBalancer = do
   logApp INFO "runLBS start!"
 
   -- 0. config
-  let socketLayerConfig =
+  let taskSchedulerConfig =
+        TaskSchedulerConfig
+          { taskQueueHWM = taskQueueHWM taskScheduler,
+            failedTaskQueueHWM = failedTaskQueueHWM taskScheduler,
+            garbageBinSize = garbageBinSize taskScheduler
+          }
+      socketLayerConfig =
         SocketLayerConfig
-          { frontendAddr = lbFrontendAddr,
-            backendAddr = lbBackendAddr
+          { frontendAddr = frontendAddr socketLayer,
+            backendAddr = backendAddr socketLayer
           }
       taskProcessorConfig =
         TaskProcessorConfig
-          { taskQueuePullNo = lbTaskQueuePullNo,
-            failedTaskQueuePullNo = lbFailedTaskQueuePullNo,
-            triggerAlgoMaxNotifyCount = lbTaskTriggerMaxNotifyCount,
-            triggerAlgoMaxWaitSec = lbTaskTriggerMaxWaitSec
+          { taskQueuePullNo = taskQueuePullNo taskProcessor,
+            failedTaskQueuePullNo = failedTaskQueuePullNo taskProcessor,
+            triggerAlgoMaxNotifyCount = triggerAlgoMaxNotifyCount taskProcessor,
+            triggerAlgoMaxWaitSec = triggerAlgoMaxWaitSec taskProcessor
           }
       infoStorageConfig =
         InfoStorageConfig
-          { httpPort = lbHttpPort,
-            loggingsBufferSize = lbLoggingBufferSize,
-            infoFetchIntervalSec = lbInfoFetchIntervalSec
+          { httpPort = httpPort infoStorage,
+            loggingsBufferSize = loggingsBufferSize infoStorage,
+            infoFetchIntervalSec = infoFetchIntervalSec infoStorage
           }
 
   -- 1. shared data
@@ -91,7 +72,7 @@ runLBS n LBSConfig {..} loadBalancer = do
         <*> (mkTSQueue :: IO (TSQueue (Task t)))
         <*> (newTSWorkerTasksMap :: IO (TSWorkerTasksMap (TaskID, Task t, TaskStatus)))
         <*> (mkTSMap :: IO (TSWorkerStatusMap w))
-        <*> (mkTSRingBuffer lbGarbageBinSize :: IO (TSRingBuffer (Task t)))
+        <*> (mkTSRingBuffer (garbageBinSize taskSchedulerConfig) :: IO (TSRingBuffer (Task t)))
 
   -- 2. run socket layer
   t1 <- runSocketLayer socketLayerConfig taskSchedulerData

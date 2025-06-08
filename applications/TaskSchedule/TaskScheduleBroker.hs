@@ -14,7 +14,7 @@ import Lotos.Zmq
 import TaskSchedule.Adt
 import TaskSchedule.Broker
 
-run :: LBSConfig -> LotosApp ()
+run :: BrokerServiceConfig -> LotosApp ()
 run lbsConfig = do
   tid <- liftIO myThreadId
   logApp INFO $ "runLotosApp on thread: " <> show tid
@@ -28,23 +28,35 @@ main :: IO ()
 main = do
   logConfig <- initLocalTimeLogger "./logs/taskScheduleServer.log" DEBUG True
   let lbsConfig =
-        LBSConfig
+        BrokerServiceConfig
           { -- task scheduler
-            lbTaskQueueHWM = 1000,
-            lbFailedTaskQueueHWM = 1000,
-            lbGarbageBinSize = 100,
+            taskScheduler =
+              TaskSchedulerConfig
+                { taskQueueHWM = 1000,
+                  failedTaskQueueHWM = 1000,
+                  garbageBinSize = 100
+                },
             -- socket layer
-            lbFrontendAddr = "tcp://127.0.0.1:5555",
-            lbBackendAddr = "tcp://127.0.0.1:5556",
+            socketLayer =
+              SocketLayerConfig
+                { frontendAddr = "tcp://127.0.0.1:5555",
+                  backendAddr = "tcp://127.0.0.1:5556"
+                },
             -- task processor
-            lbTaskQueuePullNo = 10,
-            lbFailedTaskQueuePullNo = 10,
-            lbTaskTriggerMaxNotifyCount = 10,
-            lbTaskTriggerMaxWaitSec = 10,
+            taskProcessor =
+              TaskProcessorConfig
+                { taskQueuePullNo = 10,
+                  failedTaskQueuePullNo = 10,
+                  triggerAlgoMaxNotifyCount = 10,
+                  triggerAlgoMaxWaitSec = 10
+                },
             -- info storage
-            lbHttpPort = 8081,
-            lbLoggingBufferSize = 1000,
-            lbInfoFetchIntervalSec = 10
+            infoStorage =
+              InfoStorageConfig
+                { httpPort = 8081,
+                  loggingsBufferSize = 1000,
+                  infoFetchIntervalSec = 10
+                }
           }
 
   runZmqContextIO $ runApp logConfig $ run lbsConfig
