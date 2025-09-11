@@ -1,9 +1,3 @@
 packages:
   lotos/lotos.cabal,
-  applications/CronSearch/CronSearch.cabal,
-  applications/TaskSchedule/TaskSchedule.cabal
-
-source-repository-package
-  type: git
-  location: git@github.com:Jacobbishopxy/zmqx.git
-  tag: 4db2f2f89d2549d95a634c29635cf12e8f113b89
+  applications/CronSearch/CronSearch.cabal

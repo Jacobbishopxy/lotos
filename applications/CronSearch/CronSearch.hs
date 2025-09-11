@@ -37,7 +37,7 @@ drawUi st = [ui]
   where
     ui =
       vBox
-        [ vLimit 20 $
+        [ vLimit 21 $
             borderWithLabel titleSP $
               hLimitPercent 60 (controlBox st) <+> hCenter (vCenter helpBox),
           hBox
@@ -102,6 +102,7 @@ mkForm =
       label "Select columns" @@= checkboxField selectSleeperCol (SearchRegion SelectSleeperField) "Sleeper",
       label "" @@= checkboxField selectInputCol (SearchRegion SelectInputField) "Input",
       label "" @@= checkboxField selectCmdCol (SearchRegion SelectCmdField) "Cmd",
+      label "" @@= checkboxField selectCmdInputCol (SearchRegion SelectCmdInputField) "CmdInput",
       label "" @@= checkboxField selectOutputCol (SearchRegion SelectOutputField) "Output",
       label "" @@= checkboxField selectServerCol (SearchRegion SelectServerField) "Server",
       labelP "" @@= checkboxField selectUserCol (SearchRegion SelectUserField) "User",
@@ -222,16 +223,16 @@ theMap :: AttrMap
 theMap =
   attrMap
     V.defAttr
-    [ (editAttr, V.white `on` V.black),
+    [ (editAttr, V.black `on` V.white),
       (editFocusedAttr, V.black `on` V.yellow),
-      (listAttr, V.white `Brick.on` V.black),
-      (listSelectedAttr, V.black `Brick.on` V.yellow),
-      (formAttr, V.white `Brick.on` V.black),
-      (focusedFormInputAttr, V.black `on` V.yellow),
+      (listAttr, fg V.black ),
+      (listSelectedAttr, V.yellow `Brick.on` V.black)
+      -- (formAttr, V.black `Brick.on` V.white),
+      -- (focusedFormInputAttr, V.black `on` V.yellow)
       -- overwrite
-      (invisibleFormFieldAttr, fg V.black),
-      (resultHeaderListAttr, V.white `on` V.blue),
-      (resultUnselectedListAttr, V.white `on` V.black)
+      -- (invisibleFormFieldAttr, fg V.black),
+      -- (resultHeaderListAttr, V.white `on` V.blue),
+      -- (resultUnselectedListAttr, V.white `on` V.black)
     ]
 
 ----------------------------------------------------------------------------------------------------
@@ -255,6 +256,7 @@ defaultSearch =
       _selectSleeperCol = False,
       _selectInputCol = True,
       _selectCmdCol = True,
+      _selectCmdInputCol = True,
       _selectOutputCol = True,
       _selectServerCol = False,
       _selectUserCol = False,

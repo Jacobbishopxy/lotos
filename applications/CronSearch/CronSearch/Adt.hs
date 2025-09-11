@@ -32,6 +32,7 @@ data SearchRegion
   | SelectSleeperField
   | SelectInputField
   | SelectCmdField
+  | SelectCmdInputField
   | SelectOutputField
   | SelectServerField
   | SelectUserField
@@ -50,6 +51,7 @@ data Search = Search
     _selectSleeperCol :: Bool,
     _selectInputCol :: Bool,
     _selectCmdCol :: Bool,
+    _selectCmdInputCol :: Bool,
     _selectOutputCol :: Bool,
     _selectServerCol :: Bool,
     _selectUserCol :: Bool,

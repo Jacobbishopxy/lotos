@@ -12,6 +12,7 @@ module Lotos.Csv
     readCsvRaw,
     readCsv,
     (~>),
+    (~>?),
     module Lotos.Csv.Adt,
   )
 where
@@ -118,6 +119,12 @@ instance Parser (Maybe Bool) where
 (~>) (fieldIndices, fld) vec = do
   idx <- maybe2Either "field not found" $ HM.lookup fld fieldIndices
   return $ parse $ vec V.! idx
+
+(~>?) :: (Parser (Maybe a)) => (HM.HashMap BS.ByteString Int, BS.ByteString) -> Record -> Either String (Maybe a)
+(fieldIndices, fld) ~>? vec =
+  case HM.lookup fld fieldIndices of
+    Nothing -> Right Nothing
+    Just idx -> Right (parse (vec V.! idx))
 
 -- Define a function to parse a CSV file into a vector of vectors of ByteString
 readCsvRaw :: FilePath -> IO (Either String Csv)

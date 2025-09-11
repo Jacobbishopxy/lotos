@@ -41,6 +41,7 @@ data CronSchema = CronSchema
     sleeper :: String,
     input :: Maybe String,
     cmd :: String,
+    cmdInput :: Maybe String,
     output :: Maybe String,
     server :: Maybe String,
     user :: Maybe String,
@@ -77,6 +78,7 @@ instance FromRecord CronSchema where
     sleeperVal <- (fi, "sleeper") ~> vec
     inputVal <- (fi, "input") ~> vec
     cmdVal <- (fi, "cmd") ~> vec
+    cmdInputVal <- (fi, "cmd_input") ~>? vec
     outputVal <- (fi, "output") ~> vec
     serverVal <- (fi, "server") ~> vec
     userVal <- (fi, "user") ~> vec
@@ -89,6 +91,7 @@ instance FromRecord CronSchema where
           sleeper = sleeperVal,
           input = inputVal,
           cmd = cmdVal,
+          cmdInput = cmdInputVal,
           output = outputVal,
           server = serverVal,
           user = userVal,
@@ -145,6 +148,7 @@ getCronStrings cron = map f
     f "sleeper" = sleeper cron
     f "input" = fromMaybe "" $ input cron
     f "cmd" = cmd cron
+    f "cmdInput" = fromMaybe "" $ cmdInput cron
     f "output" = fromMaybe "" $ output cron
     f "server" = fromMaybe "" $ server cron
     f "user" = fromMaybe "" $ user cron

@@ -33,13 +33,7 @@ library
     Lotos
     Lotos.Airflow
     Lotos.Csv
-    Lotos.Logger
-    Lotos.Proc
-    Lotos.TSD.Map
-    Lotos.TSD.Queue
-    Lotos.TSD.RingBuffer
     Lotos.Util
-    Lotos.Zmq
 
   other-modules:
     Lotos.Airflow.Conf
@@ -47,44 +41,23 @@ library
     Lotos.Csv.Adt
     Lotos.Csv.Parser
     Lotos.Csv.Util
-    Lotos.Proc.ConcExecutor
-    Lotos.Zmq.Adt
-    Lotos.Zmq.Config
-    Lotos.Zmq.Error
-    Lotos.Zmq.LBC
-    Lotos.Zmq.LBS
-    Lotos.Zmq.LBS.InfoStorage
-    Lotos.Zmq.LBS.SocketLayer
-    Lotos.Zmq.LBS.TaskProcessor
-    Lotos.Zmq.LBW
-    Lotos.Zmq.Util
 
   -- other-extensions:
   build-depends:
     , aeson
-    , async
     , attoparsec
     , base
     , bytestring
     , containers
     , directory
-    , dlist
-    , fast-logger
     , filepath
     , mtl
-    , process
-    , servant
-    , servant-server
     , stm
     , text
     , time
     , unordered-containers
-    , uuid
     , vector
-    , wai
-    , warp
     , yaml
-    , zmqx
 
   hs-source-dirs:     src
 
@@ -103,59 +76,3 @@ test-suite test-airflow
   type:          exitcode-stdio-1.0
   main-is:       Airflow.hs
   build-depends: vector
-
-test-suite test-logger
-  import:         shared-properties, test
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        Logger.hs
-  build-depends:
-    , mtl
-    , vector
-
-test-suite test-event-trigger
-  import:         shared-properties, test
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        EventTrigger.hs
-  build-depends:  time
-
-test-suite test-simple-servant
-  import:         shared-properties, test
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        SimpleServant.hs
-  build-depends:
-    , aeson
-    , servant
-    , servant-server
-    , text
-    , wai
-    , warp
-
-test-suite test-conc-executor
-  import:         shared-properties, test
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        ConcExecutor.hs
-  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
-  build-depends:
-
-test-suite test-conc-executor2
-  import:         shared-properties, test
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        ConcExecutor2.hs
-  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
-  build-depends:
-
-test-suite test-zmq-xt
-  import:         shared-properties, test
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        ZmqXT.hs
-  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
-  build-depends:
-    , bytestring
-    , mtl
-    , zmqx
