@@ -226,9 +226,9 @@ theMap =
     [ (editAttr, V.black `on` V.white),
       (editFocusedAttr, V.black `on` V.yellow),
       (listAttr, fg V.black ),
-      (listSelectedAttr, V.yellow `Brick.on` V.black)
-      -- (formAttr, V.black `Brick.on` V.white),
-      -- (focusedFormInputAttr, V.black `on` V.yellow)
+      (listSelectedAttr, V.yellow `Brick.on` V.black),
+      (formAttr, V.black `Brick.on` V.white),
+      (focusedFormInputAttr, V.black `on` V.yellow)
       -- overwrite
       -- (invisibleFormFieldAttr, fg V.black),
       -- (resultHeaderListAttr, V.white `on` V.blue),
