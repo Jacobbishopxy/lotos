@@ -11,6 +11,10 @@ module Lotos.Zmq
     BrokerServiceConfig (..),
     WorkerServiceConfig (..),
     ClientServiceConfig (..),
+    TaskSchedulerConfig (..),
+    SocketLayerConfig (..),
+    TaskProcessorConfig (..),
+    InfoStorageConfig (..),
 
     -- * error
     ZmqError (..),

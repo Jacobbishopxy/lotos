@@ -1,14 +1,5 @@
 cradle:
   cabal:
-    - path: "applications/CronSearch/./CronSearch.hs"
-      component: "CronSearch:exe:cron-search"
-
-    - path: "applications/CronSearch/./CronSearch/Adt.hs"
-      component: "CronSearch:exe:cron-search"
-
-    - path: "applications/CronSearch/./CronSearch/Util.hs"
-      component: "CronSearch:exe:cron-search"
-
     - path: "applications/TaskSchedule/./TaskScheduleServer.hs"
       component: "TaskSchedule:exe:ts-server"
 
@@ -47,12 +38,6 @@ cradle:
 
     - path: "lotos/src"
       component: "lib:lotos"
-
-    - path: "lotos/./"
-      component: "lotos:test:test-read-cron"
-
-    - path: "lotos/./"
-      component: "lotos:test:test-airflow"
 
     - path: "lotos/test"
       component: "lotos:test:test-logger"

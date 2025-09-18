@@ -1,6 +1,5 @@
 packages:
   lotos/lotos.cabal,
-  applications/CronSearch/CronSearch.cabal,
   applications/TaskSchedule/TaskSchedule.cabal
 
 source-repository-package

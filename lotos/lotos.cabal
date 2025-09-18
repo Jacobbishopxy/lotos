@@ -31,8 +31,6 @@ library
   default-extensions: CPP
   exposed-modules:
     Lotos
-    Lotos.Airflow
-    Lotos.Csv
     Lotos.Logger
     Lotos.Proc
     Lotos.TSD.Map
@@ -42,11 +40,6 @@ library
     Lotos.Zmq
 
   other-modules:
-    Lotos.Airflow.Conf
-    Lotos.Airflow.Cron
-    Lotos.Csv.Adt
-    Lotos.Csv.Parser
-    Lotos.Csv.Util
     Lotos.Proc.ConcExecutor
     Lotos.Zmq.Adt
     Lotos.Zmq.Config
@@ -91,18 +84,6 @@ library
 ----------------------------------------------------------------------------------------------------
 -- Test
 ----------------------------------------------------------------------------------------------------
-
-test-suite test-read-cron
-  import:        shared-properties, test
-  type:          exitcode-stdio-1.0
-  main-is:       ReadCron.hs
-  build-depends: vector
-
-test-suite test-airflow
-  import:        shared-properties, test
-  type:          exitcode-stdio-1.0
-  main-is:       Airflow.hs
-  build-depends: vector
 
 test-suite test-logger
   import:         shared-properties, test
