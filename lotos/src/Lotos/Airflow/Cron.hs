@@ -23,7 +23,7 @@ import Data.Either (fromRight)
 import Data.List (isInfixOf, isSuffixOf)
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector as Vec
-import Lotos.Csv
+import HCsv
 import System.Directory (doesDirectoryExist, doesFileExist, getDirectoryContents)
 import System.FilePath ((</>))
 

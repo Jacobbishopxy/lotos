@@ -32,25 +32,21 @@ library
   exposed-modules:
     Lotos
     Lotos.Airflow
-    Lotos.Csv
     Lotos.Util
 
   other-modules:
     Lotos.Airflow.Conf
     Lotos.Airflow.Cron
-    Lotos.Csv.Adt
-    Lotos.Csv.Parser
-    Lotos.Csv.Util
 
   -- other-extensions:
   build-depends:
     , aeson
-    , attoparsec
     , base
     , bytestring
     , containers
     , directory
     , filepath
+    , hcsv
     , mtl
     , stm
     , text

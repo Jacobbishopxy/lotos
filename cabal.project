@@ -1,3 +1,8 @@
 packages:
   lotos/lotos.cabal,
   applications/CronSearch/CronSearch.cabal
+
+source-repository-package
+  type: git
+  location: git@github.com:straw-platform/hcsv.git
+  tag: 5aedd8a41a9d1c78a95fffdad5e796e6717b1e40
