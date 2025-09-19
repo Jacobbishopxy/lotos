@@ -1,39 +1,21 @@
 cradle:
   cabal:
-    - path: "applications/TaskSchedule/./TaskScheduleServer.hs"
+    - path: "applications/TaskSchedule/src"
+      component: "TaskSchedule:lib:ts-server-lib"
+
+    - path: "applications/TaskSchedule/app/TaskScheduleServer.hs"
       component: "TaskSchedule:exe:ts-server"
 
-    - path: "applications/TaskSchedule/./TaskSchedule/Adt.hs"
-      component: "TaskSchedule:exe:ts-server"
+    - path: "applications/TaskSchedule/src"
+      component: "TaskSchedule:lib:ts-worker-lib"
 
-    - path: "applications/TaskSchedule/./TaskSchedule/Server.hs"
-      component: "TaskSchedule:exe:ts-server"
-
-    - path: "applications/TaskSchedule/./TaskSchedule/Util.hs"
-      component: "TaskSchedule:exe:ts-server"
-
-    - path: "applications/TaskSchedule/./TaskScheduleWorker.hs"
+    - path: "applications/TaskSchedule/app/TaskScheduleWorker.hs"
       component: "TaskSchedule:exe:ts-worker"
 
-    - path: "applications/TaskSchedule/./TaskSchedule/Adt.hs"
-      component: "TaskSchedule:exe:ts-worker"
+    - path: "applications/TaskSchedule/src"
+      component: "TaskSchedule:lib:ts-client-lib"
 
-    - path: "applications/TaskSchedule/./TaskSchedule/Util.hs"
-      component: "TaskSchedule:exe:ts-worker"
-
-    - path: "applications/TaskSchedule/./TaskSchedule/Worker.hs"
-      component: "TaskSchedule:exe:ts-worker"
-
-    - path: "applications/TaskSchedule/./TaskScheduleClient.hs"
-      component: "TaskSchedule:exe:ts-client"
-
-    - path: "applications/TaskSchedule/./TaskSchedule/Adt.hs"
-      component: "TaskSchedule:exe:ts-client"
-
-    - path: "applications/TaskSchedule/./TaskSchedule/Client.hs"
-      component: "TaskSchedule:exe:ts-client"
-
-    - path: "applications/TaskSchedule/./TaskSchedule/Util.hs"
+    - path: "applications/TaskSchedule/app/TaskScheduleClient.hs"
       component: "TaskSchedule:exe:ts-client"
 
     - path: "lotos/src"

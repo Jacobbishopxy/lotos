@@ -7,7 +7,13 @@ include Makefile.env
 tree:
 	tree . --gitignore
 
-build-all:
+clean:
+	cabal clean
+
+update:
+	cabal update
+
+build:
 	cabal build all
 
 hie:
