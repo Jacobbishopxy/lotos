@@ -11,8 +11,8 @@ import Control.Concurrent
 import Control.Monad.IO.Class
 import Lotos.Logger
 import Lotos.Zmq
-import TaskSchedule.Adt
-import TaskSchedule.Worker
+import Adt
+import Worker
 
 run :: WorkerServiceConfig -> LotosApp ()
 run wsConfig = do

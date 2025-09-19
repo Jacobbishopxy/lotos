@@ -6,7 +6,7 @@
 -- date: 2025/04/16 14:04:21 Wednesday
 -- brief:
 
-module TaskSchedule.Adt
+module Adt
   ( -- * worker state
     WorkerState (..),
     getWorkerState,
@@ -19,7 +19,7 @@ where
 
 import Control.Exception (IOException, handle)
 import Control.Monad (guard)
-import Data.Aeson qualified as Aeson
+import qualified Data.Aeson  as Aeson
 import Data.Char (isDigit, isSpace)
 import Data.List (isPrefixOf)
 import Data.Maybe (listToMaybe, mapMaybe)

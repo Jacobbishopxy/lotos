@@ -1,9 +1,11 @@
+{-# LANGUAGE RecordWildCards #-}
+
 -- file: Server.hs
 -- author: Jacob Xie
 -- date: 2025/04/16 14:04:47 Wednesday
 -- brief:
 
-module TaskSchedule.Server
+module Server
   ( SimpleServer (..),
   )
 where
@@ -11,7 +13,7 @@ where
 import Data.List
 import Lotos.Logger
 import Lotos.Zmq
-import TaskSchedule.Adt
+import Adt
 
 -- | Simple server implementation for load balancing
 data SimpleServer = SimpleServer

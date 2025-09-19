@@ -3,7 +3,7 @@
 -- date: 2025/04/16 14:04:38 Wednesday
 -- brief:
 
-module TaskSchedule.Client
+module Client
   ( SimpleClient (..),
     getTaskFromFile,
   )
@@ -12,7 +12,7 @@ where
 import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Lazy as BL
 import Lotos.Zmq
-import TaskSchedule.Adt
+import Adt (ClientTask)
 
 data SimpleClient = SimpleClient
 

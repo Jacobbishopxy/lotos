@@ -11,8 +11,8 @@ import Control.Monad.IO.Class
 import Data.Data (Proxy (..))
 import Lotos.Logger
 import Lotos.Zmq
-import TaskSchedule.Adt
-import TaskSchedule.Server
+import Adt
+import Server
 
 run :: BrokerServiceConfig -> LotosApp ()
 run lbsConfig = do

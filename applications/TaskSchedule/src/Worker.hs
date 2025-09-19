@@ -10,7 +10,7 @@
 -- - Reporter: Collects and reports worker status
 -- Both implement typeclasses from Lotos.Zmq.LBW for integration with the worker service.
 
-module TaskSchedule.Worker
+module Worker
   ( SimpleWorker (..),
   )
 where
@@ -20,8 +20,8 @@ import Data.Text qualified as Text
 import Lotos.Logger
 import Lotos.Proc
 import Lotos.Zmq
-import TaskSchedule.Adt
-import TaskSchedule.Util (cvtCommandResult2TaskStatus)
+import Adt
+import Util (cvtCommandResult2TaskStatus)
 
 -- | Worker status reporter that tracks active tasks count
 data SimpleWorker = SimpleWorker

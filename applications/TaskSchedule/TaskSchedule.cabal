@@ -15,51 +15,100 @@ common shared-properties
   hs-source-dirs:     .
   default-extensions: OverloadedStrings
 
-executable ts-server
-  import:        shared-properties
-  main-is:       TaskScheduleServer.hs
-  ghc-options:   -threaded -rtsopts -with-rtsopts=-N
-  other-modules:
-    TaskSchedule.Adt
-    TaskSchedule.Server
-    TaskSchedule.Util
+------------------------------------------------------------------------------------------------
 
+
+library ts-server-lib
+  import:          shared-properties
+  exposed-modules:
+    Adt
+    Server
+    Util
+
+  build-depends:
+    , aeson
+    , lotos
+    , process
+    , text
+
+  hs-source-dirs:  src
+
+executable ts-server
+  import:         shared-properties
+  main-is:        TaskScheduleServer.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     , aeson
     , base
     , lotos
     , process
+    , TaskSchedule:ts-server-lib
     , text
+
+  hs-source-dirs: app
+
+------------------------------------------------------------------------------------------------
+
+library ts-worker-lib
+  import:          shared-properties
+  exposed-modules:
+    Adt
+    Util
+    Worker
+
+  build-depends:
+    , aeson
+    , lotos
+    , process
+    , text
+
+  hs-source-dirs:  src
 
 executable ts-worker
-  import:        shared-properties
-  main-is:       TaskScheduleWorker.hs
-  ghc-options:   -threaded -rtsopts -with-rtsopts=-N
-  other-modules:
-    TaskSchedule.Adt
-    TaskSchedule.Util
-    TaskSchedule.Worker
-
+  import:         shared-properties
+  main-is:        TaskScheduleWorker.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     , aeson
     , base
     , lotos
     , process
+    , TaskSchedule:ts-worker-lib
     , text
 
-executable ts-client
-  import:        shared-properties
-  main-is:       TaskScheduleClient.hs
-  ghc-options:
-  other-modules:
-    TaskSchedule.Adt
-    TaskSchedule.Client
-    TaskSchedule.Util
+  hs-source-dirs: app
 
+------------------------------------------------------------------------------------------------
+
+
+
+library ts-client-lib
+  import:          shared-properties
+  exposed-modules:
+    Adt
+    Client
+    Util
+
+  build-depends:
+    , aeson
+    , bytestring
+    , lotos
+    , process
+    , text
+
+  hs-source-dirs:  src
+
+executable ts-client
+  import:         shared-properties
+  main-is:        TaskScheduleClient.hs
+  ghc-options:
   build-depends:
     , aeson
     , base
     , bytestring
     , lotos
     , process
+    , TaskSchedule:ts-client-lib
     , text
+
+  hs-source-dirs: app

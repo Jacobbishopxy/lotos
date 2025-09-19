@@ -8,7 +8,7 @@ module Main where
 -- TODO
 
 import Lotos.Zmq()
-import TaskSchedule.Client()
+import Client()
 
 main :: IO ()
 main = do
