@@ -222,7 +222,7 @@ socketLoop
       (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger now
       logApp DEBUG $ "socketLoop -> start, now: " <> show now <> ", shouldProcess: " <> show shouldProcess
 
-      let pollItems = Zmqx.the workerDealer & Zmqx.also workerDealerPair'
+      let pollItems = Zmqx.pollIn workerDealer & Zmqx.pollInAlso workerDealerPair'
       rdy <- zmqUnwrap (Zmqx.pollFor pollItems $ timeoutInterval newTrigger now)
 
       case rdy of

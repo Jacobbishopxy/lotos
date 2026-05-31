@@ -5,4 +5,9 @@ packages:
 source-repository-package
   type: git
   location: git@github.com:Jacobbishopxy/zmqx.git
-  tag: 4db2f2f89d2549d95a634c29635cf12e8f113b89
+  tag: d476d1c6c4713b192626ea1c7e6b830c4860ed8c
+
+allow-newer: all
+constraints:
+  setup.Cabal == 3.16.0.0,
+  setup.Cabal-syntax == 3.16.0.0

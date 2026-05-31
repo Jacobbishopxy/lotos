@@ -67,7 +67,7 @@ runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = d
   zmqUnwrap $ Zmqx.bind senderPair socketLayerSenderAddr -- Fixed to use connect
 
   -- pollItems & socketLayer cst
-  let pollItems = Zmqx.the frontend & Zmqx.also backend & Zmqx.also receiverPair
+  let pollItems = Zmqx.pollIn frontend & Zmqx.pollInAlso backend & Zmqx.pollInAlso receiverPair
       socketLayer = SocketLayer frontend backend receiverPair senderPair tq ftq wtm wsm gbb 0
 
   -- Start the event loop in a separate thread

@@ -12,7 +12,7 @@ import Lotos.Zmq
 main :: IO ()
 main = do
   now <- getCurrentTime
-  trigger <- mkEventTrigger 5 3
+  trigger <- mkCombinedTrigger 5 3
 
   let timeoutMills = timeoutInterval trigger now
   putStrLn $ "Milliseconds until next trigger: " ++ show timeoutMills
