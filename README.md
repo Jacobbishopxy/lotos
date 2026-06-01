@@ -123,20 +123,25 @@ cabal build TaskSchedule:exe:ts-client
 
 ## Tests and demos
 
-The most suitable quick regression test is the concurrent executor suite:
+Use a CI-safe test posture: run the assertion-based regression suite for quick checks, compile every test target without executing demo servers, and run the TaskSchedule smoke helper only when an intentional multi-process smoke is desired.
 
-```bash
-cabal test lotos:test:test-conc-executor
-```
+| Goal | Command | Notes |
+|---|---|---|
+| Quick regression | `cabal test lotos:test:test-conc-executor` | HUnit coverage for concurrent command success/failure, callbacks, timeout handling, and bounded concurrent execution. |
+| Compile all packages and test targets | `cabal build all --enable-tests` | Builds the workspace plus test executables without running demo-style suites that may sleep or serve forever. |
+| Intentional MVP smoke | `scripts/task-schedule-smoke.sh` | Bounded server/worker/client smoke from TP-005; run after the build command above and inspect `.tmp/task-schedule-smoke/<run-id>/` on failure. |
+| Avoid as a default gate | `cabal test all` | Some registered test suites are demos or long-running servers, so a broad test run can hang or waste CI time. |
 
-Be careful with broad test commands:
+Current `lotos` test-suite posture:
 
-- `test-simple-servant` starts a web server and does not exit by itself.
-- `test-zmq-xt` is a long-running ZMQ demo.
-- `test-logger` sleeps for roughly 50 seconds.
-- `test-event-trigger` is a short demo-style executable for trigger timing behavior.
+- `test-conc-executor` is the safe quick regression suite.
+- `test-conc-executor2` is a demo/longer exercise with helper scripts and no assertions.
+- `test-event-trigger` is a terminating timing demo with sleeps and no assertions.
+- `test-logger` is a long-running logging demo that sleeps for roughly 50 seconds.
+- `test-simple-servant` starts a Warp server on port 8080 and does not exit by itself.
+- `test-zmq-xt` starts long-running ZMQ loops and does not exit by itself.
 
-For that reason, avoid `cabal test all` as a default verification command until the demo suites are separated from long-running processes.
+Until those demo suites are separated from regression tests, do not use `cabal test all` as the default verification command.
 
 ## Running the TaskSchedule demo
 
@@ -173,10 +178,10 @@ cabal run TaskSchedule:exe:ts-client -- task-demo.json
 cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json task-demo.json
 ```
 
-For a repeatable local smoke run, build first and then run the helper from the repository root:
+For a repeatable local smoke run, compile all packages and test targets first, then run the helper from the repository root:
 
 ```bash
-cabal build all
+cabal build all --enable-tests
 scripts/task-schedule-smoke.sh
 ```
 

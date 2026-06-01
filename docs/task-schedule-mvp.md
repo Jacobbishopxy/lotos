@@ -207,10 +207,10 @@ ACK alone is not proof of completion; it only proves broker acceptance.
 
 ## End-to-end acceptance script
 
-Run the repeatable smoke helper from the repository root after building the workspace:
+Run the repeatable smoke helper from the repository root after compiling the workspace and all test targets:
 
 ```bash
-cabal build all
+cabal build all --enable-tests
 scripts/task-schedule-smoke.sh
 ```
 
@@ -221,6 +221,8 @@ Exit codes:
 - `0`: full MVP pass; client received ACK and worker marker proof exists.
 - `2`: known client ACK blocker; worker marker proof exists but `ts-client` timed out waiting for `ClientAck`.
 - `1`: hard runtime failure; inspect the run evidence directory.
+
+Current TP-005 smoke evidence is still an exit-`1` hard runtime failure before client submission: server HTTP readiness passes, but `/SimpleServer/worker_stats` never shows `simpleWorker_1` because the server rejects worker status frames with a UTF-8 decode error. The exit-`2` ACK-blocker classification only applies after worker registration and marker proof succeed while the remaining failure is the missing client ACK.
 
 Manual fallback, if the helper is unavailable, is the same sequence:
 
