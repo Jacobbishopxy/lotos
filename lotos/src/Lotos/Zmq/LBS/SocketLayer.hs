@@ -97,11 +97,14 @@ handleFrontend SocketLayer {..} (Zmqx.Ready ready) =
   -- 📩 receive message from a client
   when (ready frontendRouter) $ do
     logApp DEBUG "handleFrontend: recv client request"
-    fromZmq @(Task t) <$> zmqUnwrap (Zmqx.receives frontendRouter) >>= \case
-      Left e -> logApp ERROR $ show e
-      Right task -> do
+    fromZmq @(RouterFrontendIn t) <$> zmqUnwrap (Zmqx.receives frontendRouter) >>= \case
+      Left e -> logApp ERROR $ "handleFrontend: unable to parse client request; no ACK sent: " <> show e
+      Right (ClientRequest clientID clientReqID task) -> do
         filledTask <- liftIO $ fillTaskID' task
         liftIO $ enqueueTS filledTask taskQueue -- Ensure proper enqueueing
+        ack <- liftIO newAck
+        zmqUnwrap $ Zmqx.sends frontendRouter $ toZmq (ClientAck clientID clientReqID ack)
+        logApp DEBUG $ "handleFrontend: sent client ACK after enqueue: " <> show clientID <> " " <> show ack
 
 -- ⭐⭐ handle message from load-balancer or workers
 handleBackend ::

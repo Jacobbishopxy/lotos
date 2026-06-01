@@ -232,25 +232,24 @@ ackFromUTC = Ack
 data RouterFrontendOut
   = ClientAck
       RoutingID -- clientID
-      Text.Text -- clientReqID
+      ByteString.ByteString -- clientReqID
       Ack -- ack
 
 data RouterFrontendIn t
   = ClientRequest
       RoutingID -- clientID
-      Text.Text -- clientReqID
+      ByteString.ByteString -- clientReqID
       (Task t) -- clientTask
 
 instance ToZmq RouterFrontendOut where
   toZmq (ClientAck clientID clientReqID ack) =
-    textToBS clientID : textToBS clientReqID : "" : toZmq ack
+    textToBS clientID : clientReqID : "" : toZmq ack
 
 instance (FromZmq t) => FromZmq (RouterFrontendIn t) where
   fromZmq (clientIDBs : clientReqIDBs : "" : taskBs) = do
     clientID <- textFromBS clientIDBs
-    clientReqID <- textFromBS clientReqIDBs
     clientTask <- fromZmq taskBs
-    return $ ClientRequest clientID clientReqID clientTask
+    return $ ClientRequest clientID clientReqIDBs clientTask
   fromZmq _ = Left $ ZmqParsing "Invalid format for RouterFrontendMessage"
 
 ----------------------------------------------------------------------------------------------------
