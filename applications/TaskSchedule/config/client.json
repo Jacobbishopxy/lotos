@@ -1,0 +1,5 @@
+{
+  "clientId": "simpleClient_1",
+  "loadBalancerFrontendAddr": "tcp://127.0.0.1:5555",
+  "reqTimeoutSec": 5
+}

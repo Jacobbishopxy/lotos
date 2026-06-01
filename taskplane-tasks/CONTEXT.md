@@ -29,4 +29,4 @@ parallel batch execution or `/orch <path/to/PROMPT.md>` for a single task.
 
 _Items discovered during task execution are logged here by agents._
 
-- [ ] **Expose client config reader** — `Lotos.Zmq` exports `ClientServiceConfig` but not `readClientConfig`, so downstream executables must duplicate small Aeson config-file decoding or import hidden modules (discovered during TP-003).
+- [x] **Expose client config reader** — Resolved during TP-004 by exporting `readBrokerConfig`, `readWorkerConfig`, and `readClientConfig` from the `Lotos.Zmq` facade so downstream executables can use the existing config readers.

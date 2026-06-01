@@ -1,8 +1,8 @@
 # TaskSchedule MVP Runtime Contract
 
-This document is the product-facing runtime contract for the `applications/TaskSchedule` demo. TP-003 through TP-006 should treat it as the source of truth for CLI shape, default addresses, task JSON, observability, and end-to-end acceptance.
+This document is the product-facing runtime contract for the `applications/TaskSchedule` demo. Downstream tasks should treat it as the source of truth for CLI shape, default addresses, task JSON, observability, and end-to-end acceptance.
 
-TP-002 only defines the contract; it does not implement the CLI or framework changes.
+TP-002 defined the contract, TP-003 implemented client submission, and TP-004 aligned the server/worker/client runtime config defaults plus sample JSON config files.
 
 ## MVP scope
 
@@ -22,6 +22,7 @@ cabal run TaskSchedule:exe:ts-server -- [BROKER_CONFIG_JSON]
 - `BROKER_CONFIG_JSON` is optional.
 - With no argument, the server uses the built-in MVP defaults below.
 - With one argument, it reads `BrokerServiceConfig` JSON using the existing `readBrokerConfig` shape.
+- The checked-in sample config is `applications/TaskSchedule/config/broker.json`.
 
 Server defaults:
 
@@ -51,6 +52,7 @@ cabal run TaskSchedule:exe:ts-worker -- [WORKER_CONFIG_JSON]
 - `WORKER_CONFIG_JSON` is optional.
 - With no argument, the worker uses the built-in MVP defaults below.
 - With one argument, it reads `WorkerServiceConfig` JSON using the existing `readWorkerConfig` shape.
+- The checked-in sample config is `applications/TaskSchedule/config/worker.json`.
 
 Worker defaults:
 
@@ -64,7 +66,7 @@ Worker defaults:
 | `parallelTasksNo` | `4` |
 | Log file | `./logs/taskScheduleWorker.log` |
 
-`loadBalancerBackendAddr` is the task/status backend and must match the server backend (`5556`). Current demo literals that point the worker backend at `5555` are out of contract.
+`loadBalancerBackendAddr` is the task/status backend and must match the server backend (`5556`). TP-004 corrected the prior demo mismatch that pointed the worker backend at `5555`.
 
 `loadBalancerLoggingAddr` reserves `5557` for worker PUB log messages. Worker log collection is not required for MVP pass/fail because the current broker config has no external logging address and info storage currently subscribes to an in-process source. If downstream implementation wires log collection, it should use `5557` and expose entries in `/SimpleServer/info.workerLoggingsMap`; otherwise `workerLoggingsMap` may be empty.
 
@@ -78,6 +80,7 @@ cabal run TaskSchedule:exe:ts-client -- CLIENT_CONFIG_JSON TASK_JSON
 - `TASK_JSON` is required.
 - With one argument, the client uses the built-in MVP client config.
 - With two arguments, it reads `ClientServiceConfig` JSON from the first path and the task from the second path.
+- The checked-in sample config is `applications/TaskSchedule/config/client.json`.
 
 Client defaults:
 
@@ -97,7 +100,7 @@ ACK semantics:
 
 ## JSON config shapes
 
-The MVP config files use existing record field names.
+The MVP config files use existing record field names. The checked-in samples under `applications/TaskSchedule/config/` mirror the built-in defaults and were verified with the exported `readBrokerConfig`, `readWorkerConfig`, and `readClientConfig` readers.
 
 ### Server config example
 
@@ -233,12 +236,12 @@ Pass criteria:
 - `.tmp/task-schedule-demo.out` contains exactly `task-schedule-ok`.
 - The happy-path task is not in garbage.
 
-## Downstream acceptance by task
+## Implementation status by task
 
-- **TP-003 (server runtime):** server accepts zero/one config argument, uses the defaults above, creates/logs to `./logs/taskScheduleServer.log`, binds frontend `5555`, backend `5556`, and serves the info API on `8081`.
-- **TP-004 (worker runtime):** worker accepts zero/one config argument, uses backend `5556`, reports `simpleWorker_1` in `/worker_stats`, executes shell commands with `parallelTasksNo`, and treats `5557` logging as reserved/optional rather than reusing the task backend.
-- **TP-005 (client runtime):** client accepts `TASK_JSON` or `CLIENT_CONFIG_JSON TASK_JSON`, validates the timeout fields, sends the task to frontend `5555`, prints accepted/enqueued ACKs, and exits non-zero on parse/argument/ACK timeout failures.
-- **TP-006 (end-to-end verification):** the demo task above passes the end-to-end acceptance script and documents any remaining non-MVP limitations.
+- **TP-002 (contract):** this MVP contract defines the canonical CLI, address, config, task JSON, and acceptance expectations.
+- **TP-003 (client submission):** `ts-client` accepts `TASK_JSON` or `CLIENT_CONFIG_JSON TASK_JSON`, sends the task to frontend `5555`, and exits non-zero on parse/argument/ACK timeout failures. Live ACK success still depends on server-side ACK support.
+- **TP-004 (runtime config alignment):** `ts-server`, `ts-worker`, and `ts-client` use the defaults above; server/worker accept zero or one config argument; worker backend/logging defaults are aligned to `5556`/`5557`; checked-in sample configs load through the exported config readers.
+- **TP-006 (end-to-end verification):** the demo task above should pass the end-to-end acceptance script once the remaining server ACK gap is closed and any remaining non-MVP limitations are documented.
 
 ## Non-goals and known risks
 
@@ -254,7 +257,7 @@ Non-goals for the MVP:
 Known risks/gaps for downstream work:
 
 - `ts-client` now has a submission path, but the live ACK success path still depends on the server frontend sending the client ACK required by this contract.
-- Current worker hardcoded addresses appear inverted relative to the server; the contract corrects the worker backend to `5556`.
+- TP-004 build/config checks passed for aligned defaults and sample config readers, but live multi-process end-to-end smoke remains downstream verification work.
 - Current server frontend enqueues requests but does not yet send the client ACK required by this contract.
 - Worker log transport is not fully wired to an external server endpoint; `5557` is reserved and log-based acceptance is optional.
 - The info API currently exposes worker task membership but not a dedicated task-status field; the file side effect is the required completion proof for the MVP happy path.

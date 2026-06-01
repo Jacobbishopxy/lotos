@@ -7,11 +7,14 @@
 
 module Main where
 
+import Adt
 import Control.Concurrent
 import Control.Monad.IO.Class
 import Lotos.Logger
 import Lotos.Zmq
-import Adt
+import System.Environment (getArgs)
+import System.Exit (exitFailure)
+import System.IO (hPutStrLn, stderr)
 import Worker
 
 run :: WorkerServiceConfig -> LotosApp ()
@@ -25,17 +28,38 @@ run wsConfig = do
   -- Run the worker service
   runWorkerService service wsConfig
 
+defaultWorkerConfig :: WorkerServiceConfig
+defaultWorkerConfig =
+  WorkerServiceConfig
+    { workerId = "simpleWorker_1",
+      workerDealerPairAddr = "inproc://TaskScheduleWorker",
+      loadBalancerBackendAddr = "tcp://127.0.0.1:5556",
+      loadBalancerLoggingAddr = "tcp://127.0.0.1:5557",
+      workerStatusReportIntervalSec = 5,
+      parallelTasksNo = 4
+    }
+
+usage :: String
+usage =
+  unlines
+    [ "Usage:",
+      "  ts-worker",
+      "  ts-worker WORKER_CONFIG_JSON"
+    ]
+
+loadWorkerConfig :: [String] -> IO WorkerServiceConfig
+loadWorkerConfig [] = pure defaultWorkerConfig
+loadWorkerConfig [configPath] = readWorkerConfig configPath
+loadWorkerConfig _ = dieWith usage
+
+dieWith :: String -> IO a
+dieWith msg = do
+  hPutStrLn stderr msg
+  exitFailure
+
 main :: IO ()
 main = do
+  args <- getArgs
+  wsConfig <- loadWorkerConfig args
   logConfig <- initLocalTimeLogger "./logs/taskScheduleWorker.log" DEBUG True
-  let wsConfig =
-        WorkerServiceConfig
-          { workerId = "simpleWorker_1",
-            workerDealerPairAddr = "inproc://TaskScheduleWorker",
-            loadBalancerBackendAddr = "tcp://127.0.0.1:5555",
-            loadBalancerLoggingAddr = "tcp://127.0.0.1:5556",
-            workerStatusReportIntervalSec = 5,
-            parallelTasksNo = 4
-          }
-
   runZmqContextIO $ runApp logConfig $ run wsConfig

@@ -9,14 +9,12 @@ import Adt (ClientTask)
 import Client (readTaskFromFile)
 import Control.Exception (SomeException, try)
 import Control.Monad (join)
-import Data.Aeson (eitherDecode)
-import qualified Data.ByteString.Lazy as BL
 import Lotos.Logger (LogLevel (DEBUG), runApp, withLocalTimeLogger)
-import Lotos.Zmq (Ack, ClientServiceConfig (..), Task, mkClientService, runZmqContextIO, sendTaskRequest)
-import System.Timeout (timeout)
+import Lotos.Zmq (Ack, ClientServiceConfig (..), Task, mkClientService, readClientConfig, runZmqContextIO, sendTaskRequest)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
+import System.Timeout (timeout)
 
 data ClientArgs = ClientArgs
   { clientConfigPath :: Maybe FilePath,
@@ -46,14 +44,7 @@ defaultClientConfig =
 
 loadClientConfig :: ClientArgs -> IO ClientServiceConfig
 loadClientConfig ClientArgs {clientConfigPath = Nothing} = pure defaultClientConfig
-loadClientConfig ClientArgs {clientConfigPath = Just path} = readClientConfigFile path
-
-readClientConfigFile :: FilePath -> IO ClientServiceConfig
-readClientConfigFile path = do
-  content <- BL.readFile path
-  case eitherDecode content of
-    Left err -> fail $ "Invalid client config JSON: " <> err
-    Right clientConfig -> pure clientConfig
+loadClientConfig ClientArgs {clientConfigPath = Just path} = readClientConfig path
 
 readClientTask :: ClientArgs -> IO (Task ClientTask)
 readClientTask ClientArgs {clientTaskPath = path} = do

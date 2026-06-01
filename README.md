@@ -61,7 +61,7 @@ Executables:
 
 - `TaskSchedule:exe:ts-server` — starts the load balancer and info API.
 - `TaskSchedule:exe:ts-worker` — starts one command-executing worker.
-- `TaskSchedule:exe:ts-client` — currently a placeholder that prints `whatever`.
+- `TaskSchedule:exe:ts-client` — submits a task JSON file to the load balancer frontend and waits for an ACK.
 
 ## Architecture overview
 
@@ -142,30 +142,38 @@ For that reason, avoid `cabal test all` as a default verification command until 
 
 The MVP runtime contract for the server, worker, client, task JSON, and verification flow is documented in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
 
-The server executable currently hardcodes these settings:
+The executables use built-in single-machine defaults and can also read explicit JSON config files. Sample configs live under `applications/TaskSchedule/config/`.
 
-- frontend: `tcp://127.0.0.1:5555`
-- backend: `tcp://127.0.0.1:5556`
+Default addresses:
+
+- server frontend / client frontend: `tcp://127.0.0.1:5555`
+- server backend / worker task-status backend: `tcp://127.0.0.1:5556`
+- reserved worker logging endpoint: `tcp://127.0.0.1:5557`
 - info HTTP port: `8081`
-- log file: `./logs/taskScheduleServer.log`
+- logs: `./logs/taskScheduleServer.log`, `./logs/taskScheduleWorker.log`, and `./logs/taskScheduleClient.log`
 
-Start it with:
+Start the server with defaults, or pass `applications/TaskSchedule/config/broker.json` to make the defaults explicit:
 
 ```bash
-mkdir -p logs
 cabal run TaskSchedule:exe:ts-server
+cabal run TaskSchedule:exe:ts-server -- applications/TaskSchedule/config/broker.json
 ```
 
-Start a worker in another terminal:
+Start a worker in another terminal with defaults, or pass `applications/TaskSchedule/config/worker.json`:
 
 ```bash
-mkdir -p logs
 cabal run TaskSchedule:exe:ts-worker
+cabal run TaskSchedule:exe:ts-worker -- applications/TaskSchedule/config/worker.json
 ```
 
-Note: the worker executable currently has hardcoded addresses that look inverted relative to the server (`loadBalancerBackendAddr = tcp://127.0.0.1:5555`, `loadBalancerLoggingAddr = tcp://127.0.0.1:5556`). Verify and adjust these before relying on the demo operationally.
+Submit a task JSON with the client. A client config can be supplied as the first argument when overriding the frontend address or timeout:
 
-The client executable is still a stub. The reusable `Client` module can read a JSON `ClientTask`, but the CLI path has not been completed.
+```bash
+cabal run TaskSchedule:exe:ts-client -- task-demo.json
+cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json task-demo.json
+```
+
+The client ACK path still depends on server-side ACK support; see the MVP contract for the current acceptance flow and remaining end-to-end gaps.
 
 ## Info API
 

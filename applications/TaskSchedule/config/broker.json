@@ -1,0 +1,22 @@
+{
+  "taskScheduler": {
+    "taskQueueHWM": 1000,
+    "failedTaskQueueHWM": 1000,
+    "garbageBinSize": 100
+  },
+  "socketLayer": {
+    "frontendAddr": "tcp://127.0.0.1:5555",
+    "backendAddr": "tcp://127.0.0.1:5556"
+  },
+  "taskProcessor": {
+    "taskQueuePullNo": 10,
+    "failedTaskQueuePullNo": 10,
+    "triggerAlgoMaxNotifyCount": 10,
+    "triggerAlgoMaxWaitSec": 10
+  },
+  "infoStorage": {
+    "httpPort": 8081,
+    "loggingsBufferSize": 1000,
+    "infoFetchIntervalSec": 10
+  }
+}

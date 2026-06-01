@@ -9,8 +9,11 @@ module Lotos.Zmq
 
     -- * config
     BrokerServiceConfig (..),
+    readBrokerConfig,
     WorkerServiceConfig (..),
+    readWorkerConfig,
     ClientServiceConfig (..),
+    readClientConfig,
     TaskSchedulerConfig (..),
     SocketLayerConfig (..),
     TaskProcessorConfig (..),
