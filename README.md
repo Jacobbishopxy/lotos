@@ -135,7 +135,7 @@ Use a CI-safe test posture: registered Cabal test suites are bounded, assertion-
 Current `lotos` regression test suites:
 
 - `test-conc-executor` is the concurrent process executor regression suite.
-- `test-zmq-worker-frames` checks bounded worker-status ROUTER/DEALER frame decoding.
+- `test-zmq-worker-frames` checks bounded worker status, worker task-status, retry/failure status payload, and scheduled task ROUTER/DEALER frame contracts.
 - `test-zmq-client-ack-frames` checks bounded frontend REQ/ROUTER client ACK frames.
 
 Current `lotos` demo executables:

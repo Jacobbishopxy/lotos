@@ -373,11 +373,15 @@ instance ToZmq WorkerReportTaskStatus where
     toZmq WorkerTaskStatusT <> toZmq ack <> [uuidToBS tid] <> toZmq ts
 
 instance FromZmq WorkerReportTaskStatus where
-  fromZmq (ackBs : uuidBs : tsBs) = do
-    ack <- fromZmq [ackBs]
-    uuid <- uuidOptFromBS uuidBs >>= maybeToEither (ZmqParsing "Invalid format for WorkerReportTaskStatus")
-    status <- fromZmq tsBs
-    return $ WorkerReportTaskStatus ack uuid status
+  fromZmq (mtBs : ackBs : uuidBs : tsBs) = do
+    mt <- fromZmq [mtBs]
+    case mt of
+      WorkerTaskStatusT -> do
+        ack <- fromZmq [ackBs]
+        uuid <- uuidOptFromBS uuidBs >>= maybeToEither (ZmqParsing "Invalid format for WorkerReportTaskStatus")
+        status <- fromZmq tsBs
+        return $ WorkerReportTaskStatus ack uuid status
+      WorkerStatusT -> Left $ ZmqParsing "Invalid message type for WorkerReportTaskStatus"
   fromZmq _ = Left $ ZmqParsing "Invalid format for WorkerReportTaskStatus"
 
 ----------------------------------------------------------------------------------------------------
