@@ -7,6 +7,8 @@ import Control.Monad (forM_)
 import Lotos.Proc
 import Lotos.TSD.RingBuffer
 import Lotos.Util
+import System.Directory (doesFileExist)
+import System.Exit (die)
 
 main :: IO ()
 main = do
@@ -14,7 +16,16 @@ main = do
   putStrLn ""
   test1
   putStrLn ""
+  ensureHelperScripts
   test2
+
+ensureHelperScripts :: IO ()
+ensureHelperScripts = do
+  randExists <- doesFileExist "scripts/rand.sh"
+  failExists <- doesFileExist "scripts/fail.sh"
+  if randExists && failExists
+    then return ()
+    else die "demo-conc-executor2 must be run from the repository root so scripts/rand.sh and scripts/fail.sh are available"
 
 test1 :: IO ()
 test1 = do
@@ -43,10 +54,10 @@ test2 = do
   buf3 <- mkTSRingBuffer 10
   buf4 <- mkTSRingBuffer 10
   let cmds =
-        [ simpleCommandRequestWithBuffer "mkdir -p ../.tmp && bash ../scripts/rand.sh ../.tmp/t1 2 7" 0 buf1,
-          simpleCommandRequestWithBuffer "mkdir -p ../.tmp && bash ../scripts/rand.sh ../.tmp/t2 3 10" 5 buf2,
-          simpleCommandRequestWithBuffer "bash ../scripts/fail.sh 5" 0 buf3,
-          simpleCommandRequestWithBuffer "bash ../scripts/fail.sh 8" 5 buf4
+        [ simpleCommandRequestWithBuffer "mkdir -p .tmp && bash scripts/rand.sh .tmp/t1 2 7" 0 buf1,
+          simpleCommandRequestWithBuffer "mkdir -p .tmp && bash scripts/rand.sh .tmp/t2 3 10" 5 buf2,
+          simpleCommandRequestWithBuffer "bash scripts/fail.sh 5" 0 buf3,
+          simpleCommandRequestWithBuffer "bash scripts/fail.sh 8" 5 buf4
         ]
   results <- executeConcurrently cmds
 

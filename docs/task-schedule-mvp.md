@@ -214,6 +214,8 @@ cabal build all --enable-tests
 scripts/task-schedule-smoke.sh
 ```
 
+For the normal regression gate, `cabal test all` is safe: the `lotos` package now registers only bounded, assertion-based regression suites as Cabal tests. Long-running or no-assertion examples live under `lotos:exe:demo-*` and should be run intentionally, usually with `timeout` for server demos.
+
 The helper starts `ts-server` and `ts-worker` with the checked-in sample configs, waits for `/SimpleServer/info` and `/SimpleServer/worker_stats`, submits a fresh per-run task with `ts-client`, snapshots the info endpoints, checks a per-run marker written by the worker command, and preserves logs plus `result.env` under `.tmp/task-schedule-smoke/<run-id>/`. It bypasses local proxy settings for loopback `curl` probes and cleans up only the process IDs/process groups it started.
 
 Exit codes:
@@ -252,7 +254,7 @@ Pass criteria:
 - The worker marker file contains the current run ID (or `.tmp/task-schedule-demo.out` contains exactly `task-schedule-ok` for the manual fallback).
 - The happy-path task is not in garbage.
 
-TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-schedule-smoke.sh` passed. The smoke run `.tmp/task-schedule-smoke/tp009-final-20260601T043107Z-241489/` proves the client ACK path, worker stats, fresh marker proof, and no current-run garbage entry under the default sample configs.
+TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-schedule-smoke.sh` passed. The smoke run `.tmp/task-schedule-smoke/tp009-final-20260601T043107Z-241489/` proves the client ACK path, worker stats, fresh marker proof, and no current-run garbage entry under the default sample configs. TP-010 keeps that smoke command intentional while making `cabal test all` a safe bounded regression gate.
 
 ## Implementation status by task
 
@@ -263,6 +265,7 @@ TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-s
 - **TP-007 (worker status frame decoding):** worker DEALER sockets now use the configured worker ID as the ZeroMQ routing id, preserving the existing payload frame order while making backend `RouterBackendIn` decode worker status frames as UTF-8.
 - **TP-008 (client ACK path):** frontend ROUTER decoding now preserves the REQ routing-id, binary request-id, and empty delimiter frames, enqueues the task, and echoes a `ClientAck` so `ts-client` receives an acceptance ACK and exits successfully.
 - **TP-009 (green smoke):** the smoke helper now treats any missing ACK as a hard failure and the default sample-config run exits `0` with client ACK, worker stats, fresh marker proof, and no current-run garbage entry.
+- **TP-010 (test-suite reclassification):** demo and server examples are Cabal `demo-*` executables instead of default test suites, leaving `cabal test all` for bounded assertion-based regressions.
 
 ## Non-goals and known risks
 

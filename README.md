@@ -123,25 +123,30 @@ cabal build TaskSchedule:exe:ts-client
 
 ## Tests and demos
 
-Use a CI-safe test posture: run the assertion-based regression suite for quick checks, compile every test target without executing demo servers, and run the TaskSchedule smoke helper only when an intentional multi-process smoke is desired.
+Use a CI-safe test posture: registered Cabal test suites are bounded, assertion-based regressions; demo and server examples are Cabal executables that must be run intentionally.
 
 | Goal | Command | Notes |
 |---|---|---|
-| Quick regression | `cabal test lotos:test:test-conc-executor` | HUnit coverage for concurrent command success/failure, callbacks, timeout handling, and bounded concurrent execution. |
-| Compile all packages and test targets | `cabal build all --enable-tests` | Builds the workspace plus test executables without running demo-style suites that may sleep or serve forever. |
+| Full regression | `cabal test all` | Runs the bounded `lotos` regression suites only: `test-conc-executor`, `test-zmq-worker-frames`, and `test-zmq-client-ack-frames`. |
+| Focused quick regression | `cabal test lotos:test:test-conc-executor` | HUnit coverage for concurrent command success/failure, callbacks, timeout handling, and bounded concurrent execution. |
+| Compile all packages, tests, and demos | `cabal build all --enable-tests` | Builds the workspace, regression test executables, TaskSchedule executables, and `demo-*` executables without running long-lived demos. |
 | Intentional MVP smoke | `scripts/task-schedule-smoke.sh` | Bounded server/worker/client smoke; run after the build command above and inspect `.tmp/task-schedule-smoke/<run-id>/` for `result.env`, logs, endpoint snapshots, and marker proof. |
-| Avoid as a default gate | `cabal test all` | Some registered test suites are demos or long-running servers, so a broad test run can hang or waste CI time. |
 
-Current `lotos` test-suite posture:
+Current `lotos` regression test suites:
 
-- `test-conc-executor` is the safe quick regression suite.
-- `test-conc-executor2` is a demo/longer exercise with helper scripts and no assertions.
-- `test-event-trigger` is a terminating timing demo with sleeps and no assertions.
-- `test-logger` is a long-running logging demo that sleeps for roughly 50 seconds.
-- `test-simple-servant` starts a Warp server on port 8080 and does not exit by itself.
-- `test-zmq-xt` starts long-running ZMQ loops and does not exit by itself.
+- `test-conc-executor` is the concurrent process executor regression suite.
+- `test-zmq-worker-frames` checks bounded worker-status ROUTER/DEALER frame decoding.
+- `test-zmq-client-ack-frames` checks bounded frontend REQ/ROUTER client ACK frames.
 
-Until those demo suites are separated from regression tests, do not use `cabal test all` as the default verification command.
+Current `lotos` demo executables:
+
+- `demo-conc-executor2` is a bounded concurrent executor demo with helper scripts and no assertions; run it from the repository root so `scripts/*` and `.tmp/*` paths resolve consistently (`cabal run lotos:exe:demo-conc-executor2`).
+- `demo-event-trigger` is a bounded timing demo with sleeps and no assertions (`cabal run lotos:exe:demo-event-trigger`).
+- `demo-logger` is a long-running logging demo that sleeps for roughly 50 seconds (`timeout 70s cabal run lotos:exe:demo-logger`).
+- `demo-simple-servant` starts a Warp server on port 8080 and does not exit by itself (`timeout 15s cabal run lotos:exe:demo-simple-servant`).
+- `demo-zmq-xt` starts long-running ZMQ loops and does not exit by itself (`timeout 15s cabal run lotos:exe:demo-zmq-xt`).
+
+Do not add no-assertion demos back as Cabal `test-suite` components unless they are bounded and assertion-based; otherwise `cabal test all` stops being a safe regression gate.
 
 ## Running the TaskSchedule demo
 

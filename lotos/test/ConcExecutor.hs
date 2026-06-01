@@ -3,11 +3,11 @@
 -- date: 2025/04/30 09:18:03 Wednesday
 -- brief:
 
-import Control.Monad (forM_)
+import Control.Monad (forM_, when)
 import Lotos.Proc
 import Lotos.TSD.RingBuffer
 import Lotos.Util
-import System.Exit (ExitCode (..))
+import System.Exit (ExitCode (..), exitFailure)
 import Test.HUnit
 
 main :: IO ()
@@ -16,6 +16,7 @@ main = do
 
   counts <- runTestTT tests
   print counts
+  when (errors counts + failures counts /= 0) exitFailure
 
 -- testConcurrentExecution
 tests :: Test

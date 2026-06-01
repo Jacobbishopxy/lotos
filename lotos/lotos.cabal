@@ -21,6 +21,11 @@ common test
     , HUnit
     , lotos
 
+common demo
+  hs-source-dirs: test
+  build-depends:
+    , lotos
+
 ----------------------------------------------------------------------------------------------------
 -- Lib
 ----------------------------------------------------------------------------------------------------
@@ -81,37 +86,8 @@ library
   hs-source-dirs:     src
 
 ----------------------------------------------------------------------------------------------------
--- Test
+-- Tests: bounded assertion-based regression suites only.
 ----------------------------------------------------------------------------------------------------
-
-test-suite test-logger
-  import:         shared-properties, test
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        Logger.hs
-  build-depends:
-    , mtl
-    , vector
-
-test-suite test-event-trigger
-  import:         shared-properties, test
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        EventTrigger.hs
-  build-depends:  time
-
-test-suite test-simple-servant
-  import:         shared-properties, test
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        SimpleServant.hs
-  build-depends:
-    , aeson
-    , servant
-    , servant-server
-    , text
-    , wai
-    , warp
 
 test-suite test-conc-executor
   import:         shared-properties, test
@@ -120,25 +96,6 @@ test-suite test-conc-executor
   main-is:        ConcExecutor.hs
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-
-test-suite test-conc-executor2
-  import:         shared-properties, test
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        ConcExecutor2.hs
-  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
-  build-depends:
-
-test-suite test-zmq-xt
-  import:         shared-properties, test
-  type:           exitcode-stdio-1.0
-  hs-source-dirs: test
-  main-is:        ZmqXT.hs
-  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
-  build-depends:
-    , bytestring
-    , mtl
-    , zmqx
 
 test-suite test-zmq-worker-frames
   import:         shared-properties, test
@@ -156,4 +113,47 @@ test-suite test-zmq-client-ack-frames
   main-is:        ZmqClientAckFrames.hs
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
+    , zmqx
+
+----------------------------------------------------------------------------------------------------
+-- Demos: runnable examples that should not execute under `cabal test all`.
+----------------------------------------------------------------------------------------------------
+
+executable demo-conc-executor2
+  import:      shared-properties, demo
+  main-is:     ConcExecutor2.hs
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , directory
+
+executable demo-event-trigger
+  import:        shared-properties, demo
+  main-is:       EventTrigger.hs
+  build-depends: time
+
+executable demo-logger
+  import:        shared-properties, demo
+  main-is:       Logger.hs
+  build-depends:
+    , mtl
+    , vector
+
+executable demo-simple-servant
+  import:        shared-properties, demo
+  main-is:       SimpleServant.hs
+  build-depends:
+    , aeson
+    , servant
+    , servant-server
+    , text
+    , wai
+    , warp
+
+executable demo-zmq-xt
+  import:      shared-properties, demo
+  main-is:     ZmqXT.hs
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , bytestring
+    , mtl
     , zmqx
