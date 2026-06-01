@@ -140,6 +140,8 @@ For that reason, avoid `cabal test all` as a default verification command until 
 
 ## Running the TaskSchedule demo
 
+The MVP runtime contract for the server, worker, client, task JSON, and verification flow is documented in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
+
 The server executable currently hardcodes these settings:
 
 - frontend: `tcp://127.0.0.1:5555`
