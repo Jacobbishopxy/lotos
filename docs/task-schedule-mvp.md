@@ -31,6 +31,7 @@ Server defaults:
 | `socketLayer.frontendAddr` | `tcp://127.0.0.1:5555` |
 | `socketLayer.backendAddr` | `tcp://127.0.0.1:5556` |
 | `infoStorage.httpPort` | `8081` |
+| `infoStorage.loggingAddr` | `tcp://127.0.0.1:5557` |
 | `taskScheduler.taskQueueHWM` | `1000` |
 | `taskScheduler.failedTaskQueueHWM` | `1000` |
 | `taskScheduler.garbageBinSize` | `100` |
@@ -68,7 +69,7 @@ Worker defaults:
 
 `loadBalancerBackendAddr` is the task/status backend and must match the server backend (`5556`). TP-004 corrected the prior demo mismatch that pointed the worker backend at `5555`.
 
-`loadBalancerLoggingAddr` reserves `5557` for worker PUB log messages. Worker log collection is not required for MVP pass/fail because the current broker config has no external logging address and info storage currently subscribes to an in-process source. If downstream implementation wires log collection, it should use `5557` and expose entries in `/SimpleServer/info.workerLoggingsMap`; otherwise `workerLoggingsMap` may be empty.
+`loadBalancerLoggingAddr` is the worker PUB logging endpoint and must match the server `infoStorage.loggingAddr` (`5557` in the checked-in demo). The worker sends its `workerId` as the PUB/SUB topic and the existing `WorkerLogging` payload as `[taskUuid, logText]`; server info storage binds a SUB socket on this endpoint and exposes entries in `/SimpleServer/info.workerLoggingsMap` after the next `infoFetchIntervalSec` refresh. Broker JSON files written before TP-013 must add `infoStorage.loggingAddr` or they will not match the current `InfoStorageConfig` schema.
 
 ### Client
 
@@ -123,6 +124,7 @@ The MVP config files use existing record field names. The checked-in samples und
   },
   "infoStorage": {
     "httpPort": 8081,
+    "loggingAddr": "tcp://127.0.0.1:5557",
     "loggingsBufferSize": 1000,
     "infoFetchIntervalSec": 10
   }
@@ -208,7 +210,7 @@ Expected MVP observations:
 3. Task acceptance/assignment: after the client receives an ACK, `/SimpleServer/worker_tasks` or `/SimpleServer/info.workerTasksMap` contains the submitted task under a worker ID, or `/SimpleServer/tasks` briefly shows it queued before assignment.
 4. Successful execution: `.tmp/task-schedule-demo.out` exists and contains `task-schedule-ok`.
 5. Failure absence for the happy path: `/SimpleServer/garbage` does not contain the demo task.
-6. Optional logging: if log collection is wired, `/SimpleServer/info.workerLoggingsMap` may contain stdout/stderr and final command-result entries for the task. Empty worker log maps do not fail the MVP.
+6. Worker logging: `/SimpleServer/info.workerLoggingsMap.simpleWorker_1` contains stdout/stderr lines and a final `CommandResult` entry for the task after the info-storage refresh interval. Empty worker log maps fail the checked-in smoke path.
 
 ACK alone is not proof of completion; it only proves broker acceptance.
 
@@ -223,14 +225,14 @@ scripts/task-schedule-smoke.sh
 
 For the normal regression gate, `cabal test all` is safe: the `lotos` package registers only bounded, assertion-based regression suites as Cabal tests, and TaskSchedule's worker lifecycle test is also bounded. Long-running or no-assertion examples live under `lotos:exe:demo-*` and should be run intentionally, usually with `timeout` for server demos.
 
-The helper starts `ts-server` and `ts-worker` with the checked-in sample configs, waits for `/SimpleServer/info` and `/SimpleServer/worker_stats`, submits a fresh per-run task with `ts-client`, snapshots the info endpoints, checks a per-run marker written by the worker command, and preserves logs plus `result.env` under `.tmp/task-schedule-smoke/<run-id>/`. It bypasses local proxy settings for loopback `curl` probes and cleans up only the process IDs/process groups it started.
+The helper starts `ts-server` and `ts-worker` with the checked-in sample configs, waits for `/SimpleServer/info` and `/SimpleServer/worker_stats`, submits a fresh per-run task with `ts-client`, snapshots the info endpoints, checks a per-run marker written by the worker command, polls `/SimpleServer/info.workerLoggingsMap` for the current run id and final `ExitSuccess` command result, and preserves logs plus `result.env` under `.tmp/task-schedule-smoke/<run-id>/`. It bypasses local proxy settings for loopback `curl` probes and cleans up only the process IDs/process groups it started.
 
 Exit codes:
 
-- `0`: full MVP pass; client received ACK, worker stats are visible, the worker marker proof exists, and the current run is absent from garbage.
-- `1`: hard runtime failure, including readiness, ACK, marker, or garbage-check failures; inspect the run evidence directory.
+- `0`: full MVP pass; client received ACK, worker stats are visible, the worker marker proof exists, worker logging reached `/info.workerLoggingsMap`, and the current run is absent from garbage.
+- `1`: hard runtime failure, including readiness, ACK, marker, worker-logging, or garbage-check failures; inspect the run evidence directory.
 
-Current TP-009 smoke evidence is a full MVP pass: run `.tmp/task-schedule-smoke/tp009-final-20260601T043107Z-241489/` records `status=PASS`, `client_exit=0`, `ts-client` printed `accepted/enqueued ACK: Ack 2026-06-01 04:31:40 UTC`, `/SimpleServer/worker_stats` contained `simpleWorker_1`, the worker wrote the fresh marker file, and `final-garbage.json` did not contain the run id. The previous worker-registration and client-ACK blockers are resolved.
+Current TP-013 smoke evidence is a full MVP pass with wired worker logging: run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T075727Z-519892/` records `status=PASS`, `client_exit=0`, `/SimpleServer/worker_stats` contained `simpleWorker_1`, the worker wrote the fresh marker file, `logging-info.json` and `final-info.json` contained both `STDOUT: task-schedule-smoke-20260601T075727Z-519892` and `ExitSuccess` under `workerLoggingsMap.simpleWorker_1`, and `final-garbage.json` did not contain the run id.
 
 Manual fallback, if the helper is unavailable, is the same sequence:
 
@@ -259,6 +261,7 @@ Pass criteria:
 - Worker stats include `simpleWorker_1`.
 - The demo task is visible in queue/worker state during or after scheduling.
 - The worker marker file contains the current run ID (or `.tmp/task-schedule-demo.out` contains exactly `task-schedule-ok` for the manual fallback).
+- `/SimpleServer/info.workerLoggingsMap` contains the worker id plus stdout/stderr or `CommandResult` entries for the task after the info-storage refresh interval.
 - The happy-path task is not in garbage.
 
 TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-schedule-smoke.sh` passed. The smoke run `.tmp/task-schedule-smoke/tp009-final-20260601T043107Z-241489/` proves the client ACK path, worker stats, fresh marker proof, and no current-run garbage entry under the default sample configs. TP-010 keeps that smoke command intentional while making `cabal test all` a safe bounded regression gate.
@@ -275,6 +278,7 @@ TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-s
 - **TP-010 (test-suite reclassification):** demo and server examples are Cabal `demo-*` executables instead of default test suites, leaving `cabal test all` for bounded assertion-based regressions.
 - **TP-011 (protocol frame coverage):** worker task-status frames round-trip their payload order and decode through the backend ROUTER path, protecting failure/status reports from frame regressions.
 - **TP-012 (worker lifecycle/failure semantics):** bounded tests cover retry decrement, garbage after retry exhaustion, command success/failure/timeout mapping, and worker `TaskProcessing` start reports; smoke run `.tmp/task-schedule-smoke/tp012-step3-20260601T071329Z-471004/` passed.
+- **TP-013 (worker logging/info storage):** info storage binds the configured `infoStorage.loggingAddr` (`5557` in the demo), workers publish `workerId` topic frames plus `WorkerLogging` payloads, and the smoke helper now requires current-run stdout plus `ExitSuccess` evidence in `/SimpleServer/info.workerLoggingsMap`.
 
 ## Non-goals and known risks
 
@@ -290,7 +294,7 @@ Non-goals for the MVP:
 Known risks/gaps for downstream work:
 
 - The client ACK path depends on preserving ZeroMQ ROUTER/REQ frame ordering, including the binary REQ request-id frame; changing this shape can reintroduce ACK timeouts.
-- Worker log transport is not fully wired to an external server endpoint; `5557` is reserved and log-based acceptance is optional.
+- Worker log transport is wired for the single-machine sample configs; custom topologies must keep server `infoStorage.loggingAddr` and worker `loadBalancerLoggingAddr` aligned, and HTTP snapshots reflect logs after `infoFetchIntervalSec` refreshes.
 - The info API currently exposes worker task membership but not a dedicated task-status history or failure-reason field; the file side effect is the required completion proof for the MVP happy path.
 - `taskTimeout` and `taskProp.executeTimeoutSec` duplicate timeout data; the MVP resolves ambiguity by making `taskTimeout` authoritative and requiring equality.
 - `taskRetryInterval` is not enforced yet; retry attempts are requeued immediately when the failed-task queue is scheduled.

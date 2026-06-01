@@ -151,7 +151,7 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
   -- create taskAcceptorAPI instance
   let taskAcceptorAPI =
         TaskAcceptorAPI
-          { taPubTaskLogging = zmqThrow . Zmqx.sends wPub . toZmq,
+          { taPubTaskLogging = \wl -> zmqThrow $ Zmqx.sends wPub (textToBS workerId : toZmq wl),
             taSendTaskStatus = \(tid, ts) -> do
               ack <- newAck
               zmqThrow $ Zmqx.sends wDealerPair $ toZmq $ WorkerReportTaskStatus ack tid ts
@@ -319,7 +319,7 @@ listTasksInQueue WorkerService {taskQueue} =
 -- publish task logging, used for workers
 pubTaskLogging :: WorkerService ta sr t w -> WorkerLogging -> LotosApp ()
 pubTaskLogging WorkerService {..} wl =
-  zmqUnwrap $ Zmqx.sends workerPub $ toZmq wl
+  zmqUnwrap $ Zmqx.sends workerPub $ textToBS (workerId conf) : toZmq wl
 
 -- report task status, used for workers
 sendTaskStatus :: WorkerService ta sr t w -> TaskID -> TaskStatus -> LotosApp ()

@@ -158,7 +158,7 @@ Default addresses:
 
 - server frontend / client frontend: `tcp://127.0.0.1:5555`
 - server backend / worker task-status backend: `tcp://127.0.0.1:5556`
-- reserved worker logging endpoint: `tcp://127.0.0.1:5557`
+- worker logging endpoint (server info storage SUB / worker PUB): `tcp://127.0.0.1:5557`
 - info HTTP port: `8081`
 - logs: `./logs/taskScheduleServer.log`, `./logs/taskScheduleWorker.log`, and `./logs/taskScheduleClient.log`
 
@@ -190,9 +190,9 @@ cabal build all --enable-tests
 scripts/task-schedule-smoke.sh
 ```
 
-The smoke helper starts the server and worker with the checked-in sample configs, submits a fresh per-run task when worker readiness passes, captures evidence under `.tmp/task-schedule-smoke/<run-id>/`, and cleans up only the processes it started. Exit `0` means the full MVP path passed: client ACK, worker stats, fresh marker proof, and no current-run garbage entry. Exit `1` means a runtime, readiness, ACK, marker, or garbage check failed; inspect the evidence directory for `result.env`, `smoke.log`, stdio logs, endpoint snapshots, and the marker file.
+The smoke helper starts the server and worker with the checked-in sample configs, submits a fresh per-run task when worker readiness passes, captures evidence under `.tmp/task-schedule-smoke/<run-id>/`, and cleans up only the processes it started. Exit `0` means the full MVP path passed: client ACK, worker stats, fresh marker proof, current-run worker logging in `/SimpleServer/info.workerLoggingsMap`, and no current-run garbage entry. Exit `1` means a runtime, readiness, ACK, marker, worker-logging, or garbage check failed; inspect the evidence directory for `result.env`, `smoke.log`, stdio logs, endpoint snapshots, and the marker file.
 
-Latest TP-009 evidence `.tmp/task-schedule-smoke/tp009-final-20260601T043107Z-241489/` is green with `status=PASS`, `client_exit=0`, `accepted/enqueued ACK`, worker `simpleWorker_1` in stats, fresh marker proof, and no current-run garbage entry.
+Latest TP-013 evidence `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T075727Z-519892/` is green with `status=PASS`, `client_exit=0`, accepted/enqueued ACK, worker `simpleWorker_1` in stats, fresh marker proof, `STDOUT` plus `ExitSuccess` entries under `workerLoggingsMap.simpleWorker_1`, and no current-run garbage entry.
 
 ## Info API
 
@@ -203,6 +203,8 @@ Latest TP-009 evidence `.tmp/task-schedule-smoke/tp009-final-20260601T043107Z-24
 - `http://127.0.0.1:8081/SimpleServer/garbage`
 - `http://127.0.0.1:8081/SimpleServer/worker_tasks`
 - `http://127.0.0.1:8081/SimpleServer/worker_stats`
+
+The `/info` response includes `workerLoggingsMap`, keyed by worker id. With the checked-in sample configs, workers publish command stdout/stderr and final `CommandResult` entries over the `5557` logging endpoint; snapshots reflect those entries after the configured info-storage refresh interval.
 
 ## Development notes
 

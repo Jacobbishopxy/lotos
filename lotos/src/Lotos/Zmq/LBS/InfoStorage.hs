@@ -86,10 +86,10 @@ runInfoStorage ::
   TaskSchedulerData t w ->
   LotosApp (ThreadId, ThreadId)
 runInfoStorage httpName InfoStorageConfig {..} tsd = do
-  -- 1. Create a subscriber for loggings
+  -- 1. Create a subscriber for worker loggings on the configured external logging endpoint.
   loggingsSubscriber <- zmqUnwrap $ Zmqx.Sub.open $ Zmqx.name "loggingsSubscriber"
-  zmqUnwrap $ Zmqx.connect loggingsSubscriber socketLayerSenderAddr
-  zmqUnwrap $ Zmqx.Sub.subscribe loggingsSubscriber "" -- Subscribe to all topics
+  zmqUnwrap $ Zmqx.bind loggingsSubscriber loggingAddr
+  zmqUnwrap $ Zmqx.Sub.subscribe loggingsSubscriber "" -- Subscribe to all worker topics
 
   -- 2. Create a shared `MVar` for `InfoStorage`
   infoStorage <- liftIO $ newMVar newInfoStorage
@@ -280,8 +280,8 @@ infoLoop iss@InfoStorageServer {..} layer = do
   newIS <- mkInfoStorage layer si
   liftIO $ modifyMVar_ infoStorage $ \_ -> pure newIS
 
-  -- 4. loop
-  infoLoop iss {trigger = newTrigger} layer
+  -- 4. loop, preserving accumulated worker logging buffers across snapshots
+  infoLoop iss {subscriberInfo = si, trigger = newTrigger} layer
 
 ----------------------------------------------------------------------------------------------------
 

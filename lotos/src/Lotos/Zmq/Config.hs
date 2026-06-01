@@ -94,6 +94,7 @@ data TaskProcessorConfig = TaskProcessorConfig
 
 data InfoStorageConfig = InfoStorageConfig
   { httpPort :: Int, -- http server port
+    loggingAddr :: Text.Text, -- worker PUB logging endpoint
     loggingsBufferSize :: Int,
     infoFetchIntervalSec :: Int
   }

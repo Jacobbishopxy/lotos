@@ -60,6 +60,7 @@ runLBS n BrokerServiceConfig {..} loadBalancer = do
       infoStorageConfig =
         InfoStorageConfig
           { httpPort = httpPort infoStorage,
+            loggingAddr = loggingAddr infoStorage,
             loggingsBufferSize = loggingsBufferSize infoStorage,
             infoFetchIntervalSec = infoFetchIntervalSec infoStorage
           }

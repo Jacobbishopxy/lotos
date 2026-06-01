@@ -30,6 +30,7 @@ SERVER_READY_TIMEOUT_SEC="${SMOKE_SERVER_READY_TIMEOUT_SEC:-60}"
 WORKER_READY_TIMEOUT_SEC="${SMOKE_WORKER_READY_TIMEOUT_SEC:-90}"
 CLIENT_TIMEOUT_SEC="${SMOKE_CLIENT_TIMEOUT_SEC:-60}"
 MARKER_TIMEOUT_SEC="${SMOKE_MARKER_TIMEOUT_SEC:-30}"
+LOGGING_TIMEOUT_SEC="${SMOKE_LOGGING_TIMEOUT_SEC:-45}"
 TASK_TIMEOUT_SEC="${SMOKE_TASK_TIMEOUT_SEC:-5}"
 
 mkdir -p "$EVIDENCE_DIR" logs
@@ -253,7 +254,7 @@ write_task_json() {
   "taskRetryInterval": 0,
   "taskTimeout": $TASK_TIMEOUT_SEC,
   "taskProp": {
-    "command": "mkdir -p '$EVIDENCE_DIR' && printf '%s\\n' '$RUN_ID' > '$MARKER_FILE'",
+    "command": "mkdir -p '$EVIDENCE_DIR' && printf '%s\\n' '$RUN_ID' > '$MARKER_FILE' && printf '%s\\n' '$RUN_ID'",
     "executeTimeoutSec": $TASK_TIMEOUT_SEC
   }
 }
@@ -313,6 +314,30 @@ check_garbage_for_run() {
   return 1
 }
 
+wait_for_worker_logging() {
+  local server_pid="$1"
+  local worker_pid="$2"
+  local info_file="$EVIDENCE_DIR/logging-info.json"
+  local deadline=$((SECONDS + LOGGING_TIMEOUT_SEC))
+  while [ "$SECONDS" -le "$deadline" ]; do
+    ensure_alive "server" "$server_pid" "$SERVER_STDIO_LOG" || return 1
+    ensure_alive "worker" "$worker_pid" "$WORKER_STDIO_LOG" || return 1
+    if snapshot_endpoint "info" "$info_file"; then
+      rm -f "$info_file.err"
+      if grep -F '"workerLoggingsMap"' "$info_file" >/dev/null 2>&1 \
+        && grep -F "$WORKER_ID" "$info_file" >/dev/null 2>&1 \
+        && grep -F "$RUN_ID" "$info_file" >/dev/null 2>&1 \
+        && grep -F "ExitSuccess" "$info_file" >/dev/null 2>&1; then
+        log "worker logging evidence found in /info for $WORKER_ID, run $RUN_ID, and ExitSuccess"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  log "worker logging evidence timed out after ${LOGGING_TIMEOUT_SEC}s"
+  return 1
+}
+
 main() {
   log "TaskSchedule smoke run_id=$RUN_ID"
   log "evidence_dir=$EVIDENCE_DIR"
@@ -339,6 +364,8 @@ main() {
 
   local marker_ok=0
   wait_for_marker "$server_pid" "$worker_pid" || marker_ok=1
+  local logging_ok=0
+  wait_for_worker_logging "$server_pid" "$worker_pid" || logging_ok=1
   snapshot_all "final"
   collect_log_extracts || true
 
@@ -346,13 +373,17 @@ main() {
     fail_hard "worker marker proof missing or stale for run $RUN_ID"
   fi
 
+  if [ "$logging_ok" -ne 0 ]; then
+    fail_hard "worker logging evidence missing from /info.workerLoggingsMap for run $RUN_ID"
+  fi
+
   if ! check_garbage_for_run; then
     fail_hard "current run appeared in garbage or garbage endpoint was unavailable"
   fi
 
   if [ "$CLIENT_EXIT" -eq 0 ]; then
-    log "PASS: client received ACK and worker wrote fresh marker"
-    write_result "PASS" "$CLIENT_EXIT" "client ACK plus fresh marker proof"
+    log "PASS: client received ACK, worker wrote fresh marker, and worker logging reached /info"
+    write_result "PASS" "$CLIENT_EXIT" "client ACK plus fresh marker proof plus worker logging evidence"
     return 0
   fi
 
