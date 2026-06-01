@@ -18,11 +18,15 @@ module Lotos.Zmq.Adt
     -- * task
     Task (..),
     FailedTaskDisposition (..),
+    RetryTask (..),
     defaultTask,
     fillTaskID,
     fillTaskID',
     unsafeGetTaskID,
     failedTaskDisposition,
+    mkRetryTask,
+    retryTaskEligible,
+    partitionRetryTasks,
 
     -- * ack
     Ack,
@@ -151,7 +155,7 @@ data Task t = Task
     taskRetry :: Int,
     -- ^ Remaining retry attempts after worker failure.
     taskRetryInterval :: Int,
-    -- ^ Retry-delay field carried in the schema; currently not enforced by the scheduler.
+    -- ^ Seconds to wait before a failed task with remaining retries becomes schedulable again; @0@ or less retries immediately.
     taskTimeout :: Int,
     -- ^ Task execution timeout in seconds; @0@ means no timeout for TaskSchedule commands.
     taskProp :: t
@@ -236,6 +240,47 @@ failedTaskDisposition task =
         then RetryFailedTask task {taskRetry = retriesRemaining - 1}
         else GarbageFailedTask task
 
+-- | Scheduler-internal failed-task queue entry.
+--
+-- The retry readiness timestamp intentionally lives outside 'Task' so task
+-- JSON and ZeroMQ frame shapes stay compatible while the broker can defer
+-- positive-interval retries.
+data RetryTask t = RetryTask
+  { retryTaskReadyAt :: Maybe UTCTime,
+    -- ^ Earliest time this retry may be scheduled, or 'Nothing' for immediate retries.
+    retryTaskPayload :: Task t
+    -- ^ The decremented task to retry.
+  }
+  deriving (Show)
+
+-- | Attach retry-delay metadata to a decremented failed task.
+mkRetryTask :: UTCTime -> Task t -> RetryTask t
+mkRetryTask failedAt task =
+  let interval = taskRetryInterval task
+   in RetryTask
+        { retryTaskReadyAt =
+            if interval > 0
+              then Just $ addUTCTime (fromIntegral interval) failedAt
+              else Nothing,
+          retryTaskPayload = task
+        }
+
+-- | Whether a failed retry is schedulable at the supplied time.
+retryTaskEligible :: UTCTime -> RetryTask t -> Bool
+retryTaskEligible _ RetryTask {retryTaskReadyAt = Nothing} = True
+retryTaskEligible now RetryTask {retryTaskReadyAt = Just readyAt} = now >= readyAt
+
+-- | Split retry entries into schedulable and still-delayed buckets.
+partitionRetryTasks :: UTCTime -> [RetryTask t] -> ([RetryTask t], [RetryTask t])
+partitionRetryTasks now =
+  foldr
+    ( \retryTask (eligible, delayed) ->
+        if retryTaskEligible now retryTask
+          then (retryTask : eligible, delayed)
+          else (eligible, retryTask : delayed)
+    )
+    ([], [])
+
 ----------------------------------------------------------------------------------------------------
 
 -- | Timestamp ACK used for accepted client requests and worker reports.
@@ -311,8 +356,9 @@ instance (FromZmq t) => FromZmq (RouterFrontendIn t) where
 --
 -- The current worker flow reports 'TaskProcessing' when execution starts and
 -- either 'TaskSucceed' or 'TaskFailed' when it finishes. On 'TaskFailed' the
--- broker retries immediately while 'taskRetry' remains, otherwise it records the
--- task in the garbage ring buffer.
+-- broker retries after 'taskRetryInterval' seconds while 'taskRetry' remains
+-- (immediately when the interval is @0@ or less), otherwise it records the task
+-- in the garbage ring buffer.
 data TaskStatus
   = TaskInit
   | TaskPending

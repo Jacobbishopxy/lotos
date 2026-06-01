@@ -70,7 +70,7 @@ runLBS n BrokerServiceConfig {..} loadBalancer = do
     liftIO $
       TaskSchedulerData
         <$> (mkTSQueue :: IO (TSQueue (Task t)))
-        <*> (mkTSQueue :: IO (TSQueue (Task t)))
+        <*> (mkTSQueue :: IO (TSQueue (RetryTask t)))
         <*> (newTSWorkerTasksMap :: IO (TSWorkerTasksMap (TaskID, Task t, TaskStatus)))
         <*> (mkTSMap :: IO (TSWorkerStatusMap w))
         <*> (mkTSRingBuffer (garbageBinSize taskSchedulerConfig) :: IO (TSRingBuffer (Task t)))

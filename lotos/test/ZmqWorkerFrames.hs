@@ -5,6 +5,7 @@ module Main where
 
 import Control.Concurrent (threadDelay)
 import Control.Monad (forM_, when)
+import Data.Time (UTCTime (..), addUTCTime, fromGregorian)
 import Lotos.Zmq
 import System.Exit (exitFailure)
 import Test.HUnit
@@ -14,6 +15,9 @@ import Zmqx.Router qualified
 
 testWorkerId :: RoutingID
 testWorkerId = "simpleWorker_1"
+
+fixedNow :: UTCTime
+fixedNow = UTCTime (fromGregorian 2026 1 1) 0
 
 unwrap :: (Show e) => IO (Either e a) -> IO a
 unwrap action = action >>= either (ioError . userError . show) pure
@@ -143,6 +147,36 @@ failedTaskWithNoRetryGoesToGarbage = do
     GarbageFailedTask garbageTask -> assertTaskMatches task garbageTask
     RetryFailedTask _ -> assertFailure "expected failed task with zero retries to go to garbage"
 
+positiveRetryIntervalDelaysEligibilityUntilReady :: Assertion
+positiveRetryIntervalDelaysEligibilityUntilReady = do
+  task <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1, taskRetryInterval = 5})
+  let retryTask = mkRetryTask fixedNow task
+      readyAt = addUTCTime 5 fixedNow
+  retryTaskReadyAt retryTask @?= Just readyAt
+  retryTaskEligible fixedNow retryTask @?= False
+  retryTaskEligible (addUTCTime 4 fixedNow) retryTask @?= False
+  retryTaskEligible readyAt retryTask @?= True
+
+zeroAndNegativeRetryIntervalsRemainImmediate :: Assertion
+zeroAndNegativeRetryIntervalsRemainImmediate = do
+  forM_ [0, -1] $ \interval -> do
+    task <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1, taskRetryInterval = interval})
+    let retryTask = mkRetryTask fixedNow task
+    retryTaskReadyAt retryTask @?= Nothing
+    retryTaskEligible fixedNow retryTask @?= True
+
+retryTaskPartitionKeepsDelayedTasksOutOfSchedulingBatch :: Assertion
+retryTaskPartitionKeepsDelayedTasksOutOfSchedulingBatch = do
+  delayedTask <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1, taskRetryInterval = 5})
+  immediateTask <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1, taskRetryInterval = 0})
+  dueTask <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1, taskRetryInterval = 1})
+  let delayedRetry = mkRetryTask fixedNow delayedTask
+      immediateRetry = mkRetryTask fixedNow immediateTask
+      dueRetry = mkRetryTask fixedNow dueTask
+      (eligible, delayed) = partitionRetryTasks (addUTCTime 2 fixedNow) [delayedRetry, immediateRetry, dueRetry]
+  (taskID . retryTaskPayload <$> eligible) @?= [taskID immediateTask, taskID dueTask]
+  (taskID . retryTaskPayload <$> delayed) @?= [taskID delayedTask]
+
 tests :: Test
 tests =
   TestList
@@ -151,7 +185,10 @@ tests =
       TestLabel "worker report task status payloads round-trip all task statuses" (TestCase workerReportTaskStatusPayloadsRoundTrip),
       TestLabel "scheduled worker task frames strip ROUTER envelope for DEALER" (TestCase scheduledWorkerTaskFramesStripRouterEnvelope),
       TestLabel "failed task with remaining retry requeues with decremented retry" (TestCase failedTaskWithRemainingRetryRequeuesWithDecrementedRetry),
-      TestLabel "failed task with no retry goes to garbage" (TestCase failedTaskWithNoRetryGoesToGarbage)
+      TestLabel "failed task with no retry goes to garbage" (TestCase failedTaskWithNoRetryGoesToGarbage),
+      TestLabel "positive retry interval delays eligibility until ready" (TestCase positiveRetryIntervalDelaysEligibilityUntilReady),
+      TestLabel "zero and negative retry intervals remain immediate" (TestCase zeroAndNegativeRetryIntervalsRemainImmediate),
+      TestLabel "retry task partition keeps delayed tasks out of scheduling batch" (TestCase retryTaskPartitionKeepsDelayedTasksOutOfSchedulingBatch)
     ]
 
 main :: IO ()

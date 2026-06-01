@@ -72,7 +72,7 @@ At runtime, Lotos uses a broker/worker topology:
 3. The task processor wakes on notifications or a timer, reads worker status, pulls queued and retryable tasks, and calls a user-provided `LoadBalancerAlgo`.
 4. Scheduled tasks are forwarded to workers over the backend ZMQ socket.
 5. Workers process batches through `TaskAcceptor`, emit per-task status changes, and periodically report worker status through `StatusReporter`.
-6. Failed tasks are retried while retry count remains; exhausted tasks move to a garbage ring buffer.
+6. Failed tasks are retried while retry count remains, after any positive `taskRetryInterval` delay has elapsed; exhausted tasks move to a garbage ring buffer.
 7. Info storage snapshots queues, worker state, worker-task state, and garbage tasks for a read-only HTTP API.
 
 The main extension points are:
@@ -93,7 +93,7 @@ class StatusReporter sr w where
 For a new application, import `Lotos.Zmq` and provide application payloads plus the three extension points above:
 
 1. Define a task payload and worker-status payload with `ToZmq`/`FromZmq` instances. Their multipart frame order is the protocol contract; keep peer encoders/decoders and regression tests aligned.
-2. Define a `Task t` JSON shape for clients. New client tasks may leave `taskID = null`; the broker assigns the UUID before scheduling, and worker/scheduler code assumes a UUID is present before calling `unsafeGetTaskID`.
+2. Define a `Task t` JSON shape for clients. New client tasks may leave `taskID = null`; the broker assigns the UUID before scheduling, and worker/scheduler code assumes a UUID is present before calling `unsafeGetTaskID`. `taskRetryInterval` is a retry delay in seconds for failed tasks with retries remaining; `0` or less retries immediately.
 3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass.
 4. Implement `TaskAcceptor` for workers. Process each task batch, publish task logs with `taPubTaskLogging`, and report `TaskProcessing`, `TaskSucceed`, or `TaskFailed` with `taSendTaskStatus`.
 5. Implement `StatusReporter` for workers. Combine `StatusReporterAPI.srReportInfo` queue/processing counts with app-specific metrics such as CPU or memory load.
@@ -148,7 +148,7 @@ Use a CI-safe test posture: registered Cabal test suites are bounded, assertion-
 Current bounded regression test suites:
 
 - `lotos:test:test-conc-executor` is the concurrent process executor regression suite.
-- `lotos:test:test-zmq-worker-frames` checks bounded worker status, worker task-status, retry/failure status payload, and scheduled task ROUTER/DEALER frame contracts.
+- `lotos:test:test-zmq-worker-frames` checks bounded worker status, worker task-status, retry/failure status payload, retry-delay eligibility, and scheduled task ROUTER/DEALER frame contracts.
 - `lotos:test:test-zmq-client-ack-frames` checks bounded frontend REQ/ROUTER client ACK frames.
 - `TaskSchedule:test:test-worker-lifecycle` checks TaskSchedule command-result status mapping and worker lifecycle callbacks.
 
@@ -226,7 +226,7 @@ The `/info` response includes `workerLoggingsMap`, keyed by worker id. With the 
 - Client ACKs mean accepted/enqueued by the broker, not worker completion. Completion evidence comes from worker side effects, worker task/status state, logs, or smoke artifacts.
 - The broker owns UUID assignment. Client task JSON may set `taskID` to `null`, but scheduled/executing tasks must have IDs before `unsafeGetTaskID` is used.
 - Worker DEALER routing ids and worker logging topics both use `workerId`; custom configs must align client/frontend, worker/backend, and worker-logging endpoints.
-- Failed tasks retry immediately while `taskRetry > 0`; `taskRetryInterval` is currently schema-only.
+- Failed tasks retry while `taskRetry > 0`; positive `taskRetryInterval` values delay eligibility until the interval has elapsed, while `0` or less preserves immediate retry.
 - Safe verification commands are `cabal build all --enable-tests` for compilation, `cabal test all` for bounded regression suites, and `scripts/task-schedule-smoke.sh` for the intentional end-to-end demo smoke after building.
 
 ## Development notes

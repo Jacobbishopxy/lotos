@@ -167,7 +167,7 @@ Required fields:
 | `taskID` | `null`; server assigns the UUID before scheduling. |
 | `taskContent` | Human-readable label/description for the task. |
 | `taskRetry` | Remaining retry count after worker failure. Use `0` for the happy-path demo. |
-| `taskRetryInterval` | Present for schema compatibility; no MVP behavior is guaranteed. Use `0`. |
+| `taskRetryInterval` | Retry delay in seconds after worker failure when `taskRetry > 0`; `0` or less preserves immediate retry. Use `0` for the happy-path demo. |
 | `taskTimeout` | Authoritative execution timeout in seconds. `0` means no timeout. |
 | `taskProp.command` | Shell command executed by the worker. |
 | `taskProp.executeTimeoutSec` | Required by the current `ClientTask` schema and must equal `taskTimeout`; it is not separately authoritative. |
@@ -176,8 +176,8 @@ Failure and retry semantics:
 
 - Worker execution reports `TaskProcessing` when a command starts and `TaskSucceed` or `TaskFailed` when it finishes.
 - `ExitSuccess` maps to `TaskSucceed`; any non-zero exit, including timeout termination (`ExitFailure 124`), maps to `TaskFailed`.
-- On `TaskFailed`, the broker removes the task from the worker task map. If `taskRetry > 0`, it requeues the task on the failed-task queue with `taskRetry` decremented by one; if `taskRetry == 0`, it writes the task to `/SimpleServer/garbage`.
-- `taskRetryInterval` remains schema-only in the MVP; retries are not delayed by that field.
+- On `TaskFailed`, the broker removes the task from the worker task map. If `taskRetry > 0`, it decrements `taskRetry` and requeues the task on the failed-task queue; if `taskRetry == 0`, it writes the task to `/SimpleServer/garbage`.
+- Requeued failures with `taskRetryInterval > 0` are not passed back to the scheduler until the interval has elapsed from broker failure handling. `taskRetryInterval <= 0` keeps the historical immediate retry behavior. The delay metadata is broker-local and does not change the task JSON or ZMQ frame shape.
 
 Example task (`task-demo.json`):
 
@@ -281,6 +281,7 @@ TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-s
 - **TP-011 (protocol frame coverage):** worker task-status frames round-trip their payload order and decode through the backend ROUTER path, protecting failure/status reports from frame regressions.
 - **TP-012 (worker lifecycle/failure semantics):** bounded tests cover retry decrement, garbage after retry exhaustion, command success/failure/timeout mapping, and worker `TaskProcessing` start reports; smoke run `.tmp/task-schedule-smoke/tp012-step3-20260601T071329Z-471004/` passed.
 - **TP-013 (worker logging/info storage):** info storage binds the configured `infoStorage.loggingAddr` (`5557` in the demo), workers publish `workerId` topic frames plus `WorkerLogging` payloads, and the smoke helper now requires current-run stdout plus `ExitSuccess` evidence in `/SimpleServer/info.workerLoggingsMap`.
+- **TP-015 (retry delay semantics):** `taskRetryInterval` is now enforced for retryable failures with broker-local readiness metadata; fixed-clock tests cover delayed, due, and immediate retry behavior, and smoke run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T094502Z-746207/` passed.
 
 ## Non-goals and known risks
 
@@ -299,4 +300,4 @@ Known risks/gaps for downstream work:
 - Worker log transport is wired for the single-machine sample configs; custom topologies must keep server `infoStorage.loggingAddr` and worker `loadBalancerLoggingAddr` aligned, and HTTP snapshots reflect logs after `infoFetchIntervalSec` refreshes.
 - The info API currently exposes worker task membership but not a dedicated task-status history or failure-reason field; the file side effect is the required completion proof for the MVP happy path.
 - `taskTimeout` and `taskProp.executeTimeoutSec` duplicate timeout data; the MVP resolves ambiguity by making `taskTimeout` authoritative and requiring equality.
-- `taskRetryInterval` is not enforced yet; retry attempts are requeued immediately when the failed-task queue is scheduled.
+- Positive `taskRetryInterval` values defer retry scheduling, but the retry is checked by the task processor's normal wake-up/trigger loop rather than an exact per-task timer; availability is therefore not-before the requested delay, not a precise dispatch deadline.

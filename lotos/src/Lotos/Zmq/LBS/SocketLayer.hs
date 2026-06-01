@@ -15,6 +15,7 @@ import Control.Monad (when)
 import Control.Monad.RWS
 import Control.Monad.Reader (ReaderT, runReaderT)
 import Data.Function ((&))
+import Data.Time (getCurrentTime)
 import Lotos.Logger
 import Lotos.TSD.Map
 import Lotos.TSD.Queue
@@ -34,7 +35,7 @@ data SocketLayer t w = SocketLayer
     backendReceiver :: Zmqx.Pair, -- receives message (tasks) from TaskProcessor's load balancer (cross-threads)
     backendSender :: Zmqx.Pair, -- sends message (notifies) to TaskProcessor's event trigger (cross-threads)
     taskQueue :: TSQueue (Task t), -- frontend puts message
-    failedTaskQueue :: TSQueue (Task t), -- backend puts message
+    failedTaskQueue :: TSQueue (RetryTask t), -- backend puts retryable failed tasks with readiness metadata
     workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modifies map
     workerStatusMap :: TSWorkerStatusMap w, -- backend modifies map
     garbageBin :: TSRingBuffer (Task t), -- backend discards tasks
@@ -163,7 +164,7 @@ handleWorkerMessage layer@SocketLayer {..} = do
 -- New data type to hold the context needed for task handling
 data TaskContext t w = TaskContext
   { tcWorkerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus),
-    tcFailedTaskQueue :: TSQueue (Task t),
+    tcFailedTaskQueue :: TSQueue (RetryTask t),
     tcGarbageBin :: TSRingBuffer (Task t),
     tcWorkerStatusMap :: TSWorkerStatusMap w,
     tcBackendSender :: Zmqx.Pair
@@ -244,7 +245,9 @@ handleFailedTask wID uuid = do
       let retry = taskRetry task
       lift $ logApp DEBUG $ "handleBackend -> retry: taskID [" <> show tID <> "], retry [" <> show retry <> "]"
       case failedTaskDisposition task of
-        RetryFailedTask retryTask -> liftIO $ enqueueTS retryTask tcFailedTaskQueue
+        RetryFailedTask retryTask -> do
+          failedAt <- liftIO getCurrentTime
+          liftIO $ enqueueTS (mkRetryTask failedAt retryTask) tcFailedTaskQueue
         GarbageFailedTask garbageTask -> liftIO $ writeBuffer tcGarbageBin garbageTask
   -- notify load-balancer
   notifyLoadBalancer

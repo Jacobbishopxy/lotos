@@ -35,6 +35,8 @@ import Zmqx.Pair
 
 type TaskMap t = Map.Map TaskID (Task t)
 
+type RetryTaskMap t = Map.Map TaskID (RetryTask t)
+
 ----------------------------------------------------------------------------------------------------
 -- LoadBalancerAlgo
 ----------------------------------------------------------------------------------------------------
@@ -70,7 +72,7 @@ data TaskProcessor lb t w
   { lbReceiver :: Zmqx.Pair,
     lbSender :: Zmqx.Pair,
     taskQueue :: TSQueue (Task t),
-    failedTaskQueue :: TSQueue (Task t), -- backend put message
+    failedTaskQueue :: TSQueue (RetryTask t), -- backend put retryable failures with readiness metadata
     workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modify map
     workerStatusMap :: TSWorkerStatusMap w, -- backend modify map
     garbageBin :: TSRingBuffer (Task t), -- backend discard tasks
@@ -131,15 +133,17 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
 
   -- 4. call `dequeueFirstN` from TaskQueue and FailedTaskQueue: [t]
   tasks <- liftIO $ dequeueN' taskQueuePullNo taskQueue
-  failedTasks <- liftIO $ dequeueN' failedTaskQueuePullNo failedTaskQueue
+  retryTasks <- liftIO $ dequeueN' failedTaskQueuePullNo failedTaskQueue
 
   -- 5. perform load-balancer algo: `[w] -> [t] -> ([(RoutingID, t)], [t])`
-  let tasksMap = tasksToMap tasks
-      failedTasksMap = tasksToMap failedTasks
+  let (eligibleRetryTasks, delayedRetryTasks) = partitionRetryTasks now retryTasks
+      failedTasks = retryTaskPayload <$> eligibleRetryTasks
+      tasksMap = tasksToMap tasks
+      failedRetryTasksMap = retryTasksToMap eligibleRetryTasks
   (newLoadBalancer, ScheduledResult tasksTodo leftTasks) <- scheduleTasks loadBalancer workerStatuses $ tasks <> failedTasks
 
   let (invalidTasks, leftTasks') = tasksFilter tasksMap leftTasks
-      (invalidFailedTasks, leftTasks'') = tasksFilter failedTasksMap leftTasks'
+      (invalidFailedRetryTasks, leftTasks'') = retryTasksFilter failedRetryTasksMap leftTasks'
       errLen = length leftTasks''
       workerTasks = [WorkerTask rid t | (rid, t) <- tasksTodo]
 
@@ -152,7 +156,7 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
 
   -- 7. re-enqueue invalid tasks
   liftIO $ enqueueTSs invalidTasks taskQueue
-  liftIO $ enqueueTSs invalidFailedTasks failedTaskQueue
+  liftIO $ enqueueTSs (delayedRetryTasks <> invalidFailedRetryTasks) failedTaskQueue
 
   -- 8. loop
   processorLoop cfg tp {trigger = newTrigger, loadBalancer = newLoadBalancer}
@@ -163,6 +167,13 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
 tasksToMap :: [Task t] -> TaskMap t
 tasksToMap tasks = Map.fromList [(unwrapOption $ taskID task, task) | task <- tasks]
 
+retryTasksToMap :: [RetryTask t] -> RetryTaskMap t
+retryTasksToMap retryTasks =
+  Map.fromList
+    [ (unwrapOption $ taskID $ retryTaskPayload retryTask, retryTask)
+      | retryTask <- retryTasks
+    ]
+
 --
 tasksFilter :: TaskMap t -> [Task t] -> ([Task t], [Task t])
 tasksFilter taskMap =
@@ -172,5 +183,16 @@ tasksFilter taskMap =
          in if Map.member taskId taskMap
               then (task : inMap, notInMap)
               else (inMap, task : notInMap)
+    )
+    ([], [])
+
+retryTasksFilter :: RetryTaskMap t -> [Task t] -> ([RetryTask t], [Task t])
+retryTasksFilter retryTaskMap =
+  foldr
+    ( \task (inMap, notInMap) ->
+        let taskId = unwrapOption $ taskID task
+         in case Map.lookup taskId retryTaskMap of
+              Just retryTask -> (retryTask : inMap, notInMap)
+              Nothing -> (inMap, task : notInMap)
     )
     ([], [])

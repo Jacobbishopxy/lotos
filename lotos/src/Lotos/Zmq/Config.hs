@@ -72,7 +72,7 @@ type LBConstraint name t w =
 data TaskSchedulerData t s
   = TaskSchedulerData
       (TSQueue (Task t)) -- task queue
-      (TSQueue (Task t)) -- failed task queue
+      (TSQueue (RetryTask t)) -- failed task queue with retry readiness metadata
       (TSWorkerTasksMap (TaskID, Task t, TaskStatus)) -- worker task map
       (TSWorkerStatusMap s) -- worker status map
       (TSRingBuffer (Task t)) -- exhausted retry / garbage bin
