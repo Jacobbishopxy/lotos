@@ -26,16 +26,22 @@ data SimpleServer = SimpleServer
 instance LoadBalancerAlgo SimpleServer ClientTask WorkerState where
   scheduleTasks lb workers tasks = do
     logApp INFO $ "scheduleTasks: " ++ show workers ++ ", " ++ show tasks
-    -- Convert worker states to tuples with their load scores
-    let workerLoads = map (\(rid, ws) -> (rid, ws, loadScore ws)) workers
-        -- Sort workers by their load scores (least loaded first)
-        sortedWorkers = sortBy (\(_, _, score1) (_, _, score2) -> compare score1 score2) workerLoads
-        -- Assign tasks to workers
-        (assigned, remaining) = assignTasks sortedWorkers tasks []
+    let eligibleWorkers = filter (hasCapacity . snd) workers
+        sortedWorkers = sortBy (\(_, ws1) (_, ws2) -> compare (loadScore ws1) (loadScore ws2)) eligibleWorkers
+        (tasksToAssign, remaining) = splitAt (length sortedWorkers) tasks
+        assigned = zip (map fst sortedWorkers) tasksToAssign
     pure (lb, ScheduledResult assigned remaining)
     where
+      -- | Treat any reported in-flight or waiting work as this demo scheduler's
+      -- capacity limit. Worker heartbeats do not include the configured maximum
+      -- parallelism, so SimpleServer assigns at most one fresh task to an idle
+      -- worker during a scheduler pass and leaves overflow queued.
+      hasCapacity :: WorkerState -> Bool
+      hasCapacity ws = processingTaskNum ws == 0 && waitingTaskNum ws == 0
+
       -- | Calculate a worker's load score based on CPU and memory usage.
-      -- Lower scores are preferred.
+      -- Lower scores are preferred; stable sorting preserves snapshot order for
+      -- equal scores.
       loadScore :: WorkerState -> Double
       loadScore ws =
         let -- Weight different load averages (1min: 50%, 5min: 30%, 15min: 20%)
@@ -44,20 +50,3 @@ instance LoadBalancerAlgo SimpleServer ClientTask WorkerState where
             memFactor = memUsed ws / memTotal ws
          in -- Combined score: 70% CPU load, 30% memory usage
             loadFactor * 0.7 + memFactor * 0.3
-
-      -- | Recursively assign tasks to workers.
-      assignTasks :: [(RoutingID, WorkerState, Double)] -> [Task ClientTask] -> [(RoutingID, Task ClientTask)] -> ([(RoutingID, Task ClientTask)], [Task ClientTask])
-      -- Base cases: no more workers or no more tasks
-      assignTasks [] tasksLeft assigned = (assigned, tasksLeft)
-      assignTasks _ [] assigned = (assigned, [])
-      -- Assign next task to least loaded worker
-      assignTasks ((rid, ws, _) : rest) (t : ts) assigned =
-        let -- Add new assignment to results
-            newAssigned = (rid, t) : assigned
-            -- Update worker state with new task
-            newWorkerState = ws {processingTaskNum = processingTaskNum ws + 1}
-            -- Update load scores for remaining workers
-            newWorkerLoads = map (\(r, w, s) -> if r == rid then (r, newWorkerState, loadScore newWorkerState) else (r, w, s)) rest
-            -- Re-sort workers by updated load scores
-            sorted = sortBy (\(_, _, score1) (_, _, score2) -> compare score1 score2) newWorkerLoads
-         in assignTasks sorted ts newAssigned

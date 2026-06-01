@@ -36,7 +36,7 @@ instance LoadBalancerAlgo MyScheduler MyTask MyWorkerStatus where
 
 Return assignments for tasks that should be sent to worker routing IDs now, and return deferred tasks when they should stay queued for a later scheduling pass. The broker owns UUID assignment; scheduler logic can assume scheduled/executing tasks have IDs. The `workers` list has already been filtered for broker-side liveness, so stale workers are removed before your algorithm sees the snapshot.
 
-TaskSchedule reference: `applications/TaskSchedule/src/Server.hs` assigns tasks to the lowest-load workers.
+TaskSchedule reference: `applications/TaskSchedule/src/Server.hs` assigns at most one new task to each idle worker per scheduler pass, prefers the lowest CPU/memory load score, and returns overflow as deferred work. Because `WorkerState` reports only current processing/waiting counts and not the configured `parallelTasksNo`, the demo scheduler treats any reported processing or waiting work as saturated; applications that need precise capacity should include that limit in their worker status payload and test the resulting assignment/deferred-task contract.
 
 ## 3. Implement worker execution and status reporting
 
@@ -120,7 +120,7 @@ scripts/task-schedule-multi-worker-smoke.sh
 For a new application, add bounded tests for:
 
 - payload `ToZmq`/`FromZmq` frame order,
-- scheduler assignment/deferred-task decisions,
+- scheduler assignment/deferred-task decisions, including backpressure when workers report no remaining capacity,
 - worker success/failure/status mapping,
 - stale-worker recovery or scheduler behavior around disappearing workers when your app has custom retry expectations,
 - client ACK shape or JSON validation if you add a custom client.

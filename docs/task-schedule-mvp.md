@@ -74,6 +74,8 @@ Worker defaults:
 
 `loadBalancerLoggingAddr` is the worker PUB logging endpoint and must match the server `infoStorage.loggingAddr` (`5557` in the checked-in demo). The worker sends its `workerId` as the PUB/SUB topic and the existing `WorkerLogging` payload as `[taskUuid, logText]`; server info storage binds a SUB socket on this endpoint and exposes entries in `/SimpleServer/info.workerLoggingsMap` after the next `infoFetchIntervalSec` refresh. Broker JSON files written before TP-013 must add `infoStorage.loggingAddr` or they will not match the current `InfoStorageConfig` schema.
 
+TaskSchedule's `SimpleServer` uses conservative derived capacity because `WorkerState` reports `processingTaskNum` and `waitingTaskNum` but not configured `parallelTasksNo`. In each scheduler pass it filters to workers whose processing and waiting counts are both zero, sorts those idle workers by combined CPU/memory load, assigns at most one new task to each eligible worker, and returns any overflow to the broker queue for a later pass. Workers that report existing processing or waiting work receive no new task in that pass.
+
 ### Client
 
 ```bash
@@ -233,7 +235,7 @@ For the normal regression gate, `cabal test all` is safe: the `lotos` package re
 
 The single-worker helper starts `ts-server` and one `ts-worker` with the checked-in sample configs, waits for `/SimpleServer/info` and `/SimpleServer/worker_stats`, submits a fresh per-run task with `ts-client`, snapshots the info endpoints, checks a per-run marker written by the worker command, polls `/SimpleServer/info.workerLoggingsMap` for the current run id and final `ExitSuccess` command result, and preserves logs plus `result.env` under `.tmp/task-schedule-smoke/<run-id>/`. It bypasses local proxy settings for loopback `curl` probes and cleans up only the process IDs/process groups it started.
 
-The multi-worker helper generates per-run broker, worker, client, and task JSON files under `.tmp/task-schedule-multi-worker-smoke/<run-id>/`. By default it starts one server, two workers (`smokeWorker_1` and `smokeWorker_2`), and four distinct clients/tasks. It verifies both workers in `/SimpleServer/worker_stats`, all client ACKs, current-run task evidence in every worker-specific stdio log, fresh per-task marker files, current-run worker logging plus `ExitSuccess` in `/SimpleServer/info.workerLoggingsMap`, and absence from `/SimpleServer/garbage`, then cleans up its tracked process groups.
+The multi-worker helper generates per-run broker, worker, client, and task JSON files under `.tmp/task-schedule-multi-worker-smoke/<run-id>/`. By default it starts one server, two workers (`smokeWorker_1` and `smokeWorker_2`), and four distinct clients/tasks. It verifies both workers in `/SimpleServer/worker_stats`, all client ACKs, current-run task evidence in every worker-specific stdio log, fresh per-task marker files, current-run worker logging plus `ExitSuccess` in `/SimpleServer/info.workerLoggingsMap`, and absence from `/SimpleServer/garbage`, then cleans up its tracked process groups. Exact burst distribution is protected by the bounded `TaskSchedule:test:test-scheduler` suite rather than by timing-sensitive smoke assertions.
 
 Exit codes:
 
@@ -290,6 +292,7 @@ TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-s
 - **TP-015 (retry delay semantics):** `taskRetryInterval` is now enforced for retryable failures with broker-local readiness metadata; fixed-clock tests cover delayed, due, and immediate retry behavior, and smoke run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T094502Z-746207/` passed.
 - **TP-017 (multi-worker smoke):** `scripts/task-schedule-multi-worker-smoke.sh` proves bounded local scheduling with at least two distinct worker IDs, unique client IDs, multiple fresh tasks, per-worker current-run stdio evidence, marker/logging checks, endpoint snapshots, and tracked cleanup; run `.tmp/task-schedule-multi-worker-smoke/task-schedule-multi-worker-smoke-20260601T110611Z-1239027/` passed with 2 workers and 4 tasks.
 - **TP-019 (worker liveness recovery):** broker-side status heartbeats now remove stale workers from scheduling/info maps and recover their in-flight non-succeeded tasks through retry-delay or garbage semantics; bounded fixed-clock tests cover stale detection, retry readiness, exhausted garbage, and succeeded-task dropping, and smoke runs `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T140959Z-1455662/` plus `.tmp/task-schedule-multi-worker-smoke/task-schedule-multi-worker-smoke-20260601T141128Z-1457758/` passed.
+- **TP-020 (scheduler fairness/backpressure):** `SimpleServer` now assigns at most one fresh task to each idle worker per scheduler pass, defers overflow, and skips workers that report processing or waiting work; `TaskSchedule:test:test-scheduler` covers equal-worker burst splitting, saturated-worker deferral, all-saturated snapshots, and least-loaded preference, while the smoke helpers remain end-to-end execution checks.
 
 ## Non-goals and known risks
 
@@ -298,7 +301,7 @@ Non-goals for the MVP:
 - No protocol/frame redesign beyond what is necessary for the CLI contract.
 - No distributed deployment matrix; loopback defaults are the only required topology.
 - No authentication, authorization, or TLS.
-- No scheduler algorithm changes.
+- No production scheduler or broker-wide worker-capacity protocol beyond the conservative `SimpleServer` demo policy.
 - No new CLI parsing or configuration dependencies unless a downstream task explicitly approves them.
 - No guarantee that client ACK means task completion.
 
@@ -310,3 +313,4 @@ Known risks/gaps for downstream work:
 - `taskTimeout` and `taskProp.executeTimeoutSec` duplicate timeout data; the MVP resolves ambiguity by making `taskTimeout` authoritative and requiring equality.
 - Positive `taskRetryInterval` values defer retry scheduling, but the retry is checked by the task processor's normal wake-up/trigger loop rather than an exact per-task timer; availability is therefore not-before the requested delay, not a precise dispatch deadline.
 - Worker liveness is heartbeat based, not socket-presence based; set `taskProcessor.workerStaleTimeoutSec` higher than normal `workerStatusReportIntervalSec` plus expected scheduling/host jitter.
+- `WorkerState` does not report configured `parallelTasksNo`, so `SimpleServer` cannot distinguish a worker with remaining configured capacity from one that should be saturated once it has any queued/processing work. Applications needing precise capacity should add that data to their status payload and scheduler tests.

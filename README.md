@@ -52,7 +52,7 @@ Lower-level `Lotos.Zmq.*` implementation modules are intentionally not part of t
 
 - `ClientTask`: a shell command plus timeout.
 - `WorkerState`: load average, memory usage, and task-count metrics.
-- `SimpleServer`: schedules tasks to the least-loaded workers.
+- `SimpleServer`: schedules at most one new task per idle worker per scheduler pass, preferring the least-loaded workers and leaving overflow queued as conservative demo backpressure.
 - `SimpleWorker`: executes commands with `executeConcurrently` and reports task results.
 
 Executables:
@@ -128,7 +128,7 @@ For a new application, import `Lotos.Zmq` and provide application payloads plus 
 
 1. Define a task payload and worker-status payload with `ToZmq`/`FromZmq` instances. Their multipart frame order is the protocol contract; keep peer encoders/decoders and regression tests aligned.
 2. Define a `Task t` JSON shape for clients. New client tasks may leave `taskID = null`; the broker assigns the UUID before scheduling, and worker/scheduler code assumes a UUID is present before calling `unsafeGetTaskID`. `taskRetryInterval` is a retry delay in seconds for failed tasks with retries remaining; `0` or less retries immediately.
-3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current non-stale worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass.
+3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current non-stale worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass. The TaskSchedule demo treats workers with any reported processing or waiting work as saturated, assigns at most one fresh task to each idle worker per pass, and sorts eligible workers by CPU/memory load.
 4. Implement `TaskAcceptor` for workers. Process each task batch, publish task logs with `taPubTaskLogging`, and report `TaskProcessing`, `TaskSucceed`, or `TaskFailed` with `taSendTaskStatus`.
 5. Implement `StatusReporter` for workers. Combine `StatusReporterAPI.srReportInfo` queue/processing counts with app-specific metrics such as CPU or memory load.
 6. Keep config endpoints aligned: clients use the broker `frontendAddr`, workers use the broker `backendAddr`, and worker logging uses the broker `infoStorage.loggingAddr`.
@@ -186,6 +186,7 @@ Current bounded regression test suites:
 - `lotos:test:test-zmq-worker-frames` checks bounded worker status, worker task-status, retry/failure status payload, retry-delay eligibility, stale-worker recovery, and scheduled task ROUTER/DEALER frame contracts.
 - `lotos:test:test-zmq-client-ack-frames` checks bounded frontend REQ/ROUTER client ACK frames.
 - `TaskSchedule:test:test-worker-lifecycle` checks TaskSchedule command-result status mapping and worker lifecycle callbacks.
+- `TaskSchedule:test:test-scheduler` checks SimpleServer multi-worker fairness, derived backpressure, all-saturated deferral, and least-loaded worker preference.
 
 Current `lotos` demo executables:
 
@@ -245,7 +246,7 @@ The single-worker smoke helper starts the server and one worker with the checked
 
 The multi-worker smoke helper generates a per-run broker config, two worker configs by default (`smokeWorker_1` and `smokeWorker_2`), unique client configs, and four fresh task JSON files. It requires all workers to appear in `/SimpleServer/worker_stats`, all clients to receive ACKs, every task marker to match the current run, every worker-specific stdio log to show current-run task processing, `/SimpleServer/info.workerLoggingsMap` to contain current-run worker logging plus `ExitSuccess`, no current-run garbage, and no leftover `ts-server`/`ts-worker`/`ts-client` processes from its tracked process groups.
 
-Latest TP-019 evidence is green after stale-worker recovery changes: single-worker run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T140959Z-1455662/` has `status=PASS`, and multi-worker run `.tmp/task-schedule-multi-worker-smoke/task-schedule-multi-worker-smoke-20260601T141128Z-1457758/` has `status=PASS`, `worker_count=2`, `task_count=4`, per-worker current-run evidence, fresh markers, worker logging, and no current-run garbage.
+Latest TP-020 verification is green after scheduler fairness/backpressure hardening: `cabal build all --enable-tests`, `cabal test all`, the single-worker smoke, the multi-worker smoke, and `TaskSchedule:test:test-scheduler` all passed. The bounded scheduler suite covers deterministic assignment/deferred-task behavior, while the smoke helpers continue to prove end-to-end execution evidence without relying on timing-sensitive exact distribution.
 
 ## Info API
 
@@ -267,6 +268,7 @@ The `/info` response includes `workerLoggingsMap`, keyed by worker id. With the 
 - Worker DEALER routing ids and worker logging topics both use `workerId`; custom configs must align client/frontend, worker/backend, and worker-logging endpoints.
 - Failed tasks retry while `taskRetry > 0`; positive `taskRetryInterval` values delay eligibility until the interval has elapsed, while `0` or less preserves immediate retry.
 - Worker status heartbeats drive broker liveness. When a worker is stale for `taskProcessor.workerStaleTimeoutSec`, the broker removes it from scheduling/info maps and recovers its non-succeeded in-flight tasks through the same retry/garbage path.
+- TaskSchedule's demo scheduler derives capacity from `WorkerState.processingTaskNum` and `WorkerState.waitingTaskNum` because heartbeats do not report configured `parallelTasksNo`: only idle workers receive one new task per pass, busy/waiting workers receive none, and overflow stays queued for a later scheduler pass.
 - Safe verification commands are `cabal build all --enable-tests` for compilation, `cabal test all` for bounded regression suites, `scripts/task-schedule-smoke.sh` for the intentional single-worker end-to-end demo smoke, and `scripts/task-schedule-multi-worker-smoke.sh` for bounded multi-worker scheduling smoke after building.
 
 ## Development notes
