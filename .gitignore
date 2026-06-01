@@ -26,8 +26,15 @@ cabal.project.local~
 .tmp
 *.log
 logs/
-.omx/
 .codex/
+
+# Pi local state (ignore by default; selectively track taskplane config/prompts)
+.pi/*
+!.pi/agents/
+!.pi/agents/*.md
+!.pi/skills/
+!.pi/skills/**
+!.pi/taskplane-config.json
 
 # Taskplane runtime artifacts (machine-specific, do not commit)
 .pi/batch-state.json

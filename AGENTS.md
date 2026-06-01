@@ -45,6 +45,7 @@ This repository is a Haskell/Cabal workspace for a ZeroMQ-backed task load-balan
 - Treat `dist-newstyle/`, `.git/`, `.omx/`, `.codex/`, `.pi/`, `logs/`, `.tmp/`, and Cabal/HLS artifacts as generated/runtime files.
 - Do not add dependencies unless explicitly requested. Reuse existing modules and patterns first.
 - For documentation-only edits, verifying the relevant file contents is sufficient; for Haskell edits, run the narrowest build/test command that proves the touched component.
+- Taskplane/git history rule: always squash each TP into exactly one final commit. Do not leave per-step/checkpoint commits in final history; if intermediate commits are useful during execution, squash them before integration so the invariant is 1 TP = 1 commit.
 
 ---
 <!-- omx:generated:agents-md -->
