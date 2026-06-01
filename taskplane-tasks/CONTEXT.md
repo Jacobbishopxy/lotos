@@ -30,3 +30,5 @@ parallel batch execution or `/orch <path/to/PROMPT.md>` for a single task.
 _Items discovered during task execution are logged here by agents._
 
 - [x] **Expose client config reader** — Resolved during TP-004 by exporting `readBrokerConfig`, `readWorkerConfig`, and `readClientConfig` from the `Lotos.Zmq` facade so downstream executables can use the existing config readers.
+- [ ] **Fix worker status frame decoding** — TP-005 smoke reaches server HTTP readiness, but the server logs repeated backend `ZmqParsing "Text decode error: Cannot decode byte '\\xe4'"` while handling worker status frames, leaving `/SimpleServer/worker_stats` empty before client submission.
+- [ ] **Complete live client ACK path** — After worker registration is fixed, verify or implement the server `ClientAck` response so `ts-client` can exit successfully during the end-to-end smoke (discovered during TP-005).

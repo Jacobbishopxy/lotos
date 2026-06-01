@@ -173,6 +173,15 @@ cabal run TaskSchedule:exe:ts-client -- task-demo.json
 cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json task-demo.json
 ```
 
+For a repeatable local smoke run, build first and then run the helper from the repository root:
+
+```bash
+cabal build all
+scripts/task-schedule-smoke.sh
+```
+
+The smoke helper starts the server and worker with the checked-in sample configs, submits a fresh per-run task when worker readiness passes, captures evidence under `.tmp/task-schedule-smoke/<run-id>/`, and cleans up only the processes it started. Exit `0` means full client ACK plus worker marker proof; exit `2` means the worker executed the task but the known client ACK gap remained; exit `1` is a hard runtime failure. As of TP-005, the script reaches server readiness but documents a worker-registration blocker: server backend parsing rejects worker status frames with a UTF-8 decode error before client submission.
+
 The client ACK path still depends on server-side ACK support; see the MVP contract for the current acceptance flow and remaining end-to-end gaps.
 
 ## Info API

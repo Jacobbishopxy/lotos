@@ -207,23 +207,38 @@ ACK alone is not proof of completion; it only proves broker acceptance.
 
 ## End-to-end acceptance script
 
-A downstream implementation is acceptable when this flow works from a clean checkout after building the executables:
+Run the repeatable smoke helper from the repository root after building the workspace:
+
+```bash
+cabal build all
+scripts/task-schedule-smoke.sh
+```
+
+The helper starts `ts-server` and `ts-worker` with the checked-in sample configs, waits for `/SimpleServer/info` and `/SimpleServer/worker_stats`, submits a fresh per-run task with `ts-client`, snapshots the info endpoints, checks a per-run marker written by the worker command, and preserves logs plus `result.env` under `.tmp/task-schedule-smoke/<run-id>/`. It bypasses local proxy settings for loopback `curl` probes and cleans up only the process IDs/process groups it started.
+
+Exit codes:
+
+- `0`: full MVP pass; client received ACK and worker marker proof exists.
+- `2`: known client ACK blocker; worker marker proof exists but `ts-client` timed out waiting for `ClientAck`.
+- `1`: hard runtime failure; inspect the run evidence directory.
+
+Manual fallback, if the helper is unavailable, is the same sequence:
 
 ```bash
 rm -f .tmp/task-schedule-demo.out
 mkdir -p logs .tmp
 
 # Terminal 1
-cabal run TaskSchedule:exe:ts-server
+cabal run TaskSchedule:exe:ts-server -- applications/TaskSchedule/config/broker.json
 
 # Terminal 2
-cabal run TaskSchedule:exe:ts-worker
+cabal run TaskSchedule:exe:ts-worker -- applications/TaskSchedule/config/worker.json
 
 # Terminal 3
-cabal run TaskSchedule:exe:ts-client -- task-demo.json
-curl -fsS http://127.0.0.1:8081/SimpleServer/worker_stats
-curl -fsS http://127.0.0.1:8081/SimpleServer/worker_tasks
-curl -fsS http://127.0.0.1:8081/SimpleServer/garbage
+cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json task-demo.json
+curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/worker_stats
+curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/worker_tasks
+curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/garbage
 cat .tmp/task-schedule-demo.out
 ```
 
@@ -233,15 +248,17 @@ Pass criteria:
 - Client prints an accepted/enqueued ACK and exits `0`.
 - Worker stats include `simpleWorker_1`.
 - The demo task is visible in queue/worker state during or after scheduling.
-- `.tmp/task-schedule-demo.out` contains exactly `task-schedule-ok`.
+- The worker marker file contains the current run ID (or `.tmp/task-schedule-demo.out` contains exactly `task-schedule-ok` for the manual fallback).
 - The happy-path task is not in garbage.
+
+TP-005 verification status: `cabal build all` passed, and `scripts/task-schedule-smoke.sh` executed locally. The smoke is not a full end-to-end pass yet; run `.tmp/task-schedule-smoke/task-schedule-smoke-20260531T171828Z-3077658/` reached server HTTP readiness, but worker registration timed out because the server backend logged repeated `ZmqParsing "Text decode error: Cannot decode byte '\\xe4': Data.Text.Encoding: Invalid UTF-8 stream"` while handling worker status frames. Client submission is therefore intentionally skipped until worker readiness is observable.
 
 ## Implementation status by task
 
 - **TP-002 (contract):** this MVP contract defines the canonical CLI, address, config, task JSON, and acceptance expectations.
 - **TP-003 (client submission):** `ts-client` accepts `TASK_JSON` or `CLIENT_CONFIG_JSON TASK_JSON`, sends the task to frontend `5555`, and exits non-zero on parse/argument/ACK timeout failures. Live ACK success still depends on server-side ACK support.
 - **TP-004 (runtime config alignment):** `ts-server`, `ts-worker`, and `ts-client` use the defaults above; server/worker accept zero or one config argument; worker backend/logging defaults are aligned to `5556`/`5557`; checked-in sample configs load through the exported config readers.
-- **TP-006 (end-to-end verification):** the demo task above should pass the end-to-end acceptance script once the remaining server ACK gap is closed and any remaining non-MVP limitations are documented.
+- **TP-005 (end-to-end smoke):** `scripts/task-schedule-smoke.sh` provides the repeatable local smoke path and captures per-run evidence. Current verification is blocked before client submission by server-side worker status frame parsing (`ZmqParsing` UTF-8 decode error) while `/SimpleServer/worker_stats` remains empty.
 
 ## Non-goals and known risks
 
@@ -257,8 +274,8 @@ Non-goals for the MVP:
 Known risks/gaps for downstream work:
 
 - `ts-client` now has a submission path, but the live ACK success path still depends on the server frontend sending the client ACK required by this contract.
-- TP-004 build/config checks passed for aligned defaults and sample config readers, but live multi-process end-to-end smoke remains downstream verification work.
-- Current server frontend enqueues requests but does not yet send the client ACK required by this contract.
+- TP-005 live multi-process smoke reaches server HTTP readiness but currently blocks on server-side parsing of worker status frames before worker registration becomes observable.
+- Current server frontend enqueues requests but does not yet send the client ACK required by this contract; this remains the next expected blocker after worker status parsing is fixed.
 - Worker log transport is not fully wired to an external server endpoint; `5557` is reserved and log-based acceptance is optional.
 - The info API currently exposes worker task membership but not a dedicated task-status field; the file side effect is the required completion proof for the MVP happy path.
 - `taskTimeout` and `taskProp.executeTimeoutSec` duplicate timeout data; the MVP resolves ambiguity by making `taskTimeout` authoritative and requiring equality.
