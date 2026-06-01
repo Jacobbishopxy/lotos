@@ -129,7 +129,7 @@ Use a CI-safe test posture: run the assertion-based regression suite for quick c
 |---|---|---|
 | Quick regression | `cabal test lotos:test:test-conc-executor` | HUnit coverage for concurrent command success/failure, callbacks, timeout handling, and bounded concurrent execution. |
 | Compile all packages and test targets | `cabal build all --enable-tests` | Builds the workspace plus test executables without running demo-style suites that may sleep or serve forever. |
-| Intentional MVP smoke | `scripts/task-schedule-smoke.sh` | Bounded server/worker/client smoke from TP-005; run after the build command above and inspect `.tmp/task-schedule-smoke/<run-id>/` on failure. |
+| Intentional MVP smoke | `scripts/task-schedule-smoke.sh` | Bounded server/worker/client smoke; run after the build command above and inspect `.tmp/task-schedule-smoke/<run-id>/` for `result.env`, logs, endpoint snapshots, and marker proof. |
 | Avoid as a default gate | `cabal test all` | Some registered test suites are demos or long-running servers, so a broad test run can hang or waste CI time. |
 
 Current `lotos` test-suite posture:
@@ -185,9 +185,9 @@ cabal build all --enable-tests
 scripts/task-schedule-smoke.sh
 ```
 
-The smoke helper starts the server and worker with the checked-in sample configs, submits a fresh per-run task when worker readiness passes, captures evidence under `.tmp/task-schedule-smoke/<run-id>/`, and cleans up only the processes it started. Exit `0` means full client ACK plus worker marker proof; exit `2` means the worker executed the task but the known client ACK gap remained; exit `1` is a hard runtime failure. As of TP-005, the script reaches server readiness but documents a worker-registration blocker: server backend parsing rejects worker status frames with a UTF-8 decode error before client submission.
+The smoke helper starts the server and worker with the checked-in sample configs, submits a fresh per-run task when worker readiness passes, captures evidence under `.tmp/task-schedule-smoke/<run-id>/`, and cleans up only the processes it started. Exit `0` means the full MVP path passed: client ACK, worker stats, fresh marker proof, and no current-run garbage entry. Exit `1` means a runtime, readiness, ACK, marker, or garbage check failed; inspect the evidence directory for `result.env`, `smoke.log`, stdio logs, endpoint snapshots, and the marker file.
 
-The client ACK path still depends on server-side ACK support; see the MVP contract for the current acceptance flow and remaining end-to-end gaps.
+Latest TP-009 evidence `.tmp/task-schedule-smoke/tp009-final-20260601T043107Z-241489/` is green with `status=PASS`, `client_exit=0`, `accepted/enqueued ACK`, worker `simpleWorker_1` in stats, fresh marker proof, and no current-run garbage entry.
 
 ## Info API
 

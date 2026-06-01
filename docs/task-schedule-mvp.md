@@ -218,11 +218,10 @@ The helper starts `ts-server` and `ts-worker` with the checked-in sample configs
 
 Exit codes:
 
-- `0`: full MVP pass; client received ACK and worker marker proof exists.
-- `2`: known client ACK blocker; worker marker proof exists but `ts-client` timed out waiting for `ClientAck`.
-- `1`: hard runtime failure; inspect the run evidence directory.
+- `0`: full MVP pass; client received ACK, worker stats are visible, the worker marker proof exists, and the current run is absent from garbage.
+- `1`: hard runtime failure, including readiness, ACK, marker, or garbage-check failures; inspect the run evidence directory.
 
-Current TP-008 smoke evidence is a full MVP pass: run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T040349Z-220141/` records `status=PASS`, `client_exit=0`, `ts-client` printed `accepted/enqueued ACK: Ack 2026-06-01 04:04:10 UTC`, `/SimpleServer/worker_stats` contained `simpleWorker_1`, and the worker wrote the fresh marker file. The previous TP-007 post-registration failure (`no ACK received`, missing marker proof, and frontend `Invalid UUID format`) is resolved.
+Current TP-009 smoke evidence is a full MVP pass: run `.tmp/task-schedule-smoke/tp009-final-20260601T043107Z-241489/` records `status=PASS`, `client_exit=0`, `ts-client` printed `accepted/enqueued ACK: Ack 2026-06-01 04:31:40 UTC`, `/SimpleServer/worker_stats` contained `simpleWorker_1`, the worker wrote the fresh marker file, and `final-garbage.json` did not contain the run id. The previous worker-registration and client-ACK blockers are resolved.
 
 Manual fallback, if the helper is unavailable, is the same sequence:
 
@@ -253,7 +252,7 @@ Pass criteria:
 - The worker marker file contains the current run ID (or `.tmp/task-schedule-demo.out` contains exactly `task-schedule-ok` for the manual fallback).
 - The happy-path task is not in garbage.
 
-TP-008 verification status: `cabal build all`, `cabal build all --enable-tests`, `cabal test lotos:test:test-conc-executor`, and `scripts/task-schedule-smoke.sh` passed. The smoke run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T040349Z-220141/` proves the client ACK path and worker marker proof under the default sample configs.
+TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-schedule-smoke.sh` passed. The smoke run `.tmp/task-schedule-smoke/tp009-final-20260601T043107Z-241489/` proves the client ACK path, worker stats, fresh marker proof, and no current-run garbage entry under the default sample configs.
 
 ## Implementation status by task
 
@@ -263,6 +262,7 @@ TP-008 verification status: `cabal build all`, `cabal build all --enable-tests`,
 - **TP-005 (end-to-end smoke):** `scripts/task-schedule-smoke.sh` provides the repeatable local smoke path and captures per-run evidence.
 - **TP-007 (worker status frame decoding):** worker DEALER sockets now use the configured worker ID as the ZeroMQ routing id, preserving the existing payload frame order while making backend `RouterBackendIn` decode worker status frames as UTF-8.
 - **TP-008 (client ACK path):** frontend ROUTER decoding now preserves the REQ routing-id, binary request-id, and empty delimiter frames, enqueues the task, and echoes a `ClientAck` so `ts-client` receives an acceptance ACK and exits successfully.
+- **TP-009 (green smoke):** the smoke helper now treats any missing ACK as a hard failure and the default sample-config run exits `0` with client ACK, worker stats, fresh marker proof, and no current-run garbage entry.
 
 ## Non-goals and known risks
 

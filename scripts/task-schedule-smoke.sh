@@ -3,8 +3,7 @@
 #
 # Exit codes:
 #   0 - full MVP pass: client received ACK and worker marker proof exists
-#   2 - known ACK blocker: worker marker proof exists, but ts-client timed out waiting for ACK
-#   1 - hard smoke failure
+#   1 - hard smoke failure, including missing ACK, marker, readiness, or garbage checks
 
 set -u
 
@@ -357,13 +356,7 @@ main() {
     return 0
   fi
 
-  if grep -F "no ACK received" "$CLIENT_STDIO_LOG" >/dev/null 2>&1; then
-    log "KNOWN_ACK_BLOCKER: worker executed run $RUN_ID, but ts-client did not receive ClientAck"
-    write_result "KNOWN_ACK_BLOCKER" "$CLIENT_EXIT" "worker executed but client ACK missing"
-    return 2
-  fi
-
-  fail_hard "ts-client failed for a reason other than the known ACK timeout; see $CLIENT_STDIO_LOG"
+  fail_hard "ts-client exited $CLIENT_EXIT; see $CLIENT_STDIO_LOG"
 }
 
 main "$@"
