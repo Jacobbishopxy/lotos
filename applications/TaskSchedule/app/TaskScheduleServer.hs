@@ -49,7 +49,8 @@ defaultBrokerConfig =
           { taskQueuePullNo = 10,
             failedTaskQueuePullNo = 10,
             triggerAlgoMaxNotifyCount = 10,
-            triggerAlgoMaxWaitSec = 10
+            triggerAlgoMaxWaitSec = 10,
+            workerStaleTimeoutSec = 60
           },
       -- info storage
       infoStorage =

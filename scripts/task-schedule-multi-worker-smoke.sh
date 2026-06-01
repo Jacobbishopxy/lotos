@@ -311,7 +311,8 @@ write_broker_config() {
     "taskQueuePullNo": 10,
     "failedTaskQueuePullNo": 10,
     "triggerAlgoMaxNotifyCount": $TASK_PROCESSOR_NOTIFY_THRESHOLD,
-    "triggerAlgoMaxWaitSec": $BATCH_WINDOW_SEC
+    "triggerAlgoMaxWaitSec": $BATCH_WINDOW_SEC,
+    "workerStaleTimeoutSec": 60
   },
   "infoStorage": {
     "httpPort": 8081,

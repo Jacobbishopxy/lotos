@@ -291,7 +291,7 @@ mkInfoStorage ::
   TaskSchedulerData t w ->
   SubscriberInfo ->
   LotosApp (InfoStorage t w)
-mkInfoStorage (TaskSchedulerData tq ftq wtm wsm gbb) si = do
+mkInfoStorage (TaskSchedulerData tq ftq wtm wsm _ gbb) si = do
   tasksInQueue <- liftIO $ readQueue' tq
   tasksInFailedQueue <- liftIO $ fmap retryTaskPayload <$> readQueue' ftq
   workerTasksMap <- liftIO $ Map.map (map (\(_, task, _) -> task)) <$> toMapTSWorkerTasks wtm

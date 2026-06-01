@@ -60,6 +60,9 @@ module Lotos.Zmq.Adt
     WorkerLogging (..),
     workerLoggingToTextTuple,
 
+    -- * worker liveness
+    AliveSensor (..),
+
     -- * worker tasks map
     TSWorkerTasksMap,
     newTSWorkerTasksMap,
@@ -700,9 +703,13 @@ timeoutInterval (CombinedTrigger _ _ lastTriggerTime interval) now =
 -- AliveSensor
 ----------------------------------------------------------------------------------------------------
 
--- TODO: check worker alive, if disconnected, move all tasks which belong to this worker to failed queue
+-- | Broker-observed worker liveness metadata.
+--
+-- The broker updates 'asLastSeen' when a worker status heartbeat is accepted.
+-- 'asTimeoutSec' is the number of seconds after which that heartbeat is
+-- considered stale by the task processor.
 data AliveSensor = AliveSensor
   { asLastSeen :: UTCTime,
-    asInterval :: Int
+    asTimeoutSec :: Int
   }
   deriving (Show)

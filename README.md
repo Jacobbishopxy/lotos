@@ -44,7 +44,7 @@ Important public modules:
 - `Lotos.TSD.Queue`, `Lotos.TSD.Map`, `Lotos.TSD.RingBuffer` — STM-backed shared data structures.
 - `Lotos.Zmq` — the supported facade for ZMQ config/readers, protocol types, client/server/worker entry points, and the `LoadBalancerAlgo`, `TaskAcceptor`, and `StatusReporter` extension points.
 
-Lower-level `Lotos.Zmq.*` implementation modules are intentionally not part of the public API. The only exposed internal ZMQ module is `Lotos.Zmq.Internal.Retry`, which exists for bounded broker regression tests and retry-disposition implementation work; normal applications should prefer `Lotos.Zmq`.
+Lower-level `Lotos.Zmq.*` implementation modules are intentionally not part of the public API. The exposed internal ZMQ modules are limited to `Lotos.Zmq.Internal.Retry` and `Lotos.Zmq.Internal.Liveness`, which exist for bounded broker regression tests and retry/liveness implementation work; normal applications should prefer `Lotos.Zmq`.
 
 ### `applications/TaskSchedule`
 
@@ -103,10 +103,10 @@ At runtime, Lotos uses a broker/worker topology:
 
 1. A client sends a `Task t` to the load balancer frontend.
 2. The socket layer assigns a UUID and enqueues the task in an STM queue.
-3. The task processor wakes on notifications or a timer, reads worker status, pulls queued and retryable tasks, and calls a user-provided `LoadBalancerAlgo`.
+3. The task processor wakes on notifications or a timer, removes workers whose latest status heartbeat is older than `taskProcessor.workerStaleTimeoutSec`, pulls queued and retryable tasks, and calls a user-provided `LoadBalancerAlgo` with only non-stale worker snapshots.
 4. Scheduled tasks are forwarded to workers over the backend ZMQ socket.
 5. Workers process batches through `TaskAcceptor`, emit per-task status changes, and periodically report worker status through `StatusReporter`.
-6. Failed tasks are retried while retry count remains, after any positive `taskRetryInterval` delay has elapsed; exhausted tasks move to a garbage ring buffer.
+6. Failed tasks, including in-flight tasks recovered from stale workers, are retried while retry count remains after any positive `taskRetryInterval` delay has elapsed; exhausted tasks move to a garbage ring buffer.
 7. Info storage snapshots queues, worker state, worker-task state, and garbage tasks for a read-only HTTP API.
 
 The main extension points are:
@@ -128,7 +128,7 @@ For a new application, import `Lotos.Zmq` and provide application payloads plus 
 
 1. Define a task payload and worker-status payload with `ToZmq`/`FromZmq` instances. Their multipart frame order is the protocol contract; keep peer encoders/decoders and regression tests aligned.
 2. Define a `Task t` JSON shape for clients. New client tasks may leave `taskID = null`; the broker assigns the UUID before scheduling, and worker/scheduler code assumes a UUID is present before calling `unsafeGetTaskID`. `taskRetryInterval` is a retry delay in seconds for failed tasks with retries remaining; `0` or less retries immediately.
-3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass.
+3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current non-stale worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass.
 4. Implement `TaskAcceptor` for workers. Process each task batch, publish task logs with `taPubTaskLogging`, and report `TaskProcessing`, `TaskSucceed`, or `TaskFailed` with `taSendTaskStatus`.
 5. Implement `StatusReporter` for workers. Combine `StatusReporterAPI.srReportInfo` queue/processing counts with app-specific metrics such as CPU or memory load.
 6. Keep config endpoints aligned: clients use the broker `frontendAddr`, workers use the broker `backendAddr`, and worker logging uses the broker `infoStorage.loggingAddr`.
@@ -183,7 +183,7 @@ Use a CI-safe test posture: registered Cabal test suites are bounded, assertion-
 Current bounded regression test suites:
 
 - `lotos:test:test-conc-executor` is the concurrent process executor regression suite.
-- `lotos:test:test-zmq-worker-frames` checks bounded worker status, worker task-status, retry/failure status payload, retry-delay eligibility, and scheduled task ROUTER/DEALER frame contracts.
+- `lotos:test:test-zmq-worker-frames` checks bounded worker status, worker task-status, retry/failure status payload, retry-delay eligibility, stale-worker recovery, and scheduled task ROUTER/DEALER frame contracts.
 - `lotos:test:test-zmq-client-ack-frames` checks bounded frontend REQ/ROUTER client ACK frames.
 - `TaskSchedule:test:test-worker-lifecycle` checks TaskSchedule command-result status mapping and worker lifecycle callbacks.
 
@@ -210,6 +210,7 @@ Default addresses:
 - worker logging endpoint (server info storage SUB / worker PUB): `tcp://127.0.0.1:5557`
 - info HTTP port: `8081`
 - logs: `./logs/taskScheduleServer.log`, `./logs/taskScheduleWorker.log`, and `./logs/taskScheduleClient.log`
+- worker stale timeout: `taskProcessor.workerStaleTimeoutSec = 60` seconds in the checked-in broker config; keep it above `workerStatusReportIntervalSec` for healthy workers.
 
 Start the server with defaults, or pass `applications/TaskSchedule/config/broker.json` to make the defaults explicit:
 
@@ -244,7 +245,7 @@ The single-worker smoke helper starts the server and one worker with the checked
 
 The multi-worker smoke helper generates a per-run broker config, two worker configs by default (`smokeWorker_1` and `smokeWorker_2`), unique client configs, and four fresh task JSON files. It requires all workers to appear in `/SimpleServer/worker_stats`, all clients to receive ACKs, every task marker to match the current run, every worker-specific stdio log to show current-run task processing, `/SimpleServer/info.workerLoggingsMap` to contain current-run worker logging plus `ExitSuccess`, no current-run garbage, and no leftover `ts-server`/`ts-worker`/`ts-client` processes from its tracked process groups.
 
-Latest TP-017 evidence is green: single-worker run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T110454Z-1237282/` has `status=PASS`, and multi-worker run `.tmp/task-schedule-multi-worker-smoke/task-schedule-multi-worker-smoke-20260601T110611Z-1239027/` has `status=PASS`, `worker_count=2`, `task_count=4`, per-worker current-run evidence, fresh markers, worker logging, and no current-run garbage.
+Latest TP-019 evidence is green after stale-worker recovery changes: single-worker run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T140959Z-1455662/` has `status=PASS`, and multi-worker run `.tmp/task-schedule-multi-worker-smoke/task-schedule-multi-worker-smoke-20260601T141128Z-1457758/` has `status=PASS`, `worker_count=2`, `task_count=4`, per-worker current-run evidence, fresh markers, worker logging, and no current-run garbage.
 
 ## Info API
 
@@ -265,6 +266,7 @@ The `/info` response includes `workerLoggingsMap`, keyed by worker id. With the 
 - The broker owns UUID assignment. Client task JSON may set `taskID` to `null`, but scheduled/executing tasks must have IDs before `unsafeGetTaskID` is used.
 - Worker DEALER routing ids and worker logging topics both use `workerId`; custom configs must align client/frontend, worker/backend, and worker-logging endpoints.
 - Failed tasks retry while `taskRetry > 0`; positive `taskRetryInterval` values delay eligibility until the interval has elapsed, while `0` or less preserves immediate retry.
+- Worker status heartbeats drive broker liveness. When a worker is stale for `taskProcessor.workerStaleTimeoutSec`, the broker removes it from scheduling/info maps and recovers its non-succeeded in-flight tasks through the same retry/garbage path.
 - Safe verification commands are `cabal build all --enable-tests` for compilation, `cabal test all` for bounded regression suites, `scripts/task-schedule-smoke.sh` for the intentional single-worker end-to-end demo smoke, and `scripts/task-schedule-multi-worker-smoke.sh` for bounded multi-worker scheduling smoke after building.
 
 ## Development notes

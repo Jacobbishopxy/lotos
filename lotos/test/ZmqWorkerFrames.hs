@@ -6,7 +6,11 @@ module Main where
 import Control.Concurrent (threadDelay)
 import Control.Monad (forM_, when)
 import Data.Time (UTCTime (..), addUTCTime, fromGregorian)
+import Lotos.TSD.Map (insertMap, lookupMap, mkTSMap)
+import Lotos.TSD.Queue (mkTSQueue, readQueue')
+import Lotos.TSD.RingBuffer (getBuffer', mkTSRingBuffer)
 import Lotos.Zmq
+import Lotos.Zmq.Internal.Liveness
 import Lotos.Zmq.Internal.Retry
   ( FailedTaskDisposition (..),
     RetryTask (..),
@@ -32,6 +36,14 @@ unwrap action = action >>= either (ioError . userError . show) pure
 
 expectJust :: String -> Maybe a -> IO a
 expectJust message = maybe (ioError $ userError message) pure
+
+assertNothing :: String -> Maybe a -> Assertion
+assertNothing _ Nothing = pure ()
+assertNothing message (Just _) = assertFailure message
+
+assertEmpty :: String -> [a] -> Assertion
+assertEmpty _ [] = pure ()
+assertEmpty message xs = assertFailure $ message <> "; got " <> show (length xs)
 
 assertTaskMatches :: Task () -> Task () -> Assertion
 assertTaskMatches expected actual = do
@@ -185,6 +197,71 @@ retryTaskPartitionKeepsDelayedTasksOutOfSchedulingBatch = do
   (taskID . retryTaskPayload <$> eligible) @?= [taskID immediateTask, taskID dueTask]
   (taskID . retryTaskPayload <$> delayed) @?= [taskID delayedTask]
 
+aliveSensorStaleUsesFixedClock :: Assertion
+aliveSensorStaleUsesFixedClock = do
+  let sensor = AliveSensor {asLastSeen = fixedNow, asTimeoutSec = 10}
+  aliveSensorStale fixedNow sensor @?= False
+  aliveSensorStale (addUTCTime 9 fixedNow) sensor @?= False
+  aliveSensorStale (addUTCTime 10 fixedNow) sensor @?= True
+
+staleWorkerRecoveryRequeuesRetryableTasksAndRemovesWorkerMaps :: Assertion
+staleWorkerRecoveryRequeuesRetryableTasksAndRemovesWorkerMaps = do
+  workerAliveMap <- newTSWorkerAliveMap
+  workerStatusMap <- mkTSMap
+  workerTasksMap <- newTSWorkerTasksMap
+  failedTaskQueue <- mkTSQueue
+  garbageBin <- mkTSRingBuffer 10
+  retryableTask <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1, taskRetryInterval = 5})
+  let staleAt = addUTCTime 5 fixedNow
+  recordWorkerAlive fixedNow 5 testWorkerId workerAliveMap
+  insertMap testWorkerId () workerStatusMap
+  insertTSWorkerTasks testWorkerId [(unsafeGetTaskID retryableTask, retryableTask, TaskProcessing)] workerTasksMap
+
+  staleWorkerIds <- recoverStaleWorkers staleAt workerAliveMap workerStatusMap workerTasksMap failedTaskQueue garbageBin
+
+  staleWorkerIds @?= [testWorkerId]
+  lookupMap testWorkerId workerAliveMap >>= assertNothing "expected stale worker liveness entry to be removed"
+  lookupMap testWorkerId workerStatusMap >>= assertNothing "expected stale worker status entry to be removed"
+  lookupTSWorkerTasks testWorkerId workerTasksMap >>= assertNothing "expected stale worker task bucket to be removed"
+  queuedRetries <- readQueue' failedTaskQueue
+  case queuedRetries of
+    [queuedRetry] -> do
+      retryTaskReadyAt queuedRetry @?= Just (addUTCTime 5 staleAt)
+      assertTaskMatches retryableTask {taskRetry = 0} (retryTaskPayload queuedRetry)
+    _ -> assertFailure $ "expected one recovered retry task, got " <> show (length queuedRetries)
+  getBuffer' garbageBin >>= assertEmpty "expected no garbage tasks for retryable recovery"
+
+staleWorkerRecoveryMovesExhaustedTasksToGarbage :: Assertion
+staleWorkerRecoveryMovesExhaustedTasksToGarbage = do
+  workerTasksMap <- newTSWorkerTasksMap
+  failedTaskQueue <- mkTSQueue
+  garbageBin <- mkTSRingBuffer 10
+  exhaustedTask <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 0})
+  insertTSWorkerTasks testWorkerId [(unsafeGetTaskID exhaustedTask, exhaustedTask, TaskFailed)] workerTasksMap
+
+  recoverStaleWorkerTasks fixedNow testWorkerId workerTasksMap failedTaskQueue garbageBin
+
+  readQueue' failedTaskQueue >>= assertEmpty "expected no queued retry for exhausted recovery"
+  garbageTasks <- getBuffer' garbageBin
+  case garbageTasks of
+    [garbageTask] -> assertTaskMatches exhaustedTask garbageTask
+    _ -> assertFailure $ "expected one garbage task, got " <> show (length garbageTasks)
+  lookupTSWorkerTasks testWorkerId workerTasksMap >>= assertNothing "expected exhausted worker task bucket to be removed"
+
+staleWorkerRecoveryDropsSucceededTasks :: Assertion
+staleWorkerRecoveryDropsSucceededTasks = do
+  workerTasksMap <- newTSWorkerTasksMap
+  failedTaskQueue <- mkTSQueue
+  garbageBin <- mkTSRingBuffer 10
+  succeededTask <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1})
+  insertTSWorkerTasks testWorkerId [(unsafeGetTaskID succeededTask, succeededTask, TaskSucceed)] workerTasksMap
+
+  recoverStaleWorkerTasks fixedNow testWorkerId workerTasksMap failedTaskQueue garbageBin
+
+  readQueue' failedTaskQueue >>= assertEmpty "expected no queued retry for succeeded task"
+  getBuffer' garbageBin >>= assertEmpty "expected no garbage task for succeeded task"
+  lookupTSWorkerTasks testWorkerId workerTasksMap >>= assertNothing "expected succeeded worker task bucket to be removed"
+
 tests :: Test
 tests =
   TestList
@@ -196,7 +273,11 @@ tests =
       TestLabel "failed task with no retry goes to garbage" (TestCase failedTaskWithNoRetryGoesToGarbage),
       TestLabel "positive retry interval delays eligibility until ready" (TestCase positiveRetryIntervalDelaysEligibilityUntilReady),
       TestLabel "zero and negative retry intervals remain immediate" (TestCase zeroAndNegativeRetryIntervalsRemainImmediate),
-      TestLabel "retry task partition keeps delayed tasks out of scheduling batch" (TestCase retryTaskPartitionKeepsDelayedTasksOutOfSchedulingBatch)
+      TestLabel "retry task partition keeps delayed tasks out of scheduling batch" (TestCase retryTaskPartitionKeepsDelayedTasksOutOfSchedulingBatch),
+      TestLabel "alive sensor stale detection uses fixed clock" (TestCase aliveSensorStaleUsesFixedClock),
+      TestLabel "stale worker recovery requeues retryable tasks and removes maps" (TestCase staleWorkerRecoveryRequeuesRetryableTasksAndRemovesWorkerMaps),
+      TestLabel "stale worker recovery moves exhausted tasks to garbage" (TestCase staleWorkerRecoveryMovesExhaustedTasksToGarbage),
+      TestLabel "stale worker recovery drops succeeded tasks" (TestCase staleWorkerRecoveryDropsSucceededTasks)
     ]
 
 main :: IO ()

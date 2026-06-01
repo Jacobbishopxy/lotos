@@ -36,6 +36,7 @@ import Data.Text qualified as Text
 import Lotos.TSD.Queue
 import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
+import Lotos.Zmq.Internal.Liveness
 import Lotos.Util
 
 ----------------------------------------------------------------------------------------------------
@@ -75,6 +76,7 @@ data TaskSchedulerData t s
       (TSQueue (RetryTask t)) -- failed task queue with retry readiness metadata
       (TSWorkerTasksMap (TaskID, Task t, TaskStatus)) -- worker task map
       (TSWorkerStatusMap s) -- worker status map
+      TSWorkerAliveMap -- worker liveness map
       (TSRingBuffer (Task t)) -- exhausted retry / garbage bin
 
 -- | Queue sizing knobs for broker-owned task storage.
@@ -108,10 +110,27 @@ data TaskProcessorConfig = TaskProcessorConfig
     -- ^ Maximum number of retryable failed tasks pulled per scheduler pass.
     triggerAlgoMaxNotifyCount :: Int,
     -- ^ Run the scheduling algorithm after this many socket-layer notifications.
-    triggerAlgoMaxWaitSec :: Int
+    triggerAlgoMaxWaitSec :: Int,
     -- ^ Run the scheduling algorithm after this many seconds even without enough notifications.
+    workerStaleTimeoutSec :: Int
+    -- ^ Seconds after the latest worker status heartbeat before the broker recovers that worker's in-flight tasks.
   }
-  deriving (Show, Generic, Aeson.FromJSON)
+  deriving (Show, Generic)
+
+-- | Backward-compatible default for broker JSON written before worker liveness
+-- recovery was configurable. The demo workers report status every few seconds,
+-- so one minute avoids false stale classification while still bounding recovery.
+defaultWorkerStaleTimeoutSec :: Int
+defaultWorkerStaleTimeoutSec = 60
+
+instance Aeson.FromJSON TaskProcessorConfig where
+  parseJSON = Aeson.withObject "TaskProcessorConfig" $ \v ->
+    TaskProcessorConfig
+      <$> v Aeson..: "taskQueuePullNo"
+      <*> v Aeson..: "failedTaskQueuePullNo"
+      <*> v Aeson..: "triggerAlgoMaxNotifyCount"
+      <*> v Aeson..: "triggerAlgoMaxWaitSec"
+      <*> (maybe defaultWorkerStaleTimeoutSec id <$> v Aeson..:? "workerStaleTimeoutSec")
 
 -- | Read-only HTTP snapshot and worker-log collection configuration.
 --

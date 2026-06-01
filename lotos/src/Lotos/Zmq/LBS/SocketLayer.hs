@@ -23,6 +23,7 @@ import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
+import Lotos.Zmq.Internal.Liveness
 import Zmqx
 import Zmqx.Pair
 import Zmqx.Router
@@ -38,7 +39,9 @@ data SocketLayer t w = SocketLayer
     failedTaskQueue :: TSQueue (RetryTask t), -- backend puts retryable failed tasks with readiness metadata
     workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modifies map
     workerStatusMap :: TSWorkerStatusMap w, -- backend modifies map
+    workerAliveMap :: TSWorkerAliveMap, -- backend records worker status heartbeat times
     garbageBin :: TSRingBuffer (Task t), -- backend discards tasks
+    workerStaleTimeoutSec :: Int,
     ver :: Int
   }
 
@@ -49,9 +52,10 @@ runSocketLayer ::
   forall t w.
   (FromZmq t, ToZmq t, FromZmq w) =>
   SocketLayerConfig ->
+  Int ->
   TaskSchedulerData t w ->
   LotosApp ThreadId
-runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = do
+runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq wtm wsm wam gbb) = do
   logApp INFO "runSocketLayer start!"
 
   -- Init frontend Router
@@ -69,7 +73,7 @@ runSocketLayer SocketLayerConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) = d
 
   -- pollItems & socketLayer cst
   let pollItems = Zmqx.pollIn frontend & Zmqx.pollInAlso backend & Zmqx.pollInAlso receiverPair
-      socketLayer = SocketLayer frontend backend receiverPair senderPair tq ftq wtm wsm gbb 0
+      socketLayer = SocketLayer frontend backend receiverPair senderPair tq ftq wtm wsm wam gbb staleTimeoutSec 0
 
   -- Start the event loop in a separate thread
   forkApp $ layerLoop pollItems socketLayer
@@ -154,7 +158,7 @@ handleWorkerMessage layer@SocketLayer {..} = do
     Left e -> logApp ERROR $ show e
     -- 💾 worker status changed
     Right (WorkerStatus wID mt a st) ->
-      handleWorkerStatus wID mt a st workerStatusMap
+      handleWorkerStatus wID mt a st workerStatusMap workerAliveMap workerStaleTimeoutSec
     -- 💾 worker task status changed
     Right (WorkerTaskStatus wID mt a uuid tst) ->
       handleWorkerTaskStatus layer wID mt a uuid tst
@@ -194,10 +198,15 @@ handleWorkerStatus ::
   Ack ->
   w ->
   TSWorkerStatusMap w ->
+  TSWorkerAliveMap ->
+  Int ->
   LotosApp ()
-handleWorkerStatus wID mt a st workerStatusMap = do
+handleWorkerStatus wID mt a st workerStatusMap workerAliveMap staleTimeoutSec = do
   logApp DEBUG $ "handleBackend -> WorkerStatus: " <> show wID <> " " <> show mt <> " " <> show a
-  when (mt == WorkerStatusT) $ liftIO $ insertMap wID st workerStatusMap
+  when (mt == WorkerStatusT) $ do
+    now <- liftIO getCurrentTime
+    liftIO $ insertMap wID st workerStatusMap
+    liftIO $ recordWorkerAlive now staleTimeoutSec wID workerAliveMap
 
 -- Handle worker task status updates using Reader monad
 handleWorkerTaskStatus ::

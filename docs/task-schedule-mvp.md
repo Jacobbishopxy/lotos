@@ -41,6 +41,7 @@ Server defaults:
 | `taskProcessor.failedTaskQueuePullNo` | `10` |
 | `taskProcessor.triggerAlgoMaxNotifyCount` | `10` |
 | `taskProcessor.triggerAlgoMaxWaitSec` | `10` |
+| `taskProcessor.workerStaleTimeoutSec` | `60` |
 | `infoStorage.loggingsBufferSize` | `1000` |
 | `infoStorage.infoFetchIntervalSec` | `10` |
 | Log file | `./logs/taskScheduleServer.log` |
@@ -69,7 +70,7 @@ Worker defaults:
 | `parallelTasksNo` | `4` |
 | Log file | `./logs/taskScheduleWorker.log` |
 
-`loadBalancerBackendAddr` is the task/status backend and must match the server backend (`5556`). TP-004 corrected the prior demo mismatch that pointed the worker backend at `5555`.
+`loadBalancerBackendAddr` is the task/status backend and must match the server backend (`5556`). TP-004 corrected the prior demo mismatch that pointed the worker backend at `5555`. The broker treats worker status reports as liveness heartbeats; keep `taskProcessor.workerStaleTimeoutSec` comfortably above `workerStatusReportIntervalSec` so healthy workers are not recovered prematurely.
 
 `loadBalancerLoggingAddr` is the worker PUB logging endpoint and must match the server `infoStorage.loggingAddr` (`5557` in the checked-in demo). The worker sends its `workerId` as the PUB/SUB topic and the existing `WorkerLogging` payload as `[taskUuid, logText]`; server info storage binds a SUB socket on this endpoint and exposes entries in `/SimpleServer/info.workerLoggingsMap` after the next `infoFetchIntervalSec` refresh. Broker JSON files written before TP-013 must add `infoStorage.loggingAddr` or they will not match the current `InfoStorageConfig` schema.
 
@@ -122,7 +123,8 @@ The MVP config files use existing record field names. The checked-in samples und
     "taskQueuePullNo": 10,
     "failedTaskQueuePullNo": 10,
     "triggerAlgoMaxNotifyCount": 10,
-    "triggerAlgoMaxWaitSec": 10
+    "triggerAlgoMaxWaitSec": 10,
+    "workerStaleTimeoutSec": 60
   },
   "infoStorage": {
     "httpPort": 8081,
@@ -177,6 +179,7 @@ Failure and retry semantics:
 - Worker execution reports `TaskProcessing` when a command starts and `TaskSucceed` or `TaskFailed` when it finishes.
 - `ExitSuccess` maps to `TaskSucceed`; any non-zero exit, including timeout termination (`ExitFailure 124`), maps to `TaskFailed`.
 - On `TaskFailed`, the broker removes the task from the worker task map. If `taskRetry > 0`, it decrements `taskRetry` and requeues the task on the failed-task queue; if `taskRetry == 0`, it writes the task to `/SimpleServer/garbage`.
+- Worker status reports are broker liveness heartbeats. When a worker has not reported within `taskProcessor.workerStaleTimeoutSec`, the task processor removes that worker from liveness, status, and task maps before the next scheduling snapshot. Tasks left in `TaskInit`, `TaskPending`, `TaskProcessing`, `TaskRetrying`, or `TaskFailed` are recovered as failures through the same retry/garbage path; `TaskSucceed` entries are dropped with the stale worker instead of re-executed.
 - Requeued failures with `taskRetryInterval > 0` are not passed back to the scheduler until the interval has elapsed from broker failure handling. `taskRetryInterval <= 0` keeps the historical immediate retry behavior. The delay metadata is broker-local and does not change the task JSON or ZMQ frame shape.
 
 Checked-in sample task (`applications/TaskSchedule/config/task-demo.json`):
@@ -208,7 +211,7 @@ With default config, the server exposes these endpoints:
 Expected MVP observations:
 
 1. Server liveness: `/SimpleServer/info` returns a JSON object with queue, worker, and garbage fields.
-2. Worker registration: `/SimpleServer/worker_stats` returns `type: "WorkerStat"` and a `stats` object containing `simpleWorker_1` after one status interval.
+2. Worker registration: `/SimpleServer/worker_stats` returns `type: "WorkerStat"` and a `stats` object containing `simpleWorker_1` after one status interval. If that worker stops heartbeating past `workerStaleTimeoutSec`, subsequent snapshots remove it and any non-succeeded tasks are retried or garbage-collected according to the task retry fields.
 3. Task acceptance/assignment: after the client receives an ACK, `/SimpleServer/worker_tasks` or `/SimpleServer/info.workerTasksMap` contains the submitted task under a worker ID, or `/SimpleServer/tasks` briefly shows it queued before assignment.
 4. Successful execution: `.tmp/task-schedule-demo.out` exists and contains `task-schedule-ok`.
 5. Failure absence for the happy path: `/SimpleServer/garbage` does not contain the demo task.
@@ -237,7 +240,7 @@ Exit codes:
 - `0`: full smoke pass; expected worker stats are visible, clients received ACKs, marker/logging proof exists, and the current run is absent from garbage.
 - `1`: hard runtime failure, including readiness, ACK, marker, per-worker evidence, worker-logging, garbage-check, or cleanup-safety failures; inspect the run evidence directory.
 
-Current TP-017 smoke evidence is a full MVP pass for both paths: single-worker run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T110454Z-1237282/` records `status=PASS`, and multi-worker run `.tmp/task-schedule-multi-worker-smoke/task-schedule-multi-worker-smoke-20260601T110611Z-1239027/` records `status=PASS`, `worker_count=2`, `task_count=4`, per-worker current-run processing evidence, fresh markers, worker logging, and no current-run garbage.
+Current TP-019 smoke evidence is a full MVP pass for both paths after liveness recovery: single-worker run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T140959Z-1455662/` records `status=PASS`, and multi-worker run `.tmp/task-schedule-multi-worker-smoke/task-schedule-multi-worker-smoke-20260601T141128Z-1457758/` records `status=PASS`, `worker_count=2`, `task_count=4`, per-worker current-run processing evidence, fresh markers, worker logging, and no current-run garbage.
 
 Manual fallback, if the helper is unavailable, is the same sequence:
 
@@ -286,6 +289,7 @@ TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-s
 - **TP-013 (worker logging/info storage):** info storage binds the configured `infoStorage.loggingAddr` (`5557` in the demo), workers publish `workerId` topic frames plus `WorkerLogging` payloads, and the smoke helper now requires current-run stdout plus `ExitSuccess` evidence in `/SimpleServer/info.workerLoggingsMap`.
 - **TP-015 (retry delay semantics):** `taskRetryInterval` is now enforced for retryable failures with broker-local readiness metadata; fixed-clock tests cover delayed, due, and immediate retry behavior, and smoke run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T094502Z-746207/` passed.
 - **TP-017 (multi-worker smoke):** `scripts/task-schedule-multi-worker-smoke.sh` proves bounded local scheduling with at least two distinct worker IDs, unique client IDs, multiple fresh tasks, per-worker current-run stdio evidence, marker/logging checks, endpoint snapshots, and tracked cleanup; run `.tmp/task-schedule-multi-worker-smoke/task-schedule-multi-worker-smoke-20260601T110611Z-1239027/` passed with 2 workers and 4 tasks.
+- **TP-019 (worker liveness recovery):** broker-side status heartbeats now remove stale workers from scheduling/info maps and recover their in-flight non-succeeded tasks through retry-delay or garbage semantics; bounded fixed-clock tests cover stale detection, retry readiness, exhausted garbage, and succeeded-task dropping, and smoke runs `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T140959Z-1455662/` plus `.tmp/task-schedule-multi-worker-smoke/task-schedule-multi-worker-smoke-20260601T141128Z-1457758/` passed.
 
 ## Non-goals and known risks
 
@@ -305,3 +309,4 @@ Known risks/gaps for downstream work:
 - The info API currently exposes worker task membership but not a dedicated task-status history or failure-reason field; the file side effect is the required completion proof for the MVP happy path.
 - `taskTimeout` and `taskProp.executeTimeoutSec` duplicate timeout data; the MVP resolves ambiguity by making `taskTimeout` authoritative and requiring equality.
 - Positive `taskRetryInterval` values defer retry scheduling, but the retry is checked by the task processor's normal wake-up/trigger loop rather than an exact per-task timer; availability is therefore not-before the requested delay, not a precise dispatch deadline.
+- Worker liveness is heartbeat based, not socket-presence based; set `taskProcessor.workerStaleTimeoutSec` higher than normal `workerStatusReportIntervalSec` plus expected scheduling/host jitter.

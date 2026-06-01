@@ -22,6 +22,7 @@ import Lotos.TSD.Queue
 import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
+import Lotos.Zmq.Internal.Liveness
 import Lotos.Zmq.LBS.InfoStorage
 import Lotos.Zmq.LBS.SocketLayer
 import Lotos.Zmq.LBS.TaskProcessor
@@ -55,7 +56,8 @@ runLBS n BrokerServiceConfig {..} loadBalancer = do
           { taskQueuePullNo = taskQueuePullNo taskProcessor,
             failedTaskQueuePullNo = failedTaskQueuePullNo taskProcessor,
             triggerAlgoMaxNotifyCount = triggerAlgoMaxNotifyCount taskProcessor,
-            triggerAlgoMaxWaitSec = triggerAlgoMaxWaitSec taskProcessor
+            triggerAlgoMaxWaitSec = triggerAlgoMaxWaitSec taskProcessor,
+            workerStaleTimeoutSec = workerStaleTimeoutSec taskProcessor
           }
       infoStorageConfig =
         InfoStorageConfig
@@ -73,10 +75,11 @@ runLBS n BrokerServiceConfig {..} loadBalancer = do
         <*> (mkTSQueue :: IO (TSQueue (RetryTask t)))
         <*> (newTSWorkerTasksMap :: IO (TSWorkerTasksMap (TaskID, Task t, TaskStatus)))
         <*> (mkTSMap :: IO (TSWorkerStatusMap w))
+        <*> newTSWorkerAliveMap
         <*> (mkTSRingBuffer (garbageBinSize taskSchedulerConfig) :: IO (TSRingBuffer (Task t)))
 
   -- 2. run socket layer
-  t1 <- runSocketLayer socketLayerConfig taskSchedulerData
+  t1 <- runSocketLayer socketLayerConfig (workerStaleTimeoutSec taskProcessorConfig) taskSchedulerData
   logApp INFO $ "runSocketLayer threadID: " <> show t1
 
   -- 3. run task processor

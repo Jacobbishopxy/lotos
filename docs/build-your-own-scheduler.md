@@ -34,7 +34,7 @@ instance LoadBalancerAlgo MyScheduler MyTask MyWorkerStatus where
     pure (scheduler, ScheduledResult assignments deferred)
 ```
 
-Return assignments for tasks that should be sent to worker routing IDs now, and return deferred tasks when they should stay queued for a later scheduling pass. The broker owns UUID assignment; scheduler logic can assume scheduled/executing tasks have IDs.
+Return assignments for tasks that should be sent to worker routing IDs now, and return deferred tasks when they should stay queued for a later scheduling pass. The broker owns UUID assignment; scheduler logic can assume scheduled/executing tasks have IDs. The `workers` list has already been filtered for broker-side liveness, so stale workers are removed before your algorithm sees the snapshot.
 
 TaskSchedule reference: `applications/TaskSchedule/src/Server.hs` assigns tasks to the lowest-load workers.
 
@@ -86,9 +86,10 @@ Config endpoints must align:
 
 - clients send to the broker `frontendAddr`,
 - workers connect to the broker `backendAddr`,
-- worker logging publishes to the broker `infoStorage.loggingAddr`.
+- worker logging publishes to the broker `infoStorage.loggingAddr`,
+- `taskProcessor.workerStaleTimeoutSec` is higher than the normal worker `workerStatusReportIntervalSec` plus expected jitter.
 
-The TaskSchedule sample configs under `applications/TaskSchedule/config/` show the loopback defaults. `applications/TaskSchedule/config/task-demo.json` is a copyable client task that writes `.tmp/task-schedule-demo.out`.
+The TaskSchedule sample configs under `applications/TaskSchedule/config/` show the loopback defaults, including a 60-second stale-worker timeout for 5-second worker status reports. `applications/TaskSchedule/config/task-demo.json` is a copyable client task that writes `.tmp/task-schedule-demo.out`.
 
 ## 5. Handle retries and completion evidence explicitly
 
@@ -100,6 +101,8 @@ Retry behavior is controlled by the `Task` fields:
 - `taskRetry == 0` moves failed tasks to the garbage ring buffer,
 - `taskRetryInterval > 0` delays retry eligibility by at least that many seconds,
 - `taskRetryInterval <= 0` retries immediately when retries remain.
+
+If a worker stops reporting status beyond `taskProcessor.workerStaleTimeoutSec`, the broker removes that worker before scheduling and treats its non-succeeded in-flight tasks as failures using the same retry/garbage rules. Use `TaskSucceed` only for work that really completed, because succeeded entries are dropped rather than retried during stale-worker cleanup.
 
 ## 6. Verify with bounded tests and intentional smokes
 
@@ -119,4 +122,5 @@ For a new application, add bounded tests for:
 - payload `ToZmq`/`FromZmq` frame order,
 - scheduler assignment/deferred-task decisions,
 - worker success/failure/status mapping,
+- stale-worker recovery or scheduler behavior around disappearing workers when your app has custom retry expectations,
 - client ACK shape or JSON validation if you add a custom client.

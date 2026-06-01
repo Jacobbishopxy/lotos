@@ -26,6 +26,7 @@ import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
+import Lotos.Zmq.Internal.Liveness
 import Zmqx
 import Zmqx.Pair
 
@@ -75,6 +76,7 @@ data TaskProcessor lb t w
     failedTaskQueue :: TSQueue (RetryTask t), -- backend put retryable failures with readiness metadata
     workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modify map
     workerStatusMap :: TSWorkerStatusMap w, -- backend modify map
+    workerAliveMap :: TSWorkerAliveMap, -- socket layer records worker heartbeat times
     garbageBin :: TSRingBuffer (Task t), -- backend discard tasks
     loadBalancer :: lb,
     trigger :: EventTrigger,
@@ -90,7 +92,7 @@ runTaskProcessor ::
   TaskSchedulerData t w ->
   lb ->
   LotosApp ThreadId
-runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm wsm gbb) loadBalancer = do
+runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm wsm wam gbb) loadBalancer = do
   logApp INFO "runTaskProcessor"
 
   -- Init receiver Pair
@@ -102,7 +104,7 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
 
   -- task processor cst
   tg <- liftIO $ mkCombinedTrigger triggerAlgoMaxNotifyCount triggerAlgoMaxWaitSec
-  let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm gbb loadBalancer tg 0
+  let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm wam gbb loadBalancer tg 0
 
   forkApp $ processorLoop config taskProcessor
 
@@ -114,21 +116,25 @@ processorLoop ::
   LotosApp ()
 processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   -- 0. accumulate ack and record time; according to the trigger, enter into a new loop or continue
-  now <- liftIO getCurrentTime
-  (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger now
+  triggerNow <- liftIO getCurrentTime
+  (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger triggerNow
 
   -- 1. receiving notification (BLOCKING !!!)
-  zmqUnwrap (Zmqx.receivesFor lbReceiver $ timeoutInterval newTrigger now) >>= \case
+  zmqUnwrap (Zmqx.receivesFor lbReceiver $ timeoutInterval newTrigger triggerNow) >>= \case
     Just bs ->
       case (fromZmq bs) of
         Left e -> logApp ERROR $ show e
         Right (Notify ack) -> logApp DEBUG $ "processorLoop -> lbReceiver(ack): " <> show ack
-    Nothing -> logApp DEBUG $ "processorLoop -> lbReceiver(none): " <> show now
+    Nothing -> logApp DEBUG $ "processorLoop -> lbReceiver(none): " <> show triggerNow
 
   -- 2. when the trigger is inactivated, enter into a new loop
   unless shouldProcess $ processorLoop cfg tp {trigger = newTrigger}
 
-  -- 3. get worker status: [w]
+  -- 3. recover stale workers before taking the status snapshot used by the scheduler
+  now <- liftIO getCurrentTime
+  staleWorkerIds <- liftIO $ recoverStaleWorkers now workerAliveMap workerStatusMap workerTasksMap failedTaskQueue garbageBin
+  when (not $ null staleWorkerIds) $
+    logApp WARN $ "processorLoop -> recovered stale workers: " <> show staleWorkerIds
   workerStatuses <- liftIO $ toListMap workerStatusMap
 
   -- 4. call `dequeueFirstN` from TaskQueue and FailedTaskQueue: [t]
