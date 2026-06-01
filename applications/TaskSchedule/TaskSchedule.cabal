@@ -82,6 +82,21 @@ executable ts-worker
 ------------------------------------------------------------------------------------------------
 
 
+test-suite test-worker-lifecycle
+  import:         shared-properties
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        WorkerLifecycle.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , HUnit
+    , lotos
+    , TaskSchedule:ts-worker-lib
+    , time
+
+------------------------------------------------------------------------------------------------
+
+
 
 library ts-client-lib
   import:          shared-properties

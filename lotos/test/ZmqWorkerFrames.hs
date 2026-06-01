@@ -127,13 +127,31 @@ scheduledWorkerTaskFramesStripRouterEnvelope =
       Right decodedTask -> assertTaskMatches task decodedTask
       Left err -> assertFailure $ "scheduled worker task frames did not decode: " <> show err
 
+failedTaskWithRemainingRetryRequeuesWithDecrementedRetry :: Assertion
+failedTaskWithRemainingRetryRequeuesWithDecrementedRetry = do
+  task <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1})
+  case failedTaskDisposition task of
+    RetryFailedTask retryTask -> do
+      taskRetry retryTask @?= 0
+      assertTaskMatches task {taskRetry = 0} retryTask
+    GarbageFailedTask _ -> assertFailure "expected failed task with one retry remaining to requeue"
+
+failedTaskWithNoRetryGoesToGarbage :: Assertion
+failedTaskWithNoRetryGoesToGarbage = do
+  task <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 0})
+  case failedTaskDisposition task of
+    GarbageFailedTask garbageTask -> assertTaskMatches task garbageTask
+    RetryFailedTask _ -> assertFailure "expected failed task with zero retries to go to garbage"
+
 tests :: Test
 tests =
   TestList
     [ TestLabel "worker status ROUTER frames use configured DEALER routing id" (TestCase workerStatusFramesUseConfiguredDealerRoutingId),
       TestLabel "worker task status ROUTER frames use configured DEALER routing id" (TestCase workerTaskStatusFramesUseConfiguredDealerRoutingId),
       TestLabel "worker report task status payloads round-trip all task statuses" (TestCase workerReportTaskStatusPayloadsRoundTrip),
-      TestLabel "scheduled worker task frames strip ROUTER envelope for DEALER" (TestCase scheduledWorkerTaskFramesStripRouterEnvelope)
+      TestLabel "scheduled worker task frames strip ROUTER envelope for DEALER" (TestCase scheduledWorkerTaskFramesStripRouterEnvelope),
+      TestLabel "failed task with remaining retry requeues with decremented retry" (TestCase failedTaskWithRemainingRetryRequeuesWithDecrementedRetry),
+      TestLabel "failed task with no retry goes to garbage" (TestCase failedTaskWithNoRetryGoesToGarbage)
     ]
 
 main :: IO ()

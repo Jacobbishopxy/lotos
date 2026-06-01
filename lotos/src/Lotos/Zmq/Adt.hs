@@ -17,10 +17,12 @@ module Lotos.Zmq.Adt
 
     -- * task
     Task (..),
+    FailedTaskDisposition (..),
     defaultTask,
     fillTaskID,
     fillTaskID',
     unsafeGetTaskID,
+    failedTaskDisposition,
 
     -- * ack
     Ack,
@@ -190,6 +192,18 @@ fillTaskID' task = do
 unsafeGetTaskID :: Task a -> TaskID
 unsafeGetTaskID Task {taskID = Just uuid} = uuid
 unsafeGetTaskID _ = error "unsafeGetTaskID: taskID is Nothing"
+
+data FailedTaskDisposition t
+  = RetryFailedTask (Task t)
+  | GarbageFailedTask (Task t)
+  deriving (Show)
+
+failedTaskDisposition :: Task t -> FailedTaskDisposition t
+failedTaskDisposition task =
+  let retriesRemaining = taskRetry task
+   in if retriesRemaining > 0
+        then RetryFailedTask task {taskRetry = retriesRemaining - 1}
+        else GarbageFailedTask task
 
 ----------------------------------------------------------------------------------------------------
 

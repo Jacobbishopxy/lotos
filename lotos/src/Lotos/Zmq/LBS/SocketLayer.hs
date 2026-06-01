@@ -243,9 +243,9 @@ handleFailedTask wID uuid = do
     Just (tID, task, _) -> do
       let retry = taskRetry task
       lift $ logApp DEBUG $ "handleBackend -> retry: taskID [" <> show tID <> "], retry [" <> show retry <> "]"
-      if retry > 0
-        then liftIO $ enqueueTS task {taskRetry = retry - 1} tcFailedTaskQueue
-        else liftIO $ writeBuffer tcGarbageBin task
+      case failedTaskDisposition task of
+        RetryFailedTask retryTask -> liftIO $ enqueueTS retryTask tcFailedTaskQueue
+        GarbageFailedTask garbageTask -> liftIO $ writeBuffer tcGarbageBin garbageTask
   -- notify load-balancer
   notifyLoadBalancer
 

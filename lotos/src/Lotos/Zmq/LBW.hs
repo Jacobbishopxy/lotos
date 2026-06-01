@@ -293,6 +293,10 @@ tasksExecLoop ws@WorkerService {..} = do
 
   -- Note: blocking should be controlled by the acceptor
   newAcceptor <- processTasks taskAcceptorAPI acceptor tasks
+  tasksRemainAfter <- liftIO $ getQueueSize taskQueue
+  liftIO $ atomically $ do
+    modifyTVar workerInfo $
+      \wi -> wi {wiProcessingTaskNum = 0, wiWaitingTaskNum = tasksRemainAfter}
 
   tasksExecLoop (ws {acceptor = newAcceptor} :: WorkerService ta sr t w)
 

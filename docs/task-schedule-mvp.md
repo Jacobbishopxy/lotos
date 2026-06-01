@@ -168,6 +168,13 @@ Required fields:
 | `taskProp.command` | Shell command executed by the worker. |
 | `taskProp.executeTimeoutSec` | Required by the current `ClientTask` schema and must equal `taskTimeout`; it is not separately authoritative. |
 
+Failure and retry semantics:
+
+- Worker execution reports `TaskProcessing` when a command starts and `TaskSucceed` or `TaskFailed` when it finishes.
+- `ExitSuccess` maps to `TaskSucceed`; any non-zero exit, including timeout termination (`ExitFailure 124`), maps to `TaskFailed`.
+- On `TaskFailed`, the broker removes the task from the worker task map. If `taskRetry > 0`, it requeues the task on the failed-task queue with `taskRetry` decremented by one; if `taskRetry == 0`, it writes the task to `/SimpleServer/garbage`.
+- `taskRetryInterval` remains schema-only in the MVP; retries are not delayed by that field.
+
 Example task (`task-demo.json`):
 
 ```json
@@ -214,7 +221,7 @@ cabal build all --enable-tests
 scripts/task-schedule-smoke.sh
 ```
 
-For the normal regression gate, `cabal test all` is safe: the `lotos` package now registers only bounded, assertion-based regression suites as Cabal tests. Long-running or no-assertion examples live under `lotos:exe:demo-*` and should be run intentionally, usually with `timeout` for server demos.
+For the normal regression gate, `cabal test all` is safe: the `lotos` package registers only bounded, assertion-based regression suites as Cabal tests, and TaskSchedule's worker lifecycle test is also bounded. Long-running or no-assertion examples live under `lotos:exe:demo-*` and should be run intentionally, usually with `timeout` for server demos.
 
 The helper starts `ts-server` and `ts-worker` with the checked-in sample configs, waits for `/SimpleServer/info` and `/SimpleServer/worker_stats`, submits a fresh per-run task with `ts-client`, snapshots the info endpoints, checks a per-run marker written by the worker command, and preserves logs plus `result.env` under `.tmp/task-schedule-smoke/<run-id>/`. It bypasses local proxy settings for loopback `curl` probes and cleans up only the process IDs/process groups it started.
 
@@ -266,6 +273,8 @@ TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-s
 - **TP-008 (client ACK path):** frontend ROUTER decoding now preserves the REQ routing-id, binary request-id, and empty delimiter frames, enqueues the task, and echoes a `ClientAck` so `ts-client` receives an acceptance ACK and exits successfully.
 - **TP-009 (green smoke):** the smoke helper now treats any missing ACK as a hard failure and the default sample-config run exits `0` with client ACK, worker stats, fresh marker proof, and no current-run garbage entry.
 - **TP-010 (test-suite reclassification):** demo and server examples are Cabal `demo-*` executables instead of default test suites, leaving `cabal test all` for bounded assertion-based regressions.
+- **TP-011 (protocol frame coverage):** worker task-status frames round-trip their payload order and decode through the backend ROUTER path, protecting failure/status reports from frame regressions.
+- **TP-012 (worker lifecycle/failure semantics):** bounded tests cover retry decrement, garbage after retry exhaustion, command success/failure/timeout mapping, and worker `TaskProcessing` start reports; smoke run `.tmp/task-schedule-smoke/tp012-step3-20260601T071329Z-471004/` passed.
 
 ## Non-goals and known risks
 
@@ -282,5 +291,6 @@ Known risks/gaps for downstream work:
 
 - The client ACK path depends on preserving ZeroMQ ROUTER/REQ frame ordering, including the binary REQ request-id frame; changing this shape can reintroduce ACK timeouts.
 - Worker log transport is not fully wired to an external server endpoint; `5557` is reserved and log-based acceptance is optional.
-- The info API currently exposes worker task membership but not a dedicated task-status field; the file side effect is the required completion proof for the MVP happy path.
+- The info API currently exposes worker task membership but not a dedicated task-status history or failure-reason field; the file side effect is the required completion proof for the MVP happy path.
 - `taskTimeout` and `taskProp.executeTimeoutSec` duplicate timeout data; the MVP resolves ambiguity by making `taskTimeout` authoritative and requiring equality.
+- `taskRetryInterval` is not enforced yet; retry attempts are requeued immediately when the failed-task queue is scheduled.

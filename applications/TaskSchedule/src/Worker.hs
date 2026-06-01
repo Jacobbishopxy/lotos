@@ -43,7 +43,7 @@ instance TaskAcceptor SimpleWorker ClientTask where
           { cmdString = command $ taskProp task,
             cmdTimeout = taskTimeout task,
             loggingIO = \txt -> taPubTaskLogging $ WorkerLogging (unsafeGetTaskID task) (Text.pack txt),
-            startIO = taSendTaskStatus (unsafeGetTaskID task, TaskInit),
+            startIO = taSendTaskStatus (unsafeGetTaskID task, TaskProcessing),
             finishIO = \res -> do
               taPubTaskLogging $ WorkerLogging (unsafeGetTaskID task) (Text.pack $ show res)
               taSendTaskStatus (unsafeGetTaskID task, cvtCommandResult2TaskStatus res)
