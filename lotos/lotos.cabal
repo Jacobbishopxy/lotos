@@ -139,3 +139,12 @@ test-suite test-zmq-xt
     , bytestring
     , mtl
     , zmqx
+
+test-suite test-zmq-worker-frames
+  import:         shared-properties, test
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        ZmqWorkerFrames.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , zmqx

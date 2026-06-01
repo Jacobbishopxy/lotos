@@ -34,6 +34,7 @@ import Lotos.TSD.Queue
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error (ZmqError, zmqThrow, zmqUnwrap)
+import Lotos.Zmq.Util (textToBS)
 import Zmqx
 import Zmqx.Dealer
 import Zmqx.Pair
@@ -192,6 +193,7 @@ runWorkerService ws WorkerServiceConfig {..} = do
 
   -- worker Dealer init in a separate thread
   wDealer <- zmqUnwrap $ Zmqx.Dealer.open $ Zmqx.name "workerDealer"
+  liftIO $ Zmqx.setSocketOpt wDealer (Zmqx.Z_RoutingId $ textToBS workerId)
   zmqUnwrap $ Zmqx.connect wDealer loadBalancerBackendAddr
   -- worker Dealer Pair init in a separate thread
   wDealerPair' <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "workerDealerPair'"

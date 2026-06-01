@@ -1,6 +1,6 @@
 # General — Context
 
-**Last Updated:** 2026-05-31
+**Last Updated:** 2026-06-01
 **Status:** Active
 **Next Task ID:** TP-007
 
@@ -30,6 +30,6 @@ parallel batch execution or `/orch <path/to/PROMPT.md>` for a single task.
 _Items discovered during task execution are logged here by agents._
 
 - [x] **Expose client config reader** — Resolved during TP-004 by exporting `readBrokerConfig`, `readWorkerConfig`, and `readClientConfig` from the `Lotos.Zmq` facade so downstream executables can use the existing config readers.
-- [ ] **Fix worker status frame decoding** — TP-005 smoke reaches server HTTP readiness, but the server logs repeated backend `ZmqParsing "Text decode error: Cannot decode byte '\\xe4'"` while handling worker status frames, leaving `/SimpleServer/worker_stats` empty before client submission.
-- [ ] **Complete live client ACK path** — After worker registration is fixed, verify or implement the server `ClientAck` response so `ts-client` can exit successfully during the end-to-end smoke (discovered during TP-005).
+- [x] **Fix worker status frame decoding** — Resolved during TP-007 by setting the worker DEALER `Z_RoutingId` from `workerId` before backend connect; smoke run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T032757Z-186410/` shows `/SimpleServer/worker_stats` contains `simpleWorker_1` and backend `WorkerStatus` logs decode cleanly.
+- [ ] **Complete live client/task submission path** — After TP-007, worker registration is fixed, but the smoke now fails after client submission: `ts-client` reports `no ACK received`, marker proof is missing, and the server logs `ZmqParsing "Invalid UUID format"` while handling submitted-task frames. Fix task frame handling and the server `ClientAck` response so `ts-client` can exit successfully during the end-to-end smoke (discovered during TP-005, refined during TP-007).
 - [ ] **Separate demo suites from regression tests** — `test-conc-executor2`, `test-event-trigger`, `test-logger`, `test-simple-servant`, and `test-zmq-xt` are Cabal test suites but behave as demos/long-running servers; split or reclassify them before making `cabal test all` a CI default (discovered during TP-006).

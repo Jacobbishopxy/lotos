@@ -222,7 +222,7 @@ Exit codes:
 - `2`: known client ACK blocker; worker marker proof exists but `ts-client` timed out waiting for `ClientAck`.
 - `1`: hard runtime failure; inspect the run evidence directory.
 
-Current TP-005 smoke evidence is still an exit-`1` hard runtime failure before client submission: server HTTP readiness passes, but `/SimpleServer/worker_stats` never shows `simpleWorker_1` because the server rejects worker status frames with a UTF-8 decode error. The exit-`2` ACK-blocker classification only applies after worker registration and marker proof succeed while the remaining failure is the missing client ACK.
+Current TP-007 smoke evidence reaches server HTTP readiness and worker registration: run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T032757Z-186410/` records `/SimpleServer/worker_stats` with `simpleWorker_1`, and server logs repeated `handleBackend -> WorkerStatus: "simpleWorker_1"`. The previous backend UTF-8 worker-status decode blocker is resolved. The same smoke still exits `1` after client submission because `ts-client` reports `no ACK received`, marker proof is missing, and the server logs `ZmqParsing "Invalid UUID format"` on the submitted-task path. The exit-`2` ACK-blocker classification still only applies after worker marker proof succeeds while the remaining failure is the missing client ACK.
 
 Manual fallback, if the helper is unavailable, is the same sequence:
 
@@ -253,14 +253,15 @@ Pass criteria:
 - The worker marker file contains the current run ID (or `.tmp/task-schedule-demo.out` contains exactly `task-schedule-ok` for the manual fallback).
 - The happy-path task is not in garbage.
 
-TP-005 verification status: `cabal build all` passed, and `scripts/task-schedule-smoke.sh` executed locally. The smoke is not a full end-to-end pass yet; run `.tmp/task-schedule-smoke/task-schedule-smoke-20260531T171828Z-3077658/` reached server HTTP readiness, but worker registration timed out because the server backend logged repeated `ZmqParsing "Text decode error: Cannot decode byte '\\xe4': Data.Text.Encoding: Invalid UTF-8 stream"` while handling worker status frames. Client submission is therefore intentionally skipped until worker readiness is observable.
+TP-007 verification status: `cabal build all`, `cabal build all --enable-tests`, and `cabal test lotos:test:test-conc-executor` passed. `scripts/task-schedule-smoke.sh` run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T032757Z-186410/` proved worker registration: `/SimpleServer/worker_stats` contains `simpleWorker_1`, and the backend no longer logs the previous UTF-8 worker-status decode error. The smoke is not a full end-to-end pass yet; it now reaches client submission and fails later with `ts-client: no ACK received from load balancer before reqTimeoutSec`, missing marker proof, and server-side `ZmqParsing "Invalid UUID format"` on submitted-task handling.
 
 ## Implementation status by task
 
 - **TP-002 (contract):** this MVP contract defines the canonical CLI, address, config, task JSON, and acceptance expectations.
 - **TP-003 (client submission):** `ts-client` accepts `TASK_JSON` or `CLIENT_CONFIG_JSON TASK_JSON`, sends the task to frontend `5555`, and exits non-zero on parse/argument/ACK timeout failures. Live ACK success still depends on server-side ACK support.
 - **TP-004 (runtime config alignment):** `ts-server`, `ts-worker`, and `ts-client` use the defaults above; server/worker accept zero or one config argument; worker backend/logging defaults are aligned to `5556`/`5557`; checked-in sample configs load through the exported config readers.
-- **TP-005 (end-to-end smoke):** `scripts/task-schedule-smoke.sh` provides the repeatable local smoke path and captures per-run evidence. Current verification is blocked before client submission by server-side worker status frame parsing (`ZmqParsing` UTF-8 decode error) while `/SimpleServer/worker_stats` remains empty.
+- **TP-005 (end-to-end smoke):** `scripts/task-schedule-smoke.sh` provides the repeatable local smoke path and captures per-run evidence.
+- **TP-007 (worker status frame decoding):** worker DEALER sockets now use the configured worker ID as the ZeroMQ routing id, preserving the existing payload frame order while making backend `RouterBackendIn` decode worker status frames as UTF-8. Current smoke evidence shows `/SimpleServer/worker_stats` contains `simpleWorker_1`; the remaining runtime blocker is after client submission (`no ACK received`, missing marker proof, and server-side `Invalid UUID format`).
 
 ## Non-goals and known risks
 
@@ -276,8 +277,8 @@ Non-goals for the MVP:
 Known risks/gaps for downstream work:
 
 - `ts-client` now has a submission path, but the live ACK success path still depends on the server frontend sending the client ACK required by this contract.
-- TP-005 live multi-process smoke reaches server HTTP readiness but currently blocks on server-side parsing of worker status frames before worker registration becomes observable.
-- Current server frontend enqueues requests but does not yet send the client ACK required by this contract; this remains the next expected blocker after worker status parsing is fixed.
+- TP-007 live multi-process smoke reaches server HTTP readiness and worker registration, then fails after client submission with missing ACK/marker proof and server-side `ZmqParsing "Invalid UUID format"`; task submission frame handling should be fixed before expecting a full MVP pass.
+- Current server frontend enqueues requests but does not yet send the client ACK required by this contract; this remains a blocker once task submission/dispatch handling succeeds.
 - Worker log transport is not fully wired to an external server endpoint; `5557` is reserved and log-based acceptance is optional.
 - The info API currently exposes worker task membership but not a dedicated task-status field; the file side effect is the required completion proof for the MVP happy path.
 - `taskTimeout` and `taskProp.executeTimeoutSec` duplicate timeout data; the MVP resolves ambiguity by making `taskTimeout` authoritative and requiring equality.
