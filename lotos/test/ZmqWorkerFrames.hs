@@ -7,6 +7,14 @@ import Control.Concurrent (threadDelay)
 import Control.Monad (forM_, when)
 import Data.Time (UTCTime (..), addUTCTime, fromGregorian)
 import Lotos.Zmq
+import Lotos.Zmq.Internal.Retry
+  ( FailedTaskDisposition (..),
+    RetryTask (..),
+    failedTaskDisposition,
+    mkRetryTask,
+    partitionRetryTasks,
+    retryTaskEligible,
+  )
 import System.Exit (exitFailure)
 import Test.HUnit
 import Zmqx qualified

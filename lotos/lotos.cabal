@@ -42,6 +42,7 @@ library
     Lotos.TSD.RingBuffer
     Lotos.Util
     Lotos.Zmq
+    Lotos.Zmq.Internal.Retry
 
   other-modules:
     Lotos.Proc.ConcExecutor

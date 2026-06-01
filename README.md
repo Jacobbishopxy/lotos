@@ -35,18 +35,14 @@ Generated/build/runtime directories such as `dist-newstyle/`, `logs/`, `.tmp/`, 
 
 The core library exposes the public API through `Lotos` and `Lotos.Zmq`.
 
-Important modules:
+Important public modules:
 
 - `Lotos.Logger` — `LotosApp`, logger environment, file/console logger setup, and `forkApp`.
-- `Lotos.Proc` / `Lotos.Proc.ConcExecutor` — concurrent shell command execution with callbacks, output streaming, and timeouts.
+- `Lotos.Proc` — concurrent shell command execution with callbacks, output streaming, and timeouts.
 - `Lotos.TSD.Queue`, `Lotos.TSD.Map`, `Lotos.TSD.RingBuffer` — STM-backed shared data structures.
-- `Lotos.Zmq.Adt` — ZMQ multipart serialization classes and message/task/status types.
-- `Lotos.Zmq.LBS` — load-balancer server assembly.
-- `Lotos.Zmq.LBS.SocketLayer` — frontend/backend router loop and task status handling.
-- `Lotos.Zmq.LBS.TaskProcessor` — scheduler trigger loop and `LoadBalancerAlgo` typeclass.
-- `Lotos.Zmq.LBS.InfoStorage` — Servant/Warp HTTP state snapshot API.
-- `Lotos.Zmq.LBW` — worker service, `TaskAcceptor`, and `StatusReporter` typeclasses.
-- `Lotos.Zmq.LBC` — client request service.
+- `Lotos.Zmq` — the supported facade for ZMQ config/readers, protocol types, client/server/worker entry points, and the `LoadBalancerAlgo`, `TaskAcceptor`, and `StatusReporter` extension points.
+
+Lower-level `Lotos.Zmq.*` implementation modules are intentionally not part of the public API. The only exposed internal ZMQ module is `Lotos.Zmq.Internal.Retry`, which exists for bounded broker regression tests and retry-disposition implementation work; normal applications should prefer `Lotos.Zmq`.
 
 ### `applications/TaskSchedule`
 

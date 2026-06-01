@@ -16,8 +16,57 @@
 -- changing 'ToZmq' or 'FromZmq' instances; the client, broker, and worker peers
 -- decode frames positionally.
 module Lotos.Zmq
-  ( -- * adt
-    module Lotos.Zmq.Adt,
+  ( -- * aliases
+    RoutingID,
+    TaskID,
+    TSWorkerStatusMap,
+
+    -- * serialization classes
+    ToZmq (..),
+    FromZmq (..),
+
+    -- * tasks and protocol ADTs
+    Task (..),
+    defaultTask,
+    fillTaskID,
+    fillTaskID',
+    unsafeGetTaskID,
+    Ack,
+    newAck,
+    ackFromText,
+    ackFromBs,
+    ackFromUTC,
+    RouterFrontendOut (..),
+    RouterFrontendIn (..),
+    TaskStatus (..),
+    WorkerMsgType (..),
+    RouterBackendOut (..),
+    RouterBackendIn (..),
+    WorkerReportStatus (..),
+    WorkerReportTaskStatus (..),
+    Notify (..),
+    WorkerLogging (..),
+    workerLoggingToTextTuple,
+
+    -- * worker task maps and event triggers
+    TSWorkerTasksMap,
+    newTSWorkerTasksMap,
+    lookupTSWorkerTasks,
+    insertTSWorkerTasks,
+    lookupTSWorkerTasks',
+    deleteTSWorkerTasks,
+    deleteTSWorkerTasks',
+    updateTSWorkerTasks,
+    modifyTSWorkerTasks',
+    appendTSWorkerTasks,
+    toListTSWorkerTasks,
+    toMapTSWorkerTasks,
+    EventTrigger,
+    mkCounterTrigger,
+    mkTimeTrigger,
+    mkCombinedTrigger,
+    callTrigger,
+    timeoutInterval,
 
     -- * config
     BrokerServiceConfig (..),
