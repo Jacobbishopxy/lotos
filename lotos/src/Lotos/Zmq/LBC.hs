@@ -33,9 +33,12 @@ data ClientService = ClientService
 mkClientService :: ClientServiceConfig -> LotosApp ClientService
 mkClientService cs@ClientServiceConfig {..} = do
   cReq <- zmqUnwrap $ Zmqx.Req.open $ Zmqx.name "clientReq"
-  liftIO $ Zmqx.setSocketOpt cReq (Zmqx.Z_RcvTimeO $ fromIntegral reqTimeoutSec)
+  liftIO $ Zmqx.setSocketOpt cReq (Zmqx.Z_RcvTimeO $ fromIntegral $ secondsToMilliseconds reqTimeoutSec)
   zmqUnwrap $ Zmqx.connect cReq loadBalancerFrontendAddr
   return $ ClientService cs cReq 0
+
+secondsToMilliseconds :: Int -> Int
+secondsToMilliseconds seconds = seconds * 1000
 
 sendTaskRequest :: (ToZmq t) => ClientService -> Task t -> LotosApp (Maybe Ack)
 sendTaskRequest ClientService {..} t = do

@@ -5,11 +5,97 @@
 
 module Main where
 
--- TODO
+import Adt (ClientTask)
+import Client (readTaskFromFile)
+import Control.Exception (SomeException, try)
+import Control.Monad (join)
+import Data.Aeson (eitherDecode)
+import qualified Data.ByteString.Lazy as BL
+import Lotos.Logger (LogLevel (DEBUG), runApp, withLocalTimeLogger)
+import Lotos.Zmq (Ack, ClientServiceConfig (..), Task, mkClientService, runZmqContextIO, sendTaskRequest)
+import System.Timeout (timeout)
+import System.Environment (getArgs)
+import System.Exit (exitFailure)
+import System.IO (hPutStrLn, stderr)
 
-import Lotos.Zmq()
-import Client()
+data ClientArgs = ClientArgs
+  { clientConfigPath :: Maybe FilePath,
+    clientTaskPath :: FilePath
+  }
+
+usage :: String
+usage =
+  unlines
+    [ "Usage:",
+      "  ts-client TASK_JSON",
+      "  ts-client CLIENT_CONFIG_JSON TASK_JSON"
+    ]
+
+parseClientArgs :: [String] -> Either String ClientArgs
+parseClientArgs [taskJson] = Right $ ClientArgs Nothing taskJson
+parseClientArgs [clientConfigJson, taskJson] = Right $ ClientArgs (Just clientConfigJson) taskJson
+parseClientArgs _ = Left usage
+
+defaultClientConfig :: ClientServiceConfig
+defaultClientConfig =
+  ClientServiceConfig
+    { clientId = "simpleClient_1",
+      loadBalancerFrontendAddr = "tcp://127.0.0.1:5555",
+      reqTimeoutSec = 5
+    }
+
+loadClientConfig :: ClientArgs -> IO ClientServiceConfig
+loadClientConfig ClientArgs {clientConfigPath = Nothing} = pure defaultClientConfig
+loadClientConfig ClientArgs {clientConfigPath = Just path} = readClientConfigFile path
+
+readClientConfigFile :: FilePath -> IO ClientServiceConfig
+readClientConfigFile path = do
+  content <- BL.readFile path
+  case eitherDecode content of
+    Left err -> fail $ "Invalid client config JSON: " <> err
+    Right clientConfig -> pure clientConfig
+
+readClientTask :: ClientArgs -> IO (Task ClientTask)
+readClientTask ClientArgs {clientTaskPath = path} = do
+  result <- readTaskFromFile path
+  case result of
+    Left err -> fail $ "Invalid task JSON: " <> err
+    Right task -> pure task
+
+submitClientTask :: ClientServiceConfig -> Task ClientTask -> IO (Maybe Ack)
+submitClientTask clientConfig task = do
+  timedAck <- timeout (requestTimeoutMicroseconds clientConfig) $ submitClientTaskOnce clientConfig task
+  pure $ join timedAck
+
+submitClientTaskOnce :: ClientServiceConfig -> Task ClientTask -> IO (Maybe Ack)
+submitClientTaskOnce clientConfig task =
+  withLocalTimeLogger "./logs/taskScheduleClient.log" DEBUG False $ \logConfig ->
+    runZmqContextIO $ runApp logConfig $ do
+      service <- mkClientService clientConfig
+      sendTaskRequest service task
+
+requestTimeoutMicroseconds :: ClientServiceConfig -> Int
+requestTimeoutMicroseconds clientConfig = reqTimeoutSec clientConfig * 1_000_000
+
+runClient :: ClientArgs -> IO (Maybe Ack)
+runClient clientArgs = do
+  clientConfig <- loadClientConfig clientArgs
+  task <- readClientTask clientArgs
+  submitClientTask clientConfig task
+
+dieWith :: String -> IO a
+dieWith msg = do
+  hPutStrLn stderr msg
+  exitFailure
 
 main :: IO ()
 main = do
-  putStrLn "whatever"
+  args <- getArgs
+  case parseClientArgs args of
+    Left msg -> dieWith msg
+    Right clientArgs -> do
+      runResult <- try (runClient clientArgs) :: IO (Either SomeException (Maybe Ack))
+      case runResult of
+        Left err -> dieWith $ "ts-client: " <> show err
+        Right Nothing -> dieWith "ts-client: no ACK received from load balancer before reqTimeoutSec"
+        Right (Just ack) -> putStrLn $ "accepted/enqueued ACK: " <> show ack

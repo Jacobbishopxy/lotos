@@ -86,6 +86,7 @@ Client defaults:
 | `clientId` | `simpleClient_1` |
 | `loadBalancerFrontendAddr` | `tcp://127.0.0.1:5555` |
 | `reqTimeoutSec` | `5` |
+| Log file | `./logs/taskScheduleClient.log` |
 
 ACK semantics:
 
@@ -252,7 +253,7 @@ Non-goals for the MVP:
 
 Known risks/gaps for downstream work:
 
-- `ts-client` is currently a placeholder.
+- `ts-client` now has a submission path, but the live ACK success path still depends on the server frontend sending the client ACK required by this contract.
 - Current worker hardcoded addresses appear inverted relative to the server; the contract corrects the worker backend to `5556`.
 - Current server frontend enqueues requests but does not yet send the client ACK required by this contract.
 - Worker log transport is not fully wired to an external server endpoint; `5557` is reserved and log-based acceptance is optional.
