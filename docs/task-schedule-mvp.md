@@ -218,23 +218,26 @@ ACK alone is not proof of completion; it only proves broker acceptance.
 
 ## End-to-end acceptance script
 
-Run the repeatable smoke helper from the repository root after compiling the workspace and all test targets:
+Run the repeatable smoke helpers from the repository root after compiling the workspace and all test targets:
 
 ```bash
 cabal build all --enable-tests
 scripts/task-schedule-smoke.sh
+scripts/task-schedule-multi-worker-smoke.sh
 ```
 
 For the normal regression gate, `cabal test all` is safe: the `lotos` package registers only bounded, assertion-based regression suites as Cabal tests, and TaskSchedule's worker lifecycle test is also bounded. Long-running or no-assertion examples live under `lotos:exe:demo-*` and should be run intentionally, usually with `timeout` for server demos.
 
-The helper starts `ts-server` and `ts-worker` with the checked-in sample configs, waits for `/SimpleServer/info` and `/SimpleServer/worker_stats`, submits a fresh per-run task with `ts-client`, snapshots the info endpoints, checks a per-run marker written by the worker command, polls `/SimpleServer/info.workerLoggingsMap` for the current run id and final `ExitSuccess` command result, and preserves logs plus `result.env` under `.tmp/task-schedule-smoke/<run-id>/`. It bypasses local proxy settings for loopback `curl` probes and cleans up only the process IDs/process groups it started.
+The single-worker helper starts `ts-server` and one `ts-worker` with the checked-in sample configs, waits for `/SimpleServer/info` and `/SimpleServer/worker_stats`, submits a fresh per-run task with `ts-client`, snapshots the info endpoints, checks a per-run marker written by the worker command, polls `/SimpleServer/info.workerLoggingsMap` for the current run id and final `ExitSuccess` command result, and preserves logs plus `result.env` under `.tmp/task-schedule-smoke/<run-id>/`. It bypasses local proxy settings for loopback `curl` probes and cleans up only the process IDs/process groups it started.
+
+The multi-worker helper generates per-run broker, worker, client, and task JSON files under `.tmp/task-schedule-multi-worker-smoke/<run-id>/`. By default it starts one server, two workers (`smokeWorker_1` and `smokeWorker_2`), and four distinct clients/tasks. It verifies both workers in `/SimpleServer/worker_stats`, all client ACKs, current-run task evidence in every worker-specific stdio log, fresh per-task marker files, current-run worker logging plus `ExitSuccess` in `/SimpleServer/info.workerLoggingsMap`, and absence from `/SimpleServer/garbage`, then cleans up its tracked process groups.
 
 Exit codes:
 
-- `0`: full MVP pass; client received ACK, worker stats are visible, the worker marker proof exists, worker logging reached `/info.workerLoggingsMap`, and the current run is absent from garbage.
-- `1`: hard runtime failure, including readiness, ACK, marker, worker-logging, or garbage-check failures; inspect the run evidence directory.
+- `0`: full smoke pass; expected worker stats are visible, clients received ACKs, marker/logging proof exists, and the current run is absent from garbage.
+- `1`: hard runtime failure, including readiness, ACK, marker, per-worker evidence, worker-logging, garbage-check, or cleanup-safety failures; inspect the run evidence directory.
 
-Current TP-013 smoke evidence is a full MVP pass with wired worker logging: run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T075727Z-519892/` records `status=PASS`, `client_exit=0`, `/SimpleServer/worker_stats` contained `simpleWorker_1`, the worker wrote the fresh marker file, `logging-info.json` and `final-info.json` contained both `STDOUT: task-schedule-smoke-20260601T075727Z-519892` and `ExitSuccess` under `workerLoggingsMap.simpleWorker_1`, and `final-garbage.json` did not contain the run id.
+Current TP-017 smoke evidence is a full MVP pass for both paths: single-worker run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T110454Z-1237282/` records `status=PASS`, and multi-worker run `.tmp/task-schedule-multi-worker-smoke/task-schedule-multi-worker-smoke-20260601T110611Z-1239027/` records `status=PASS`, `worker_count=2`, `task_count=4`, per-worker current-run processing evidence, fresh markers, worker logging, and no current-run garbage.
 
 Manual fallback, if the helper is unavailable, is the same sequence:
 
@@ -260,9 +263,9 @@ Pass criteria:
 
 - Server and worker stay running without uncaught exceptions.
 - Client prints an accepted/enqueued ACK and exits `0`.
-- Worker stats include `simpleWorker_1`.
+- Worker stats include `simpleWorker_1` for the single-worker helper, or every generated `smokeWorker_N` for the multi-worker helper.
 - The demo task is visible in queue/worker state during or after scheduling.
-- The worker marker file contains the current run ID (or `.tmp/task-schedule-demo.out` contains exactly `task-schedule-ok` for the manual fallback).
+- The worker marker file contains the current run ID (or `.tmp/task-schedule-demo.out` contains exactly `task-schedule-ok` for the manual fallback); the multi-worker helper requires every generated task marker to match the current run.
 - `/SimpleServer/info.workerLoggingsMap` contains the worker id plus stdout/stderr or `CommandResult` entries for the task after the info-storage refresh interval.
 - The happy-path task is not in garbage.
 
@@ -282,6 +285,7 @@ TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-s
 - **TP-012 (worker lifecycle/failure semantics):** bounded tests cover retry decrement, garbage after retry exhaustion, command success/failure/timeout mapping, and worker `TaskProcessing` start reports; smoke run `.tmp/task-schedule-smoke/tp012-step3-20260601T071329Z-471004/` passed.
 - **TP-013 (worker logging/info storage):** info storage binds the configured `infoStorage.loggingAddr` (`5557` in the demo), workers publish `workerId` topic frames plus `WorkerLogging` payloads, and the smoke helper now requires current-run stdout plus `ExitSuccess` evidence in `/SimpleServer/info.workerLoggingsMap`.
 - **TP-015 (retry delay semantics):** `taskRetryInterval` is now enforced for retryable failures with broker-local readiness metadata; fixed-clock tests cover delayed, due, and immediate retry behavior, and smoke run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T094502Z-746207/` passed.
+- **TP-017 (multi-worker smoke):** `scripts/task-schedule-multi-worker-smoke.sh` proves bounded local scheduling with at least two distinct worker IDs, unique client IDs, multiple fresh tasks, per-worker current-run stdio evidence, marker/logging checks, endpoint snapshots, and tracked cleanup; run `.tmp/task-schedule-multi-worker-smoke/task-schedule-multi-worker-smoke-20260601T110611Z-1239027/` passed with 2 workers and 4 tasks.
 
 ## Non-goals and known risks
 

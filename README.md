@@ -139,7 +139,8 @@ Use a CI-safe test posture: registered Cabal test suites are bounded, assertion-
 | Full regression | `cabal test all` | Runs bounded assertion-based suites: `lotos` frame/executor tests plus TaskSchedule's worker lifecycle test. |
 | Focused quick regression | `cabal test lotos:test:test-conc-executor` | HUnit coverage for concurrent command success/failure, callbacks, timeout handling, and bounded concurrent execution. |
 | Compile all packages, tests, and demos | `cabal build all --enable-tests` | Builds the workspace, regression test executables, TaskSchedule executables, and `demo-*` executables without running long-lived demos. |
-| Intentional MVP smoke | `scripts/task-schedule-smoke.sh` | Bounded server/worker/client smoke; run after the build command above and inspect `.tmp/task-schedule-smoke/<run-id>/` for `result.env`, logs, endpoint snapshots, and marker proof. |
+| Intentional single-worker MVP smoke | `scripts/task-schedule-smoke.sh` | Bounded server/worker/client smoke; run after the build command above and inspect `.tmp/task-schedule-smoke/<run-id>/` for `result.env`, logs, endpoint snapshots, and marker proof. |
+| Intentional multi-worker smoke | `scripts/task-schedule-multi-worker-smoke.sh` | Starts one server, at least two generated worker configs, and multiple distinct clients/tasks; inspect `.tmp/task-schedule-multi-worker-smoke/<run-id>/` for per-worker stdio logs, endpoint snapshots, markers, and `result.env`. |
 
 Current bounded regression test suites:
 
@@ -193,16 +194,19 @@ cabal run TaskSchedule:exe:ts-client -- task-demo.json
 cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json task-demo.json
 ```
 
-For a repeatable local smoke run, compile all packages and test targets first, then run the helper from the repository root:
+For repeatable local smoke runs, compile all packages and test targets first, then run the desired helper from the repository root:
 
 ```bash
 cabal build all --enable-tests
 scripts/task-schedule-smoke.sh
+scripts/task-schedule-multi-worker-smoke.sh
 ```
 
-The smoke helper starts the server and worker with the checked-in sample configs, submits a fresh per-run task when worker readiness passes, captures evidence under `.tmp/task-schedule-smoke/<run-id>/`, and cleans up only the processes it started. Exit `0` means the full MVP path passed: client ACK, worker stats, fresh marker proof, current-run worker logging in `/SimpleServer/info.workerLoggingsMap`, and no current-run garbage entry. Exit `1` means a runtime, readiness, ACK, marker, worker-logging, or garbage check failed; inspect the evidence directory for `result.env`, `smoke.log`, stdio logs, endpoint snapshots, and the marker file.
+The single-worker smoke helper starts the server and one worker with the checked-in sample configs, submits a fresh per-run task when worker readiness passes, captures evidence under `.tmp/task-schedule-smoke/<run-id>/`, and cleans up only the processes it started. Exit `0` means the full MVP path passed: client ACK, worker stats, fresh marker proof, current-run worker logging in `/SimpleServer/info.workerLoggingsMap`, and no current-run garbage entry. Exit `1` means a runtime, readiness, ACK, marker, worker-logging, or garbage check failed; inspect the evidence directory for `result.env`, `smoke.log`, stdio logs, endpoint snapshots, and the marker file.
 
-Latest TP-013 evidence `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T075727Z-519892/` is green with `status=PASS`, `client_exit=0`, accepted/enqueued ACK, worker `simpleWorker_1` in stats, fresh marker proof, `STDOUT` plus `ExitSuccess` entries under `workerLoggingsMap.simpleWorker_1`, and no current-run garbage entry.
+The multi-worker smoke helper generates a per-run broker config, two worker configs by default (`smokeWorker_1` and `smokeWorker_2`), unique client configs, and four fresh task JSON files. It requires all workers to appear in `/SimpleServer/worker_stats`, all clients to receive ACKs, every task marker to match the current run, every worker-specific stdio log to show current-run task processing, `/SimpleServer/info.workerLoggingsMap` to contain current-run worker logging plus `ExitSuccess`, no current-run garbage, and no leftover `ts-server`/`ts-worker`/`ts-client` processes from its tracked process groups.
+
+Latest TP-017 evidence is green: single-worker run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T110454Z-1237282/` has `status=PASS`, and multi-worker run `.tmp/task-schedule-multi-worker-smoke/task-schedule-multi-worker-smoke-20260601T110611Z-1239027/` has `status=PASS`, `worker_count=2`, `task_count=4`, per-worker current-run evidence, fresh markers, worker logging, and no current-run garbage.
 
 ## Info API
 
@@ -223,7 +227,7 @@ The `/info` response includes `workerLoggingsMap`, keyed by worker id. With the 
 - The broker owns UUID assignment. Client task JSON may set `taskID` to `null`, but scheduled/executing tasks must have IDs before `unsafeGetTaskID` is used.
 - Worker DEALER routing ids and worker logging topics both use `workerId`; custom configs must align client/frontend, worker/backend, and worker-logging endpoints.
 - Failed tasks retry while `taskRetry > 0`; positive `taskRetryInterval` values delay eligibility until the interval has elapsed, while `0` or less preserves immediate retry.
-- Safe verification commands are `cabal build all --enable-tests` for compilation, `cabal test all` for bounded regression suites, and `scripts/task-schedule-smoke.sh` for the intentional end-to-end demo smoke after building.
+- Safe verification commands are `cabal build all --enable-tests` for compilation, `cabal test all` for bounded regression suites, `scripts/task-schedule-smoke.sh` for the intentional single-worker end-to-end demo smoke, and `scripts/task-schedule-multi-worker-smoke.sh` for bounded multi-worker scheduling smoke after building.
 
 ## Development notes
 
