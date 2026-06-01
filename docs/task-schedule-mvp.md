@@ -8,6 +8,8 @@ TP-002 defined the contract, TP-003 implemented client submission, and TP-004 al
 
 The MVP is a single-machine demo with one broker, one or more workers, and a one-shot client that submits a shell-command task. It proves the framework can accept a task, schedule it to a worker, execute the command, and expose enough state to verify the run.
 
+For reusable-library guidance, keep this document focused on the checked-in demo contract and use the README plus Haddocks for API extension points. The concrete demo implementations are still the best examples: `applications/TaskSchedule/src/Server.hs` shows `LoadBalancerAlgo`, `applications/TaskSchedule/src/Worker.hs` shows `TaskAcceptor`/`StatusReporter`, and `applications/TaskSchedule/src/Adt.hs` shows task/status payload serialization.
+
 ## Command UX
 
 All commands must create/use `./logs/` for their local log file and should fail fast with a clear usage message on invalid arguments.

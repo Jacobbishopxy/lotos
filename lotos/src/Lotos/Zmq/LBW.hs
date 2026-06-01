@@ -42,19 +42,25 @@ import Zmqx.Pub
 
 ----------------------------------------------------------------------------------------------------
 
--- | API for task acceptors providing logging and status reporting capabilities
+-- | Callback surface passed to a 'TaskAcceptor'.
 --
--- * taPubTaskLogging: Publishes worker logging messages
--- * taSendTaskStatus: Sends task status updates back to the load balancer
+-- Use these callbacks rather than opening sockets in application code. The
+-- worker service attaches the configured worker id to log frames and forwards
+-- task status frames over the backend connection.
 data TaskAcceptorAPI = TaskAcceptorAPI
   { taPubTaskLogging :: WorkerLogging -> IO (),
+    -- ^ Publish task-scoped stdout/stderr/progress text to info storage.
     taSendTaskStatus :: (TaskID, TaskStatus) -> IO ()
+    -- ^ Report lifecycle transitions such as 'TaskProcessing', 'TaskSucceed', or 'TaskFailed'.
   }
 
--- | Typeclass for task acceptors that process incoming tasks
+-- | Application-defined task executor for worker-side task batches.
 --
--- * processTasks: Processes a batch of tasks using the provided API
---   and returns an updated acceptor state
+-- The framework calls 'processTasks' with up to 'parallelTasksNo' queued tasks.
+-- Implementations should execute or delegate the work, use 'TaskAcceptorAPI' to
+-- report lifecycle/logging events, and return updated acceptor state. Tasks are
+-- expected to already have UUIDs; callback helpers use those UUIDs in protocol
+-- frames.
 class TaskAcceptor ta t where
   processTasks ::
     TaskAcceptorAPI ->
@@ -62,28 +68,29 @@ class TaskAcceptor ta t where
     [Task t] ->
     LotosApp ta
 
--- | API for status reporters containing current worker information
+-- | Read-only worker service facts passed to a 'StatusReporter'.
 data StatusReporterAPI = StatusReporterAPI
   { srReportInfo :: WorkerInfo
+    -- ^ Current queue/processing counts maintained by the worker service.
   }
 
--- | Typeclass for status reporters that gather worker status
+-- | Application-defined status collector for worker heartbeat payloads.
 --
--- * gatherStatus: Collects current status information and returns
---   an updated reporter state along with the status payload
+-- Combine 'srReportInfo' with domain-specific measurements (for example CPU or
+-- memory load) and return the updated reporter state plus the payload sent to
+-- the broker.
 class StatusReporter sr w where
   gatherStatus ::
     StatusReporterAPI ->
     sr ->
     LotosApp (sr, w)
 
--- | Current worker status information
---
--- * wiProcessingTaskNum: Number of tasks currently being processed
--- * wiWaitingTaskNum: Number of tasks waiting in the queue
+-- | Queue/processing counters maintained by the worker service.
 data WorkerInfo = WorkerInfo
   { wiProcessingTaskNum :: Int,
+    -- ^ Number of tasks currently handed to 'processTasks'.
     wiWaitingTaskNum :: Int
+    -- ^ Number of tasks still waiting in the local worker queue.
   }
 
 -- | Worker service implementation combining task processing and status reporting
@@ -316,12 +323,12 @@ listTasksInQueue WorkerService {taskQueue} =
 
 ----------------------------------------------------------------------------------------------------
 
--- publish task logging, used for workers
+-- | Publish a task log frame using the worker id as the PUB/SUB topic.
 pubTaskLogging :: WorkerService ta sr t w -> WorkerLogging -> LotosApp ()
 pubTaskLogging WorkerService {..} wl =
   zmqUnwrap $ Zmqx.sends workerPub $ textToBS (workerId conf) : toZmq wl
 
--- report task status, used for workers
+-- | Send a task-status transition back to the broker backend.
 sendTaskStatus :: WorkerService ta sr t w -> TaskID -> TaskStatus -> LotosApp ()
 sendTaskStatus WorkerService {..} tid ts = do
   ack <- liftIO newAck

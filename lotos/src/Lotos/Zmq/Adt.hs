@@ -99,19 +99,28 @@ import Lotos.Zmq.Util
 -- Type alias
 ----------------------------------------------------------------------------------------------------
 
+-- | ZeroMQ routing id used to identify a client or worker connection.
 type RoutingID = Text.Text
 
+-- | Stable task identifier assigned by the broker before scheduling.
 type TaskID = UUID.UUID
 
+-- | STM map keyed by worker routing id and storing the latest worker status.
 type TSWorkerStatusMap = TSMap RoutingID
 
 ----------------------------------------------------------------------------------------------------
 -- Zmq Messages
 ----------------------------------------------------------------------------------------------------
 
+-- | Convert a value into positional ZeroMQ multipart frames.
+--
+-- Frame order is part of the wire protocol. Peer 'FromZmq' instances decode by
+-- position, so adding, removing, or reordering frames is a protocol change and
+-- must be covered by regression tests.
 class ToZmq a where
   toZmq :: a -> [ByteString.ByteString]
 
+-- | Parse a value from positional ZeroMQ multipart frames.
 class FromZmq a where
   fromZmq :: [ByteString.ByteString] -> Either ZmqError a
 
@@ -129,13 +138,24 @@ instance FromZmq () where
   Req Client --(Task)-> Router Frontend
 -}
 
+-- | Unit of work accepted by the broker and eventually delivered to workers.
+--
+-- Client-submitted tasks may use 'Nothing' for 'taskID'. The broker fills a UUID
+-- before enqueueing/scheduling; worker code and scheduler internals assume the
+-- id is present before calling 'unsafeGetTaskID'.
 data Task t = Task
   { taskID :: Maybe TaskID,
+    -- ^ Broker-owned UUID. Use 'Nothing' for a new client request.
     taskContent :: Text.Text,
+    -- ^ Human-readable task label or description.
     taskRetry :: Int,
-    taskRetryInterval :: Int, -- TODO
-    taskTimeout :: Int, -- TODO
+    -- ^ Remaining retry attempts after worker failure.
+    taskRetryInterval :: Int,
+    -- ^ Retry-delay field carried in the schema; currently not enforced by the scheduler.
+    taskTimeout :: Int,
+    -- ^ Task execution timeout in seconds; @0@ means no timeout for TaskSchedule commands.
     taskProp :: t
+    -- ^ Application-specific task payload.
   }
   deriving (Show)
 
@@ -175,29 +195,40 @@ instance (FromZmq t) => FromZmq (Task t) where
     return $ Task uuid ctt rty ri to prop
   fromZmq _ = Left $ ZmqParsing "Expected 3 parts for Task"
 
+-- | Minimal placeholder task used by examples and protocol smoke checks.
 defaultTask :: Task ()
 defaultTask = Task Nothing "Ping" 0 0 0 ()
 
+-- | Fill 'taskID' only when it is missing.
 fillTaskID :: Task a -> IO (Task a)
 fillTaskID task@Task {taskID = Nothing} = do
   uuid <- nextRandom
   return task {taskID = Just uuid}
 fillTaskID t = return t
 
+-- | Replace 'taskID' with a fresh UUID regardless of the previous value.
 fillTaskID' :: Task a -> IO (Task a)
 fillTaskID' task = do
   uuid <- nextRandom
   return task {taskID = Just uuid}
 
+-- | Extract a task UUID after the broker has assigned one.
+--
+-- This is intentionally partial: scheduler/worker paths maintain the invariant
+-- that tasks have UUIDs before assignment or execution.
 unsafeGetTaskID :: Task a -> TaskID
 unsafeGetTaskID Task {taskID = Just uuid} = uuid
 unsafeGetTaskID _ = error "unsafeGetTaskID: taskID is Nothing"
 
+-- | Broker decision for a failed task.
 data FailedTaskDisposition t
   = RetryFailedTask (Task t)
+  -- ^ Requeue the task with 'taskRetry' decremented.
   | GarbageFailedTask (Task t)
+  -- ^ Move the task to the garbage ring buffer because retries are exhausted.
   deriving (Show)
 
+-- | Decide whether a failed task should be retried or discarded.
 failedTaskDisposition :: Task t -> FailedTaskDisposition t
 failedTaskDisposition task =
   let retriesRemaining = taskRetry task
@@ -207,6 +238,7 @@ failedTaskDisposition task =
 
 ----------------------------------------------------------------------------------------------------
 
+-- | Timestamp ACK used for accepted client requests and worker reports.
 newtype Ack = Ack UTCTime
   deriving (Show)
 
@@ -243,12 +275,19 @@ ackFromUTC = Ack
   - recv: ClientRequest
 -}
 
+-- | Messages sent by the broker frontend ROUTER back to clients.
+--
+-- Serialized frame shape: @[clientRoutingId, reqRequestId, "", ackTimestamp]@.
 data RouterFrontendOut
   = ClientAck
       RoutingID -- clientID
       ByteString.ByteString -- clientReqID
       Ack -- ack
 
+-- | Messages received by the broker frontend ROUTER from clients.
+--
+-- Serialized frame shape:
+-- @[clientRoutingId, reqRequestId, "", taskUuid, taskContent, retry, retryInterval, timeout, taskProp...]@.
 data RouterFrontendIn t
   = ClientRequest
       RoutingID -- clientID
@@ -268,6 +307,12 @@ instance (FromZmq t) => FromZmq (RouterFrontendIn t) where
 
 ----------------------------------------------------------------------------------------------------
 
+-- | Broker-visible task lifecycle state.
+--
+-- The current worker flow reports 'TaskProcessing' when execution starts and
+-- either 'TaskSucceed' or 'TaskFailed' when it finishes. On 'TaskFailed' the
+-- broker retries immediately while 'taskRetry' remains, otherwise it records the
+-- task in the garbage ring buffer.
 data TaskStatus
   = TaskInit
   | TaskPending
@@ -296,6 +341,7 @@ instance FromZmq TaskStatus where
 
 ----------------------------------------------------------------------------------------------------
 
+-- | Discriminator frame for backend worker messages.
 data WorkerMsgType
   = WorkerStatusT
   | WorkerTaskStatusT
@@ -317,11 +363,18 @@ instance FromZmq WorkerMsgType where
   - recv: WorkerReply: worker status, task status
 -}
 
+-- | Messages sent by the broker backend ROUTER to workers.
+--
+-- Serialized frame shape: @[workerRoutingId, taskUuid, taskContent, retry, retryInterval, timeout, taskProp...]@.
 data RouterBackendOut t
   = WorkerTask
       RoutingID -- workerID
       (Task t) -- task
 
+-- | Messages received by the broker backend ROUTER from workers.
+--
+-- Worker status frames are @[workerRoutingId, WorkerStatusT, ack, workerStatus...]@.
+-- Task-status frames are @[workerRoutingId, WorkerTaskStatusT, ack, taskUuid, taskStatus]@.
 data RouterBackendIn w
   = WorkerStatus
       RoutingID -- workerID
@@ -367,11 +420,18 @@ instance (FromZmq w) => FromZmq (RouterBackendIn w) where
 ----------------------------------------------------------------------------------------------------
 -- Worker message
 
+-- | Worker heartbeat payload sent through the backend DEALER.
+--
+-- Serialized frame shape: @[WorkerStatusT, ack, workerStatus...]@ before the
+-- DEALER/ROUTER routing envelope is added by ZeroMQ.
 data WorkerReportStatus w
   = WorkerReportStatus
       Ack
       w
 
+-- | Worker task-status payload sent through the backend DEALER.
+--
+-- Serialized frame shape: @[WorkerTaskStatusT, ack, taskUuid, taskStatus]@.
 data WorkerReportTaskStatus
   = WorkerReportTaskStatus
       Ack
@@ -414,6 +474,11 @@ instance FromZmq Notify where
 
 ----------------------------------------------------------------------------------------------------
 
+-- | Task-scoped worker log payload.
+--
+-- Workers publish their worker id as the PUB/SUB topic, followed by this payload
+-- as @[taskUuid, loggingText]@. Info storage groups retained log lines by
+-- worker id and task id.
 data WorkerLogging = WorkerLogging TaskID Text.Text
   deriving (Show)
 

@@ -39,14 +39,26 @@ type TaskMap t = Map.Map TaskID (Task t)
 -- LoadBalancerAlgo
 ----------------------------------------------------------------------------------------------------
 
+-- | Scheduler output produced by a 'LoadBalancerAlgo'.
+--
+-- Each pair in 'workerTaskPairs' is sent to the worker identified by its
+-- 'RoutingID'. Tasks in 'tasksLeft' are treated as intentionally unscheduled for
+-- this pass and are re-enqueued onto their source queue.
 data ScheduledResult t w
   = ScheduledResult
   { workerTaskPairs :: [(RoutingID, Task t)],
+    -- ^ Worker routing id paired with the task to dispatch to that worker.
     tasksLeft :: [Task t]
+    -- ^ Tasks the algorithm chose not to schedule in this pass.
   }
 
+-- | Application-defined scheduling policy for the load-balancer server.
+--
+-- The task processor calls 'scheduleTasks' with the current worker status
+-- snapshot and a bounded batch of newly accepted plus retryable failed tasks.
+-- Return the updated algorithm state, the worker assignments to send, and any
+-- tasks that should stay queued for a later pass.
 class LoadBalancerAlgo lb t w where
-  -- given a list of tasks, return worker and task pairs
   scheduleTasks :: lb -> [(RoutingID, w)] -> [Task t] -> LotosApp (lb, ScheduledResult t w)
 
 ----------------------------------------------------------------------------------------------------

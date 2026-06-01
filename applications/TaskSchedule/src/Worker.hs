@@ -23,14 +23,15 @@ import Lotos.Zmq
 import Adt
 import Util (cvtCommandResult2TaskStatus)
 
--- | Worker status reporter that tracks active tasks count
+-- | Stateless TaskSchedule worker implementation.
+--
+-- The same value implements both worker extension points: 'TaskAcceptor' for
+-- command execution and 'StatusReporter' for heartbeat payloads.
 data SimpleWorker = SimpleWorker
 
 instance TaskAcceptor SimpleWorker ClientTask where
-  -- \| Process a batch of tasks by:
-  -- 1. Logging task details
-  -- 2. Executing commands concurrently
-  -- 3. Updating task status via callbacks
+  -- | Execute a batch of shell-command tasks and report lifecycle/log output
+  -- through the framework-provided callbacks.
   processTasks TaskAcceptorAPI {..} a tasks = do
     logApp INFO $ "Processing tasks: " ++ show tasks
     results <- liftIO $ executeConcurrently [genCommandRequest task | task <- tasks]
@@ -50,10 +51,7 @@ instance TaskAcceptor SimpleWorker ClientTask where
           }
 
 instance StatusReporter SimpleWorker WorkerState where
-  -- \| Gather worker status by:
-  -- 1. Getting system state
-  -- 2. Combining with task count
-  -- 3. Logging final status
+  -- | Combine OS load metrics with framework-maintained queue/processing counts.
   gatherStatus StatusReporterAPI {..} r = do
     logApp INFO "Gathering worker status..."
     status <- liftIO getWorkerState

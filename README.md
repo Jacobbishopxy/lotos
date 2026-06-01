@@ -88,6 +88,19 @@ class StatusReporter sr w where
   gatherStatus :: StatusReporterAPI -> sr -> LotosApp (sr, w)
 ```
 
+## Using `lotos` as a library
+
+For a new application, import `Lotos.Zmq` and provide application payloads plus the three extension points above:
+
+1. Define a task payload and worker-status payload with `ToZmq`/`FromZmq` instances. Their multipart frame order is the protocol contract; keep peer encoders/decoders and regression tests aligned.
+2. Define a `Task t` JSON shape for clients. New client tasks may leave `taskID = null`; the broker assigns the UUID before scheduling, and worker/scheduler code assumes a UUID is present before calling `unsafeGetTaskID`.
+3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass.
+4. Implement `TaskAcceptor` for workers. Process each task batch, publish task logs with `taPubTaskLogging`, and report `TaskProcessing`, `TaskSucceed`, or `TaskFailed` with `taSendTaskStatus`.
+5. Implement `StatusReporter` for workers. Combine `StatusReporterAPI.srReportInfo` queue/processing counts with app-specific metrics such as CPU or memory load.
+6. Keep config endpoints aligned: clients use the broker `frontendAddr`, workers use the broker `backendAddr`, and worker logging uses the broker `infoStorage.loggingAddr`.
+
+Concrete examples live in the TaskSchedule demo: `applications/TaskSchedule/src/Adt.hs` defines task/status payload frames, `applications/TaskSchedule/src/Server.hs` implements `LoadBalancerAlgo`, and `applications/TaskSchedule/src/Worker.hs` implements both worker typeclasses. The full runtime contract and smoke path remain in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
+
 ## Prerequisites
 
 - GHC 9.14.1 and cabal-install 3.14.2.0 were used for the latest verified build; package files declare `cabal-version: 3.14` and `tested-with: GHC == 9.14.1`.
@@ -127,16 +140,17 @@ Use a CI-safe test posture: registered Cabal test suites are bounded, assertion-
 
 | Goal | Command | Notes |
 |---|---|---|
-| Full regression | `cabal test all` | Runs the bounded `lotos` regression suites only: `test-conc-executor`, `test-zmq-worker-frames`, and `test-zmq-client-ack-frames`. |
+| Full regression | `cabal test all` | Runs bounded assertion-based suites: `lotos` frame/executor tests plus TaskSchedule's worker lifecycle test. |
 | Focused quick regression | `cabal test lotos:test:test-conc-executor` | HUnit coverage for concurrent command success/failure, callbacks, timeout handling, and bounded concurrent execution. |
 | Compile all packages, tests, and demos | `cabal build all --enable-tests` | Builds the workspace, regression test executables, TaskSchedule executables, and `demo-*` executables without running long-lived demos. |
 | Intentional MVP smoke | `scripts/task-schedule-smoke.sh` | Bounded server/worker/client smoke; run after the build command above and inspect `.tmp/task-schedule-smoke/<run-id>/` for `result.env`, logs, endpoint snapshots, and marker proof. |
 
-Current `lotos` regression test suites:
+Current bounded regression test suites:
 
-- `test-conc-executor` is the concurrent process executor regression suite.
-- `test-zmq-worker-frames` checks bounded worker status, worker task-status, retry/failure status payload, and scheduled task ROUTER/DEALER frame contracts.
-- `test-zmq-client-ack-frames` checks bounded frontend REQ/ROUTER client ACK frames.
+- `lotos:test:test-conc-executor` is the concurrent process executor regression suite.
+- `lotos:test:test-zmq-worker-frames` checks bounded worker status, worker task-status, retry/failure status payload, and scheduled task ROUTER/DEALER frame contracts.
+- `lotos:test:test-zmq-client-ack-frames` checks bounded frontend REQ/ROUTER client ACK frames.
+- `TaskSchedule:test:test-worker-lifecycle` checks TaskSchedule command-result status mapping and worker lifecycle callbacks.
 
 Current `lotos` demo executables:
 
@@ -205,6 +219,15 @@ Latest TP-013 evidence `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T07
 - `http://127.0.0.1:8081/SimpleServer/worker_stats`
 
 The `/info` response includes `workerLoggingsMap`, keyed by worker id. With the checked-in sample configs, workers publish command stdout/stderr and final `CommandResult` entries over the `5557` logging endpoint; snapshots reflect those entries after the configured info-storage refresh interval.
+
+## Protocol and verification invariants
+
+- `ToZmq` and `FromZmq` instances define positional multipart wire formats. Do not reorder frames without updating both peers and the bounded frame regression tests.
+- Client ACKs mean accepted/enqueued by the broker, not worker completion. Completion evidence comes from worker side effects, worker task/status state, logs, or smoke artifacts.
+- The broker owns UUID assignment. Client task JSON may set `taskID` to `null`, but scheduled/executing tasks must have IDs before `unsafeGetTaskID` is used.
+- Worker DEALER routing ids and worker logging topics both use `workerId`; custom configs must align client/frontend, worker/backend, and worker-logging endpoints.
+- Failed tasks retry immediately while `taskRetry > 0`; `taskRetryInterval` is currently schema-only.
+- Safe verification commands are `cabal build all --enable-tests` for compilation, `cabal test all` for bounded regression suites, and `scripts/task-schedule-smoke.sh` for the intentional end-to-end demo smoke after building.
 
 ## Development notes
 

@@ -15,10 +15,14 @@ import Lotos.Logger
 import Lotos.Zmq
 import Adt
 
--- | Simple server implementation for load balancing
+-- | Stateless scheduler used by the TaskSchedule demo.
+--
+-- This is the smallest server-side extension point: provide a value for the
+-- algorithm state and implement 'LoadBalancerAlgo' for the task and worker
+-- status payloads used by the application.
 data SimpleServer = SimpleServer
 
--- | LoadBalancerAlgo instance for SimpleServer that distributes tasks based on worker load
+-- | Assign tasks to workers with the lowest combined CPU/memory load score.
 instance LoadBalancerAlgo SimpleServer ClientTask WorkerState where
   scheduleTasks lb workers tasks = do
     logApp INFO $ "scheduleTasks: " ++ show workers ++ ", " ++ show tasks
@@ -30,8 +34,8 @@ instance LoadBalancerAlgo SimpleServer ClientTask WorkerState where
         (assigned, remaining) = assignTasks sortedWorkers tasks []
     pure (lb, ScheduledResult assigned remaining)
     where
-      -- \| Calculate a worker's load score based on CPU and memory usage
-      -- Returns a score between 0 and 1, where lower is better
+      -- | Calculate a worker's load score based on CPU and memory usage.
+      -- Lower scores are preferred.
       loadScore :: WorkerState -> Double
       loadScore ws =
         let -- Weight different load averages (1min: 50%, 5min: 30%, 15min: 20%)
@@ -41,12 +45,7 @@ instance LoadBalancerAlgo SimpleServer ClientTask WorkerState where
          in -- Combined score: 70% CPU load, 30% memory usage
             loadFactor * 0.7 + memFactor * 0.3
 
-      -- \| Recursively assign tasks to workers
-      -- Parameters:
-      --   - List of workers with their states and load scores
-      --   - List of remaining tasks to assign
-      --   - Accumulator for assigned tasks
-      -- Returns: (Assigned tasks, Remaining unassigned tasks)
+      -- | Recursively assign tasks to workers.
       assignTasks :: [(RoutingID, WorkerState, Double)] -> [Task ClientTask] -> [(RoutingID, Task ClientTask)] -> ([(RoutingID, Task ClientTask)], [Task ClientTask])
       -- Base cases: no more workers or no more tasks
       assignTasks [] tasksLeft assigned = (assigned, tasksLeft)

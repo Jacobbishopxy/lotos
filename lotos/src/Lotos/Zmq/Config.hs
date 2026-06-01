@@ -50,6 +50,11 @@ taskProcessorSenderAddr = "inproc://taskProcessorSender"
 
 ----------------------------------------------------------------------------------------------------
 
+-- | Common constraints required to run a named load-balancer service.
+--
+-- The task payload @t@ must serialize to ZeroMQ frames in both directions; the
+-- worker status payload @w@ is received from workers and exposed through the
+-- info API as JSON.
 type LBConstraint name t w =
   ( KnownSymbol name,
     FromZmq t,
@@ -62,56 +67,83 @@ type LBConstraint name t w =
 
 ----------------------------------------------------------------------------------------------------
 
--- data used for cross threads read & write
+-- | STM-backed state shared by the server socket layer, task processor, and
+-- info-storage snapshotter.
 data TaskSchedulerData t s
   = TaskSchedulerData
       (TSQueue (Task t)) -- task queue
       (TSQueue (Task t)) -- failed task queue
-      (TSWorkerTasksMap (TaskID, Task t, TaskStatus)) -- work tasks map
+      (TSWorkerTasksMap (TaskID, Task t, TaskStatus)) -- worker task map
       (TSWorkerStatusMap s) -- worker status map
-      (TSRingBuffer (Task t)) -- garbage queue
+      (TSRingBuffer (Task t)) -- exhausted retry / garbage bin
 
+-- | Queue sizing knobs for broker-owned task storage.
 data TaskSchedulerConfig = TaskSchedulerConfig
   { taskQueueHWM :: Int,
+    -- ^ High-water mark for newly accepted tasks waiting to be scheduled.
     failedTaskQueueHWM :: Int,
+    -- ^ High-water mark for failed tasks that still have retry attempts left.
     garbageBinSize :: Int
+    -- ^ Ring-buffer size for exhausted tasks exposed by the info API.
   }
   deriving (Show, Generic, Aeson.FromJSON)
 
+-- | External broker endpoints.
+--
+-- 'frontendAddr' must match client 'loadBalancerFrontendAddr'. 'backendAddr'
+-- must match worker 'loadBalancerBackendAddr'.
 data SocketLayerConfig = SocketLayerConfig
-  { frontendAddr :: Text.Text, -- client request address
-    backendAddr :: Text.Text -- worker response address
+  { frontendAddr :: Text.Text,
+    -- ^ ROUTER endpoint that accepts client task requests.
+    backendAddr :: Text.Text
+    -- ^ ROUTER endpoint used for worker status and scheduled task traffic.
   }
   deriving (Show, Generic, Aeson.FromJSON)
 
+-- | Scheduler batch and trigger configuration.
 data TaskProcessorConfig = TaskProcessorConfig
-  { taskQueuePullNo :: Int, -- task queue pull number
-    failedTaskQueuePullNo :: Int, -- failed task queue pull number
-    triggerAlgoMaxNotifyCount :: Int, -- lower bound of process (how many workers
-    triggerAlgoMaxWaitSec :: Int -- upper bound of process (worker status report interval
+  { taskQueuePullNo :: Int,
+    -- ^ Maximum number of new tasks pulled per scheduler pass.
+    failedTaskQueuePullNo :: Int,
+    -- ^ Maximum number of retryable failed tasks pulled per scheduler pass.
+    triggerAlgoMaxNotifyCount :: Int,
+    -- ^ Run the scheduling algorithm after this many socket-layer notifications.
+    triggerAlgoMaxWaitSec :: Int
+    -- ^ Run the scheduling algorithm after this many seconds even without enough notifications.
   }
   deriving (Show, Generic, Aeson.FromJSON)
 
+-- | Read-only HTTP snapshot and worker-log collection configuration.
+--
+-- 'loggingAddr' must match worker 'loadBalancerLoggingAddr'. In the demo this
+-- is @tcp://127.0.0.1:5557@ and snapshots include logs after the next
+-- 'infoFetchIntervalSec' refresh.
 data InfoStorageConfig = InfoStorageConfig
-  { httpPort :: Int, -- http server port
-    loggingAddr :: Text.Text, -- worker PUB logging endpoint
+  { httpPort :: Int,
+    -- ^ Servant/Warp port for the info API.
+    loggingAddr :: Text.Text,
+    -- ^ SUB endpoint that receives worker PUB log frames.
     loggingsBufferSize :: Int,
+    -- ^ Per-worker ring-buffer size for retained log lines.
     infoFetchIntervalSec :: Int
+    -- ^ Seconds between state snapshots served by the info API.
   }
   deriving (Show, Generic, Aeson.FromJSON)
 
+-- | Complete server configuration consumed by 'runLBS'.
 data BrokerServiceConfig = BrokerServiceConfig
-  { -- task scheduler
-    taskScheduler :: TaskSchedulerConfig,
-    -- socket layer
+  { taskScheduler :: TaskSchedulerConfig,
+    -- ^ Broker queue and garbage-bin sizing.
     socketLayer :: SocketLayerConfig,
-    -- task processor
+    -- ^ Client/worker ZeroMQ endpoints.
     taskProcessor :: TaskProcessorConfig,
-    -- info storage
-    infoStorage:: InfoStorageConfig
+    -- ^ Scheduler batching and trigger behavior.
+    infoStorage :: InfoStorageConfig
+    -- ^ HTTP info API and worker-log snapshot behavior.
   }
   deriving (Show, Generic, Aeson.FromJSON)
 
+-- | Read a broker JSON config using the record field names above.
 readBrokerConfig :: FilePath -> IO BrokerServiceConfig
 readBrokerConfig = readJsonConfig
 
@@ -119,16 +151,28 @@ readBrokerConfig = readJsonConfig
 -- LoadBalancer Worker Config
 ----------------------------------------------------------------------------------------------------
 
+-- | Worker runtime configuration.
+--
+-- The worker id is used as both the DEALER routing id and the PUB/SUB logging
+-- topic. 'loadBalancerBackendAddr' must match the broker backend, and
+-- 'loadBalancerLoggingAddr' must match broker 'loggingAddr'.
 data WorkerServiceConfig = WorkerServiceConfig
-  { workerId :: Text.Text, -- worker ID for Zmq.Dealer & pub topic for Zmq.Pub
+  { workerId :: Text.Text,
+    -- ^ Stable worker routing id and logging topic.
     workerDealerPairAddr :: Text.Text,
-    loadBalancerBackendAddr :: Text.Text, -- backend address
-    loadBalancerLoggingAddr :: Text.Text, -- backend logging address
-    workerStatusReportIntervalSec :: Int, -- heartbeat interval
-    parallelTasksNo :: Int -- number of parallel tasks
+    -- ^ In-process PAIR endpoint between the worker socket loop and task callbacks.
+    loadBalancerBackendAddr :: Text.Text,
+    -- ^ DEALER endpoint for scheduled tasks and worker/task status reports.
+    loadBalancerLoggingAddr :: Text.Text,
+    -- ^ PUB endpoint for task stdout/stderr and final command-result logs.
+    workerStatusReportIntervalSec :: Int,
+    -- ^ Seconds between calls to 'StatusReporter.gatherStatus'.
+    parallelTasksNo :: Int
+    -- ^ Maximum number of queued tasks handed to 'TaskAcceptor.processTasks' at once.
   }
   deriving (Show, Generic, Aeson.FromJSON)
 
+-- | Read a worker JSON config using the record field names above.
 readWorkerConfig :: FilePath -> IO WorkerServiceConfig
 readWorkerConfig = readJsonConfig
 
@@ -136,12 +180,21 @@ readWorkerConfig = readJsonConfig
 -- LoadBalancer Client Config
 ----------------------------------------------------------------------------------------------------
 
+-- | Client request configuration.
+--
+-- A client sends a single 'Task' request to 'loadBalancerFrontendAddr' and waits
+-- up to 'reqTimeoutSec' seconds for a broker acceptance ACK. The ACK does not
+-- mean the task has completed on a worker.
 data ClientServiceConfig = ClientServiceConfig
   { clientId :: Text.Text,
+    -- ^ Stable REQ routing id used by the frontend ROUTER.
     loadBalancerFrontendAddr :: Text.Text,
+    -- ^ Broker frontend endpoint; must match 'SocketLayerConfig.frontendAddr'.
     reqTimeoutSec :: Int
+    -- ^ Client-side ACK timeout in seconds.
   }
   deriving (Show, Generic, Aeson.FromJSON)
 
+-- | Read a client JSON config using the record field names above.
 readClientConfig :: FilePath -> IO ClientServiceConfig
 readClientConfig = readJsonConfig

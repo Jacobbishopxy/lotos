@@ -3,6 +3,18 @@
 -- date: 2025/03/23 21:51:09 Sunday
 -- brief:
 
+-- | Public facade for the ZeroMQ load-balancer framework.
+--
+-- Library users normally import this module and provide three small pieces:
+--
+-- * a task payload with 'ToZmq'/'FromZmq' instances,
+-- * a server-side 'LoadBalancerAlgo' that maps queued tasks to worker routing ids,
+-- * worker-side 'TaskAcceptor' and 'StatusReporter' implementations.
+--
+-- The facade also re-exports the config readers and protocol ADTs used by the
+-- TaskSchedule demo. Preserve the documented multipart frame order whenever
+-- changing 'ToZmq' or 'FromZmq' instances; the client, broker, and worker peers
+-- decode frames positionally.
 module Lotos.Zmq
   ( -- * adt
     module Lotos.Zmq.Adt,
