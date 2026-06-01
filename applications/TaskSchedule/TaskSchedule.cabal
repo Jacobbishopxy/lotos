@@ -1,13 +1,17 @@
 cabal-version:   3.14
 name:            TaskSchedule
 version:         0.1.0.0
+synopsis:        Demo scheduler for the lotos ZeroMQ load balancer
+description:     Example application that schedules shell-command tasks onto load-reporting workers using the lotos broker, worker, and client APIs.
 license:         BSD-3-Clause
 license-file:    LICENSE
 author:          JacobX
 maintainer:      jacobbishopxy@gmail.com
+category:        Distributed Computing
 build-type:      Simple
 tested-with:     GHC == 9.14.1
 extra-doc-files: CHANGELOG.md
+extra-source-files: config/*.json
 
 common shared-properties
   default-language:   GHC2024

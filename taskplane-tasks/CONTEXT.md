@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-06-01
 **Status:** Active
-**Next Task ID:** TP-015
+**Next Task ID:** TP-019
 
 ---
 
@@ -29,6 +29,7 @@ parallel batch execution or `/orch <path/to/PROMPT.md>` for a single task.
 
 _Items discovered during task execution are logged here by agents._
 
+- [ ] **Set package dependency upper bounds** — `cabal check` still warns that `lotos` and TaskSchedule dependency lists omit upper bounds; adding a PVP policy is package-release polish beyond TP-018's docs/examples pass (discovered during TP-018).
 - [x] **Expose client config reader** — Resolved during TP-004 by exporting `readBrokerConfig`, `readWorkerConfig`, and `readClientConfig` from the `Lotos.Zmq` facade so downstream executables can use the existing config readers.
 - [x] **Fix worker status frame decoding** — Resolved during TP-007 by setting the worker DEALER `Z_RoutingId` from `workerId` before backend connect; smoke run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T032757Z-186410/` shows `/SimpleServer/worker_stats` contains `simpleWorker_1` and backend `WorkerStatus` logs decode cleanly.
 - [x] **Complete live client/task submission path** — Resolved during TP-008 by decoding the frontend ROUTER/REQ envelope as routing-id, binary request-id, empty delimiter, and task body; echoing `ClientAck` after successful UUID fill/enqueue; and setting the client REQ routing id from `clientId`. Smoke run `.tmp/task-schedule-smoke/task-schedule-smoke-20260601T040349Z-220141/` passed with `client_exit=0`, an accepted/enqueued ACK, worker registration, and fresh marker proof.

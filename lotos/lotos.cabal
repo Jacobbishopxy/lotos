@@ -1,10 +1,12 @@
 cabal-version:   3.14
 name:            lotos
 version:         0.1.0.0
+synopsis:        ZeroMQ-backed task load-balancer framework
+description:     Library components for building ZeroMQ-backed task brokers, workers, and clients with STM-backed scheduling state and concurrent process execution helpers.
 license:         BSD-3-Clause
 author:          jacob
 maintainer:      jacobbishopxy@gmail.com
-category:        Data
+category:        Distributed Computing
 build-type:      Simple
 tested-with:     GHC == 9.14.1
 extra-doc-files: CHANGELOG.md

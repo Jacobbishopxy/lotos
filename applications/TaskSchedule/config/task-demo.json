@@ -1,0 +1,11 @@
+{
+  "taskID": null,
+  "taskContent": "write a TaskSchedule MVP marker file",
+  "taskRetry": 0,
+  "taskRetryInterval": 0,
+  "taskTimeout": 5,
+  "taskProp": {
+    "command": "mkdir -p .tmp && printf 'task-schedule-ok\\n' > .tmp/task-schedule-demo.out",
+    "executeTimeoutSec": 5
+  }
+}

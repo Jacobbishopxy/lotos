@@ -8,7 +8,7 @@ TP-002 defined the contract, TP-003 implemented client submission, and TP-004 al
 
 The MVP is a single-machine demo with one broker, one or more workers, and a one-shot client that submits a shell-command task. It proves the framework can accept a task, schedule it to a worker, execute the command, and expose enough state to verify the run.
 
-For reusable-library guidance, keep this document focused on the checked-in demo contract and use the README plus Haddocks for API extension points. The concrete demo implementations are still the best examples: `applications/TaskSchedule/src/Server.hs` shows `LoadBalancerAlgo`, `applications/TaskSchedule/src/Worker.hs` shows `TaskAcceptor`/`StatusReporter`, and `applications/TaskSchedule/src/Adt.hs` shows task/status payload serialization.
+For reusable-library guidance, keep this document focused on the checked-in demo contract and use the README plus [`docs/build-your-own-scheduler.md`](build-your-own-scheduler.md) for the adoption checklist and API extension points. The concrete demo implementations are still the best examples: `applications/TaskSchedule/src/Server.hs` shows `LoadBalancerAlgo`, `applications/TaskSchedule/src/Worker.hs` shows `TaskAcceptor`/`StatusReporter`, and `applications/TaskSchedule/src/Adt.hs` shows task/status payload serialization.
 
 ## Command UX
 
@@ -179,7 +179,7 @@ Failure and retry semantics:
 - On `TaskFailed`, the broker removes the task from the worker task map. If `taskRetry > 0`, it decrements `taskRetry` and requeues the task on the failed-task queue; if `taskRetry == 0`, it writes the task to `/SimpleServer/garbage`.
 - Requeued failures with `taskRetryInterval > 0` are not passed back to the scheduler until the interval has elapsed from broker failure handling. `taskRetryInterval <= 0` keeps the historical immediate retry behavior. The delay metadata is broker-local and does not change the task JSON or ZMQ frame shape.
 
-Example task (`task-demo.json`):
+Checked-in sample task (`applications/TaskSchedule/config/task-demo.json`):
 
 ```json
 {
@@ -252,7 +252,7 @@ cabal run TaskSchedule:exe:ts-server -- applications/TaskSchedule/config/broker.
 cabal run TaskSchedule:exe:ts-worker -- applications/TaskSchedule/config/worker.json
 
 # Terminal 3
-cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json task-demo.json
+cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json applications/TaskSchedule/config/task-demo.json
 curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/worker_stats
 curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/worker_tasks
 curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/garbage

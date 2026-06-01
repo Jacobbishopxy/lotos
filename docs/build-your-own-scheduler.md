@@ -1,0 +1,122 @@
+# Build your own scheduler with `lotos`
+
+This guide is the short path for turning the `lotos` load-balancer library into an application-specific scheduler. Keep the full demo runtime details in [`docs/task-schedule-mvp.md`](task-schedule-mvp.md) and use the TaskSchedule source as the concrete example.
+
+## 1. Model your task and worker status payloads
+
+Import the public facade and keep protocol details in your own payload types:
+
+```haskell
+import Lotos.Zmq
+```
+
+Define:
+
+- a task payload type `t` that clients submit inside `Task t`,
+- a worker-status payload type `w` that workers report to the broker,
+- `ToJSON`/`FromJSON` instances for client task files when you want JSON submission,
+- `ToZmq`/`FromZmq` instances for every payload that crosses ZeroMQ.
+
+`ToZmq`/`FromZmq` frame order is the wire contract. Update both peers and bounded frame tests whenever you change it. TaskSchedule's examples are:
+
+- `applications/TaskSchedule/src/Adt.hs` — `ClientTask`, `WorkerState`, and their ZMQ/JSON shapes.
+- `lotos/test/ZmqWorkerFrames.hs` and `lotos/test/ZmqClientAckFrames.hs` — frame-regression test patterns.
+
+## 2. Implement the server scheduler
+
+Provide a scheduler state value and an instance of `LoadBalancerAlgo`:
+
+```haskell
+instance LoadBalancerAlgo MyScheduler MyTask MyWorkerStatus where
+  scheduleTasks scheduler workers tasks = do
+    -- workers :: [(RoutingID, MyWorkerStatus)]
+    -- tasks   :: [Task MyTask]
+    pure (scheduler, ScheduledResult assignments deferred)
+```
+
+Return assignments for tasks that should be sent to worker routing IDs now, and return deferred tasks when they should stay queued for a later scheduling pass. The broker owns UUID assignment; scheduler logic can assume scheduled/executing tasks have IDs.
+
+TaskSchedule reference: `applications/TaskSchedule/src/Server.hs` assigns tasks to the lowest-load workers.
+
+## 3. Implement worker execution and status reporting
+
+Workers implement two extension points:
+
+```haskell
+instance TaskAcceptor MyWorker MyTask where
+  processTasks TaskAcceptorAPI{..} worker tasks = do
+    -- call taSendTaskStatus (taskId, TaskProcessing) when work starts
+    -- call taPubTaskLogging (WorkerLogging taskId text) for task logs
+    -- call taSendTaskStatus (taskId, TaskSucceed/TaskFailed) when work ends
+    pure worker
+
+instance StatusReporter MyWorker MyWorkerStatus where
+  gatherStatus StatusReporterAPI{..} worker = do
+    -- include wiProcessingTaskNum/wiWaitingTaskNum from srReportInfo if useful
+    pure (worker, status)
+```
+
+TaskSchedule reference: `applications/TaskSchedule/src/Worker.hs` executes shell commands with `Lotos.Proc`, publishes stdout/stderr, reports `TaskProcessing`, and maps command results to `TaskSucceed` or `TaskFailed`.
+
+## 4. Wire server, worker, and client services
+
+Use `Lotos.Zmq` from executable entry points instead of importing lower-level implementation modules.
+
+Server shape:
+
+```haskell
+runLBS @"MyServer" @MyScheduler @MyTask @MyWorkerStatus proxy brokerConfig scheduler
+```
+
+Worker shape:
+
+```haskell
+service <- mkWorkerService workerConfig acceptor reporter
+runWorkerService service workerConfig
+```
+
+Client shape:
+
+```haskell
+service <- mkClientService clientConfig
+ack <- sendTaskRequest service task
+```
+
+Config endpoints must align:
+
+- clients send to the broker `frontendAddr`,
+- workers connect to the broker `backendAddr`,
+- worker logging publishes to the broker `infoStorage.loggingAddr`.
+
+The TaskSchedule sample configs under `applications/TaskSchedule/config/` show the loopback defaults. `applications/TaskSchedule/config/task-demo.json` is a copyable client task that writes `.tmp/task-schedule-demo.out`.
+
+## 5. Handle retries and completion evidence explicitly
+
+A client ACK means accepted/enqueued by the broker, not completed by a worker. Application-level completion proof should come from worker state, task status, logs, durable side effects, or the info API.
+
+Retry behavior is controlled by the `Task` fields:
+
+- `taskRetry > 0` allows failed tasks to be requeued with the retry count decremented,
+- `taskRetry == 0` moves failed tasks to the garbage ring buffer,
+- `taskRetryInterval > 0` delays retry eligibility by at least that many seconds,
+- `taskRetryInterval <= 0` retries immediately when retries remain.
+
+## 6. Verify with bounded tests and intentional smokes
+
+Recommended gates from the repository root:
+
+```bash
+cabal build all --enable-tests
+cabal test all
+scripts/task-schedule-smoke.sh
+scripts/task-schedule-multi-worker-smoke.sh
+```
+
+`cabal test all` is reserved for bounded assertion-based suites. Long-running or no-assertion demos are Cabal `demo-*` executables and should be run intentionally, usually with `timeout`.
+
+For a new application, add bounded tests for:
+
+- payload `ToZmq`/`FromZmq` frame order,
+- scheduler assignment/deferred-task decisions,
+- worker success/failure/status mapping,
+- client ACK shape or JSON validation if you add a custom client.

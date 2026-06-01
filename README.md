@@ -22,6 +22,8 @@ Lotos is a Haskell/Cabal workspace for experimenting with a ZeroMQ-backed task l
 │   ├── app/                              # ts-server, ts-worker, ts-client entry points
 │   └── src/                              # scheduler, worker, client task types
 ├── docs/lb_sys.drawio                    # Architecture sketch
+├── docs/task-schedule-mvp.md             # TaskSchedule runtime contract and smoke evidence
+├── docs/build-your-own-scheduler.md      # Concise guide for new library adopters
 ├── scripts/                              # Small shell scripts used by demos/tests
 ├── Makefile                              # Cabal convenience targets
 └── hie.yaml                              # Haskell Language Server component map
@@ -59,6 +61,42 @@ Executables:
 - `TaskSchedule:exe:ts-worker` — starts one command-executing worker.
 - `TaskSchedule:exe:ts-client` — submits a task JSON file to the load balancer frontend and waits for an ACK.
 
+## Quickstart for new adopters
+
+From a checkout with GHC/Cabal and ZeroMQ available:
+
+```bash
+cabal update
+cabal build all --enable-tests
+cabal test all
+```
+
+Then run one of the intentional end-to-end demo smokes from the repository root:
+
+```bash
+scripts/task-schedule-smoke.sh
+scripts/task-schedule-multi-worker-smoke.sh
+```
+
+For a manual single-machine demo, start the server and worker in separate terminals, then submit the checked-in sample task from a third terminal:
+
+```bash
+mkdir -p logs .tmp
+
+# Terminal 1
+cabal run TaskSchedule:exe:ts-server -- applications/TaskSchedule/config/broker.json
+
+# Terminal 2
+cabal run TaskSchedule:exe:ts-worker -- applications/TaskSchedule/config/worker.json
+
+# Terminal 3
+cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json applications/TaskSchedule/config/task-demo.json
+sleep 5
+cat .tmp/task-schedule-demo.out
+```
+
+The client ACK means the broker accepted/enqueued the task; completion proof comes from the worker marker file, worker logs, or the info API. To build a new scheduler on top of `lotos`, start with [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md), then use the TaskSchedule source files as the concrete reference implementation.
+
 ## Architecture overview
 
 At runtime, Lotos uses a broker/worker topology:
@@ -95,7 +133,7 @@ For a new application, import `Lotos.Zmq` and provide application payloads plus 
 5. Implement `StatusReporter` for workers. Combine `StatusReporterAPI.srReportInfo` queue/processing counts with app-specific metrics such as CPU or memory load.
 6. Keep config endpoints aligned: clients use the broker `frontendAddr`, workers use the broker `backendAddr`, and worker logging uses the broker `infoStorage.loggingAddr`.
 
-Concrete examples live in the TaskSchedule demo: `applications/TaskSchedule/src/Adt.hs` defines task/status payload frames, `applications/TaskSchedule/src/Server.hs` implements `LoadBalancerAlgo`, and `applications/TaskSchedule/src/Worker.hs` implements both worker typeclasses. The full runtime contract and smoke path remain in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
+Concrete examples live in the TaskSchedule demo: `applications/TaskSchedule/src/Adt.hs` defines task/status payload frames, `applications/TaskSchedule/src/Server.hs` implements `LoadBalancerAlgo`, and `applications/TaskSchedule/src/Worker.hs` implements both worker typeclasses. The concise adopter checklist is [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md); the full demo runtime contract and smoke path remain in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
 
 ## Prerequisites
 
@@ -163,7 +201,7 @@ Do not add no-assertion demos back as Cabal `test-suite` components unless they 
 
 The MVP runtime contract for the server, worker, client, task JSON, and verification flow is documented in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
 
-The executables use built-in single-machine defaults and can also read explicit JSON config files. Sample configs live under `applications/TaskSchedule/config/`.
+The executables use built-in single-machine defaults and can also read explicit JSON config files. Sample configs and the copyable sample task live under `applications/TaskSchedule/config/`.
 
 Default addresses:
 
@@ -190,8 +228,8 @@ cabal run TaskSchedule:exe:ts-worker -- applications/TaskSchedule/config/worker.
 Submit a task JSON with the client. A client config can be supplied as the first argument when overriding the frontend address or timeout:
 
 ```bash
-cabal run TaskSchedule:exe:ts-client -- task-demo.json
-cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json task-demo.json
+cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/task-demo.json
+cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json applications/TaskSchedule/config/task-demo.json
 ```
 
 For repeatable local smoke runs, compile all packages and test targets first, then run the desired helper from the repository root:
