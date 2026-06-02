@@ -133,7 +133,7 @@
                         <mxPoint as="offset"/>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="6" value="&lt;span style=&quot;color: rgb(0, 0, 0);&quot;&gt;Worker&lt;/span&gt;&lt;div&gt;(&lt;span style=&quot;background-color: transparent; color: rgb(0, 0, 0);&quot;&gt;Dealer+Pub&lt;/span&gt;&lt;span style=&quot;background-color: transparent;&quot;&gt;)&lt;/span&gt;&lt;/div&gt;" style="verticalLabelPosition=middle;verticalAlign=middle;shape=mxgraph.basic.diag_snip_rect;dx=6;whiteSpace=wrap;html=1;horizontal=1;labelPosition=center;align=center;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
+                <mxCell id="6" value="&lt;span style=&quot;color: rgb(0, 0, 0);&quot;&gt;Worker&lt;/span&gt;&lt;div&gt;(Dealer)&lt;/div&gt;&lt;div&gt;+ Log DEALER&lt;/div&gt;" style="verticalLabelPosition=middle;verticalAlign=middle;shape=mxgraph.basic.diag_snip_rect;dx=6;whiteSpace=wrap;html=1;horizontal=1;labelPosition=center;align=center;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
                     <mxGeometry x="1200" y="100" width="100" height="80" as="geometry"/>
                 </mxCell>
                 <mxCell id="39" value="get info" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#6c8ebf;strokeWidth=3;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;endArrow=classic;fillColor=#dae8fc;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="8" target="110" edge="1">
@@ -165,7 +165,7 @@
                         <mxPoint as="offset"/>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="10" value="Worker&lt;div&gt;(&lt;span style=&quot;color: rgb(0, 0, 0); background-color: transparent;&quot;&gt;Dealer+Pub&lt;/span&gt;&lt;span style=&quot;background-color: transparent;&quot;&gt;)&lt;/span&gt;&lt;/div&gt;" style="verticalLabelPosition=middle;verticalAlign=middle;shape=mxgraph.basic.diag_snip_rect;dx=6;whiteSpace=wrap;html=1;horizontal=1;labelPosition=center;align=center;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
+                <mxCell id="10" value="Worker&lt;div&gt;(Dealer)&lt;/div&gt;&lt;div&gt;+ Log DEALER&lt;/div&gt;" style="verticalLabelPosition=middle;verticalAlign=middle;shape=mxgraph.basic.diag_snip_rect;dx=6;whiteSpace=wrap;html=1;horizontal=1;labelPosition=center;align=center;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
                     <mxGeometry x="1200" y="-10" width="105" height="80" as="geometry"/>
                 </mxCell>
                 <mxCell id="13" value="3. task ack" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0;entryDx=80;entryDy=65;entryPerimeter=0;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=3;" parent="1" source="4" target="2" edge="1">
@@ -233,28 +233,28 @@
                         <mxPoint as="offset"/>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="32" value="publish log" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#6c8ebf;strokeWidth=3;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;endArrow=classic;fillColor=#dae8fc;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="6" target="110" edge="1">
+                <mxCell id="32" value="log batch / ACK" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#6c8ebf;strokeWidth=3;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;startArrow=classic;endArrow=classic;fillColor=#dae8fc;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="6" target="83" edge="1">
                     <mxGeometry y="-10" relative="1" as="geometry">
                         <Array as="points">
                             <mxPoint x="1320" y="140"/>
                             <mxPoint x="1320" y="760"/>
-                            <mxPoint x="860" y="760"/>
-                            <mxPoint x="860" y="780"/>
+                            <mxPoint x="1060" y="760"/>
+                            <mxPoint x="1060" y="780"/>
                         </Array>
                         <mxPoint as="offset"/>
-                        <mxPoint x="845" y="770" as="targetPoint"/>
+                        <mxPoint x="1050" y="760" as="targetPoint"/>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="33" value="publish log" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#6c8ebf;strokeWidth=3;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;endArrow=classic;fillColor=#dae8fc;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="10" target="110" edge="1">
+                <mxCell id="33" value="log batch / ACK" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#6c8ebf;strokeWidth=3;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;startArrow=classic;endArrow=classic;fillColor=#dae8fc;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="10" target="83" edge="1">
                     <mxGeometry x="-0.0022" y="10" relative="1" as="geometry">
                         <Array as="points">
                             <mxPoint x="1340"/>
                             <mxPoint x="1340" y="800"/>
-                            <mxPoint x="860" y="800"/>
-                            <mxPoint x="860" y="780"/>
+                            <mxPoint x="1060" y="800"/>
+                            <mxPoint x="1060" y="780"/>
                         </Array>
                         <mxPoint as="offset"/>
-                        <mxPoint x="845" y="790" as="targetPoint"/>
+                        <mxPoint x="1050" y="800" as="targetPoint"/>
                     </mxGeometry>
                 </mxCell>
                 <mxCell id="37" value="get info" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#6c8ebf;strokeWidth=3;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;endArrow=classic;fillColor=#dae8fc;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="9" target="110" edge="1">
@@ -311,7 +311,7 @@
                 <mxCell id="48" value="&lt;p style=&quot;margin:5px;&quot;&gt;&lt;b&gt;&lt;i&gt;WorkerProp&lt;/i&gt;&lt;/b&gt;&lt;br&gt;{w}&lt;/p&gt;" style="shape=rect;html=1;overflow=fill;whiteSpace=wrap;align=center;" parent="51" vertex="1">
                     <mxGeometry x="400" y="80" width="80" height="40" as="geometry"/>
                 </mxCell>
-                <mxCell id="61" value="&lt;span style=&quot;color: rgb(0, 0, 0);&quot;&gt;Worker&lt;/span&gt;&lt;div&gt;(&lt;span style=&quot;background-color: transparent; color: rgb(0, 0, 0);&quot;&gt;Dealer+Pub&lt;/span&gt;&lt;span style=&quot;background-color: transparent;&quot;&gt;)&lt;/span&gt;&lt;/div&gt;" style="verticalLabelPosition=middle;verticalAlign=middle;shape=mxgraph.basic.diag_snip_rect;dx=6;whiteSpace=wrap;html=1;horizontal=1;labelPosition=center;align=center;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
+                <mxCell id="61" value="&lt;span style=&quot;color: rgb(0, 0, 0);&quot;&gt;Worker&lt;/span&gt;&lt;div&gt;(Dealer)&lt;/div&gt;&lt;div&gt;+ Log DEALER&lt;/div&gt;" style="verticalLabelPosition=middle;verticalAlign=middle;shape=mxgraph.basic.diag_snip_rect;dx=6;whiteSpace=wrap;html=1;horizontal=1;labelPosition=center;align=center;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
                     <mxGeometry x="1200" y="210" width="100" height="80" as="geometry"/>
                 </mxCell>
                 <mxCell id="97" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;dashed=1;strokeColor=#d6b656;strokeWidth=3;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;endArrow=classic;flowAnimation=0;fillColor=#fff2cc;entryX=0.5;entryY=1;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" source="5" target="20" edge="1">
@@ -330,8 +330,8 @@
                 <mxCell id="82" value="Sender&lt;br&gt;&lt;div&gt;(Pair&lt;span style=&quot;color: rgb(0, 0, 0); background-color: transparent;&quot;&gt;)&lt;/span&gt;&lt;/div&gt;" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
                     <mxGeometry x="600" y="340" width="80" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="83" value="Subscriber&lt;br&gt;&lt;div&gt;(Sub&lt;span style=&quot;color: rgb(0, 0, 0); background-color: transparent;&quot;&gt;)&lt;/span&gt;&lt;/div&gt;" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
-                    <mxGeometry x="920" y="737.5" width="120" height="80" as="geometry"/>
+                <mxCell id="83" value="LogIngest&lt;br&gt;&lt;div&gt;(Router)&lt;/div&gt;&lt;div style=&quot;font-size: 10px;&quot;&gt;batched ACK&lt;/div&gt;" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
+                    <mxGeometry x="910" y="732.5" width="140" height="90" as="geometry"/>
                 </mxCell>
                 <mxCell id="86" value="&lt;span style=&quot;color: rgb(0, 0, 0); font-size: 11px;&quot;&gt;discard task&lt;/span&gt;&lt;div style=&quot;font-size: 11px;&quot;&gt;retry = 0&lt;/div&gt;" style="html=1;verticalLabelPosition=top;align=center;labelBackgroundColor=#ffffff;verticalAlign=bottom;strokeWidth=2;strokeColor=#9673A6;shadow=0;dashed=0;shape=mxgraph.ios7.icons.trashcan;labelPosition=center;" parent="1" vertex="1">
                     <mxGeometry x="990" y="450" width="20" height="20" as="geometry"/>
@@ -402,6 +402,16 @@
                         <mxPoint as="offset"/>
                     </mxGeometry>
                 </mxCell>
+                <mxCell id="tp021-log-boundary" value="LogIngest subsystem" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;dashed=1;strokeWidth=3;strokeColor=#6c8ebf;dashPattern=1 1;arcSize=12;container=0;" parent="1" vertex="1">
+                    <mxGeometry x="890" y="700" width="260" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="tp021-log-cache-edge" value="bounded log cache" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=1;strokeColor=#6c8ebf;strokeWidth=3;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;labelBackgroundColor=default;endArrow=classic;fillColor=#dae8fc;" parent="1" source="83" target="110" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="870" y="780"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
                 <mxCell id="112" style="edgeStyle=none;html=1;rounded=1;strokeColor=#6c8ebf;strokeWidth=3;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=default;labelBackgroundColor=default;endArrow=classic;fillColor=#dae8fc;" parent="1" source="110" target="111" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
@@ -461,7 +471,7 @@
                         <mxRectangle width="40" height="40" as="alternateBounds"/>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="139" value="&lt;span style=&quot;color: rgb(0, 0, 0);&quot;&gt;Publisher (Pub): API&lt;/span&gt;" style="shape=partialRectangle;html=1;whiteSpace=wrap;connectable=0;fillColor=none;top=0;left=0;bottom=0;right=0;align=left;spacingLeft=6;overflow=hidden;strokeColor=inherit;fontSize=12;" parent="137" vertex="1">
+                <mxCell id="139" value="&lt;span style=&quot;color: rgb(0, 0, 0);&quot;&gt;Log sender (Dealer): API&lt;/span&gt;" style="shape=partialRectangle;html=1;whiteSpace=wrap;connectable=0;fillColor=none;top=0;left=0;bottom=0;right=0;align=left;spacingLeft=6;overflow=hidden;strokeColor=inherit;fontSize=12;" parent="137" vertex="1">
                     <mxGeometry x="40" width="200" height="40" as="geometry">
                         <mxRectangle width="200" height="40" as="alternateBounds"/>
                     </mxGeometry>

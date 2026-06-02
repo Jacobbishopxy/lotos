@@ -129,9 +129,9 @@ For a new application, import `Lotos.Zmq` and provide application payloads plus 
 1. Define a task payload and worker-status payload with `ToZmq`/`FromZmq` instances. Their multipart frame order is the protocol contract; keep peer encoders/decoders and regression tests aligned.
 2. Define a `Task t` JSON shape for clients. New client tasks may leave `taskID = null`; the broker assigns the UUID before scheduling, and worker/scheduler code assumes a UUID is present before calling `unsafeGetTaskID`. `taskRetryInterval` is a retry delay in seconds for failed tasks with retries remaining; `0` or less retries immediately.
 3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current non-stale worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass. The TaskSchedule demo treats workers with any reported processing or waiting work as saturated, assigns at most one fresh task to each idle worker per pass, and sorts eligible workers by CPU/memory load.
-4. Implement `TaskAcceptor` for workers. Process each task batch, publish task logs with `taPubTaskLogging`, and report `TaskProcessing`, `TaskSucceed`, or `TaskFailed` with `taSendTaskStatus`.
+4. Implement `TaskAcceptor` for workers. Process each task batch, publish task logs with the current `taPubTaskLogging` callback, and report `TaskProcessing`, `TaskSucceed`, or `TaskFailed` with `taSendTaskStatus`.
 5. Implement `StatusReporter` for workers. Combine `StatusReporterAPI.srReportInfo` queue/processing counts with app-specific metrics such as CPU or memory load.
-6. Keep config endpoints aligned: clients use the broker `frontendAddr`, workers use the broker `backendAddr`, and worker logging uses the broker `infoStorage.loggingAddr`.
+6. Keep config endpoints aligned: clients use the broker `frontendAddr`, workers use the broker `backendAddr`, and the current worker logging compatibility path uses the broker `infoStorage.loggingAddr`. The planned reliable replacement is documented in [`docs/logging-redesign.md`](docs/logging-redesign.md).
 
 Concrete examples live in the TaskSchedule demo: `applications/TaskSchedule/src/Adt.hs` defines task/status payload frames, `applications/TaskSchedule/src/Server.hs` implements `LoadBalancerAlgo`, and `applications/TaskSchedule/src/Worker.hs` implements both worker typeclasses. The concise adopter checklist is [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md); the full demo runtime contract and smoke path remain in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
 
@@ -208,7 +208,7 @@ Default addresses:
 
 - server frontend / client frontend: `tcp://127.0.0.1:5555`
 - server backend / worker task-status backend: `tcp://127.0.0.1:5556`
-- worker logging endpoint (server info storage SUB / worker PUB): `tcp://127.0.0.1:5557`
+- worker logging endpoint, current compatibility path (server info storage SUB / worker PUB; planned replacement is LogIngest ROUTER / worker Log DEALER): `tcp://127.0.0.1:5557`
 - info HTTP port: `8081`
 - logs: `./logs/taskScheduleServer.log`, `./logs/taskScheduleWorker.log`, and `./logs/taskScheduleClient.log`
 - worker stale timeout: `taskProcessor.workerStaleTimeoutSec = 60` seconds in the checked-in broker config; keep it above `workerStatusReportIntervalSec` for healthy workers.
@@ -258,14 +258,14 @@ Latest TP-020 verification is green after scheduler fairness/backpressure harden
 - `http://127.0.0.1:8081/SimpleServer/worker_tasks`
 - `http://127.0.0.1:8081/SimpleServer/worker_stats`
 
-The `/info` response includes `workerLoggingsMap`, keyed by worker id. With the checked-in sample configs, workers publish command stdout/stderr and final `CommandResult` entries over the `5557` logging endpoint; snapshots reflect those entries after the configured info-storage refresh interval.
+The `/info` response includes `workerLoggingsMap`, keyed by worker id. With the checked-in sample configs, workers currently publish command stdout/stderr and final `CommandResult` entries over the `5557` logging endpoint; snapshots reflect those entries after the configured info-storage refresh interval. The target logging architecture moves this ingest path to a dedicated DEALER/ROUTER LogIngest subsystem with batched ACKs and bounded persistence/cache behavior; see [`docs/logging-redesign.md`](docs/logging-redesign.md).
 
 ## Protocol and verification invariants
 
 - `ToZmq` and `FromZmq` instances define positional multipart wire formats. Do not reorder frames without updating both peers and the bounded frame regression tests.
 - Client ACKs mean accepted/enqueued by the broker, not worker completion. Completion evidence comes from worker side effects, worker task/status state, logs, or smoke artifacts.
 - The broker owns UUID assignment. Client task JSON may set `taskID` to `null`, but scheduled/executing tasks must have IDs before `unsafeGetTaskID` is used.
-- Worker DEALER routing ids and worker logging topics both use `workerId`; custom configs must align client/frontend, worker/backend, and worker-logging endpoints.
+- Worker DEALER routing ids and current worker logging topics both use `workerId`; custom configs must align client/frontend, worker/backend, and worker-logging endpoints. The planned logging redesign keeps worker identity but moves logs from PUB/SUB topics to a dedicated LogIngest DEALER/ROUTER channel.
 - Failed tasks retry while `taskRetry > 0`; positive `taskRetryInterval` values delay eligibility until the interval has elapsed, while `0` or less preserves immediate retry.
 - Worker status heartbeats drive broker liveness. When a worker is stale for `taskProcessor.workerStaleTimeoutSec`, the broker removes it from scheduling/info maps and recovers its non-succeeded in-flight tasks through the same retry/garbage path.
 - TaskSchedule's demo scheduler derives capacity from `WorkerState.processingTaskNum` and `WorkerState.waitingTaskNum` because heartbeats do not report configured `parallelTasksNo`: only idle workers receive one new task per pass, busy/waiting workers receive none, and overflow stays queued for a later scheduler pass.

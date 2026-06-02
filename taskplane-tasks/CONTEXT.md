@@ -29,6 +29,7 @@ parallel batch execution or `/orch <path/to/PROMPT.md>` for a single task.
 
 _Items discovered during task execution are logged here by agents._
 
+- [ ] **Implement LogIngest reliable worker logging** — TP-021 selected a planned DEALER/ROUTER log channel with batched ACKs, bounded worker/broker queues, visible drop/gap records, append-only persistence, and a bounded info-API read cache to replace the current InfoStorage PUB/SUB compatibility path.
 - [ ] **Set package dependency upper bounds** — `cabal check` still warns that `lotos` and TaskSchedule dependency lists omit upper bounds; adding a PVP policy is package-release polish beyond TP-018's docs/examples pass (discovered during TP-018).
 - [x] **Recover stale worker tasks** — Resolved during TP-019 by recording broker-side worker status heartbeats, filtering stale workers before scheduler snapshots, and recovering non-succeeded stale-worker tasks through the existing retry-delay or garbage semantics with fixed-clock coverage.
 - [x] **Expose client config reader** — Resolved during TP-004 by exporting `readBrokerConfig`, `readWorkerConfig`, and `readClientConfig` from the `Lotos.Zmq` facade so downstream executables can use the existing config readers.
