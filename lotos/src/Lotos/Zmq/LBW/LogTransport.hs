@@ -138,6 +138,7 @@ runWorkerLogTransport :: WorkerLogTransport -> Logger.LotosApp ThreadId
 runWorkerLogTransport transport@WorkerLogTransport {workerLogTransportConfig = WorkerServiceConfig {..}} = do
   dealer <- zmqUnwrap $ Zmqx.Dealer.open $ Zmqx.name "workerLogDealer"
   liftIO $ Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS workerId)
+  liftIO $ applySocketHWM dealer (logIngestSocketHWM workerLogging)
   zmqUnwrap $ Zmqx.connect dealer (logIngestAddr workerLogging)
   Logger.logApp Logger.INFO $ "worker LogIngest DEALER connected to " <> Text.unpack (logIngestAddr workerLogging)
   Logger.forkApp $ workerLogLoop transport dealer
@@ -333,3 +334,9 @@ logDropPolicyText :: LogDropPolicy -> Text.Text
 logDropPolicyText LogDropNewest = "drop-newest"
 logDropPolicyText LogDropOldest = "drop-oldest"
 logDropPolicyText LogDropLowPriority = "drop-low-priority"
+
+applySocketHWM :: Zmqx.Dealer -> Int -> IO ()
+applySocketHWM dealer configuredHWM = do
+  let hwm = fromIntegral $ max 1 configuredHWM
+  Zmqx.setSocketOpt dealer (Zmqx.Z_SndHWM hwm)
+  Zmqx.setSocketOpt dealer (Zmqx.Z_RcvHWM hwm)

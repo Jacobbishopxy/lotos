@@ -49,7 +49,10 @@ readJournalLines :: FilePath -> IO [LBS.ByteString]
 readJournalLines path = do
   exists <- doesFileExist path
   if exists
-    then LBS.lines <$> LBS.readFile path
+    then do
+      bytes <- LBS.readFile path
+      let lines' = LBS.lines bytes
+      length lines' `seq` pure lines'
     else pure []
 
 decodeJournalEvents :: FilePath -> IO [LogEvent]
@@ -88,6 +91,13 @@ mkBatch firstSeq = LogBatch (ackFromUTC fixedNow) testWorkerId firstSeq
 
 textFromSeq :: Word64 -> Text.Text
 textFromSeq = Text.pack . show
+
+assertWorkerAcceptedThrough :: Word64 -> LogIngestStats -> Assertion
+assertWorkerAcceptedThrough expected stats =
+  assertBool ("acceptedThroughByWorker did not include " <> show expected <> ": " <> shownMap) $
+    ("\"" <> Text.unpack testWorkerId <> "\"," <> show expected) `isInfixOf` shownMap
+  where
+    shownMap = show $ logStatsAcceptedThroughByWorker stats
 
 withTaskId :: (TaskID -> IO a) -> IO a
 withTaskId action = do
@@ -151,6 +161,82 @@ duplicateHandlingSkipsJournalWrites = withJournal $ \journalPath -> withTaskId $
   logStatsDuplicateEvents stats @?= 2
   lines' <- readJournalLines journalPath
   length lines' @?= 2
+
+restartRecoveryRebuildsCachesStatsAndWatermark :: Assertion
+restartRecoveryRebuildsCachesStatsAndWatermark = withJournal $ \journalPath -> withTaskId $ \taskId -> do
+  let cfg = testConfig journalPath
+      events = mkEvent taskId <$> [1, 2, 3]
+      batch = mkBatch 1 events
+  state <- newLogIngestState cfg
+  ack <- ingestLogBatch state batch
+  logAckAcceptedThrough ack @?= 3
+
+  recovered <- newLogIngestState cfg
+  recent <- queryRecentLogs recovered
+  (logEventSeq <$> logQueryEvents recent) @?= [2, 3]
+  workerLogs <- queryWorkerLogs recovered testWorkerId
+  (logEventSeq <$> logQueryEvents workerLogs) @?= [2, 3]
+  taskLogs <- queryTaskLogs recovered taskId
+  (logEventSeq <$> logQueryEvents taskLogs) @?= [2, 3]
+
+  stats <- readLogIngestStats recovered
+  logStatsAcceptedEvents stats @?= 3
+  logStatsDuplicateEvents stats @?= 0
+  assertWorkerAcceptedThrough 3 stats
+
+  beforeLines <- readJournalLines journalPath
+  duplicateAck <- ingestLogBatch recovered batch
+  logAckAcceptedThrough duplicateAck @?= 3
+  logAckRejected duplicateAck @?= []
+  afterLines <- readJournalLines journalPath
+  length afterLines @?= length beforeLines
+  statsAfterDuplicate <- readLogIngestStats recovered
+  logStatsDuplicateEvents statsAfterDuplicate @?= 3
+
+malformedJournalLinesAreSkippedDuringRecovery :: Assertion
+malformedJournalLinesAreSkippedDuringRecovery = withJournal $ \journalPath -> withTaskId $ \taskId -> do
+  let event1 = mkEvent taskId 1
+      event2 = mkEvent taskId 2
+  LBS.writeFile journalPath $ LBS.unlines [Aeson.encode event1, "not-json", "{\"workerId\":\"partial", Aeson.encode event2]
+
+  recovered <- newLogIngestState $ testConfig journalPath
+  recent <- queryRecentLogs recovered
+  (logEventSeq <$> logQueryEvents recent) @?= [1, 2]
+  stats <- readLogIngestStats recovered
+  logStatsAcceptedEvents stats @?= 2
+  logStatsMalformedJournalLines stats @?= 2
+  assertWorkerAcceptedThrough 2 stats
+
+retentionCompactsJournalAndRecoveryKeepsWatermark :: Assertion
+retentionCompactsJournalAndRecoveryKeepsWatermark = withJournal $ \journalPath -> withTaskId $ \taskId -> do
+  let cfg = (testConfig journalPath) {logIngestReadCacheSize = 5, logIngestRetentionBytes = 1200}
+      events = [ (mkEvent taskId seqNo) {logEventMessage = "retention line " <> Text.replicate 40 "x" <> textFromSeq seqNo} | seqNo <- [1 .. 10] ]
+  state <- newLogIngestState cfg
+  ack <- ingestLogBatch state $ mkBatch 1 events
+  logAckAcceptedThrough ack @?= 10
+
+  journalBytes <- LBS.readFile journalPath
+  assertBool ("compacted journal exceeded retention cap: " <> show (LBS.length journalBytes)) $
+    LBS.length journalBytes <= fromIntegral (logIngestRetentionBytes cfg)
+  compactedLines <- readJournalLines journalPath
+  assertBool "compaction should replace full event journal with checkpoint plus suffix" (length compactedLines < length events)
+
+  recovered <- newLogIngestState cfg
+  stats <- readLogIngestStats recovered
+  logStatsAcceptedEvents stats @?= 10
+  assertWorkerAcceptedThrough 10 stats
+  recent <- queryRecentLogs recovered
+  assertBool "retained suffix should keep recent query cache useful" (not $ null $ logQueryEvents recent)
+  last (logEventSeq <$> logQueryEvents recent) @?= 10
+
+  beforeDuplicateLines <- readJournalLines journalPath
+  case events of
+    firstEvent : _ -> do
+      duplicateAck <- ingestLogBatch recovered $ mkBatch 1 [firstEvent]
+      logAckAcceptedThrough duplicateAck @?= 10
+    [] -> assertFailure "retention test expected at least one event"
+  afterDuplicateLines <- readJournalLines journalPath
+  length afterDuplicateLines @?= length beforeDuplicateLines
 
 invalidEventRejectionStatsAreCountedOnce :: Assertion
 invalidEventRejectionStatsAreCountedOnce = withJournal $ \journalPath -> withTaskId $ \taskId -> do
@@ -299,6 +385,9 @@ tests =
     [ TestLabel "bounded cache eviction and JSONL encoding" (TestCase cacheEvictionAndJournalEncoding),
       TestLabel "distinct task cap evicts task-indexed caches" (TestCase distinctTaskBucketCapEvictsTaskIndexedCaches),
       TestLabel "duplicate handling skips journal rewrites" (TestCase duplicateHandlingSkipsJournalWrites),
+      TestLabel "restart recovery rebuilds caches, stats, and watermarks" (TestCase restartRecoveryRebuildsCachesStatsAndWatermark),
+      TestLabel "malformed journal lines are skipped during recovery" (TestCase malformedJournalLinesAreSkippedDuringRecovery),
+      TestLabel "retention compacts journal and restart keeps watermark" (TestCase retentionCompactsJournalAndRecoveryKeepsWatermark),
       TestLabel "invalid event rejection stats are counted once" (TestCase invalidEventRejectionStatsAreCountedOnce),
       TestLabel "sequence gap accounting keeps ACK watermark contiguous" (TestCase sequenceGapAccountingKeepsAckAtContiguousWatermark),
       TestLabel "explicit drop events advance through visible dropped spans" (TestCase explicitDropEventAdvancesThroughVisibleDroppedSpan),

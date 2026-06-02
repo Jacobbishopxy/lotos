@@ -126,8 +126,10 @@ oldBrokerAndWorkerConfigsGetLoggingDefaults = do
   brokerCfg <- unwrapEither (Aeson.eitherDecode oldBrokerConfigJson)
   logIngestAddr (logIngest brokerCfg) @?= defaultReliableLogIngestAddr (loggingAddr (infoStorage brokerCfg))
   logIngestDropPolicy (logIngest brokerCfg) @?= LogDropOldest
+  logIngestSocketHWM (logIngest brokerCfg) @?= logIngestSocketHWM (defaultLogIngestConfig (defaultReliableLogIngestAddr (loggingAddr (infoStorage brokerCfg))))
   workerCfg <- unwrapEither (Aeson.eitherDecode oldWorkerConfigJson)
   logIngestAddr (workerLogging workerCfg) @?= defaultReliableLogIngestAddr (loadBalancerLoggingAddr workerCfg)
+  logIngestSocketHWM (workerLogging workerCfg) @?= logIngestSocketHWM (defaultLogIngestConfig (defaultReliableLogIngestAddr (loadBalancerLoggingAddr workerCfg)))
   logIngestWorkerQueueHWM (workerLogging workerCfg) @?= logIngestWorkerQueueHWM (defaultLogIngestConfig (defaultReliableLogIngestAddr (loadBalancerLoggingAddr workerCfg)))
 
 partialLogIngestConfigUsesDefaults :: Assertion
@@ -135,6 +137,9 @@ partialLogIngestConfigUsesDefaults = do
   cfg <- unwrapEither (Aeson.eitherDecode "{\"logIngestAddr\":\"tcp://127.0.0.1:6000\",\"logIngestDropPolicy\":\"drop-low-priority\"}")
   logIngestAddr cfg @?= "tcp://127.0.0.1:6000"
   logIngestDropPolicy cfg @?= LogDropLowPriority
+  logIngestSocketHWM cfg @?= logIngestSocketHWM (defaultLogIngestConfig "tcp://127.0.0.1:5558")
+  explicitHwmCfg <- unwrapEither (Aeson.eitherDecode "{\"logIngestAddr\":\"tcp://127.0.0.1:6000\",\"logIngestSocketHWM\":7}")
+  logIngestSocketHWM explicitHwmCfg @?= 7
   logIngestBatchMaxRecords cfg @?= logIngestBatchMaxRecords (defaultLogIngestConfig "tcp://127.0.0.1:5558")
   logIngestLineMaxBytes cfg @?= logIngestLineMaxBytes (defaultLogIngestConfig "tcp://127.0.0.1:5558")
   logIngestFlushIntervalMicros cfg @?= logIngestFlushIntervalMicros (defaultLogIngestConfig "tcp://127.0.0.1:5558")

@@ -1,6 +1,6 @@
 # Worker Logging Redesign
 
-**Status:** The reliable logging migration is live through TP-025. Runtime workers enqueue bounded `LogEvent`s, send `LogBatch`es on a dedicated logging DEALER, and retry until broker LogIngest returns `LogAck`s. TaskSchedule smoke tests now prove logs through `/logs/*`; `/info` is a lightweight scheduler snapshot and no longer carries worker log payloads.
+**Status:** The reliable logging migration is hardened through TP-026. Runtime workers enqueue bounded `LogEvent`s, send `LogBatch`es on a dedicated logging DEALER with configured socket HWM, and retry until broker LogIngest persists/rebuilds state and returns `LogAck`s. TaskSchedule smoke tests prove logs through `/logs/*`; `/info` is a lightweight scheduler snapshot and no longer carries worker log payloads.
 
 ## Decision
 
@@ -100,13 +100,13 @@ If LogIngest cannot persist records, it must withhold the ACK. Workers retry wit
 
 LogIngest owns durable log storage. InfoStorage remains an HTTP snapshot/read facade, not the ingest transport.
 
-Planned responsibilities:
+Current responsibilities:
 
-- **Append-only journal:** store accepted records and gap records before ACK. The initial implementation can use a local file under the broker runtime directory; future work may swap the backend without changing worker APIs.
-- **Dedup index:** track the highest accepted contiguous sequence and recent batch ids per worker so retransmits are idempotent.
-- **Bounded read cache:** maintain configurable buffers for recent global logs, per-worker logs, per-task logs, and `(workerId, taskId)` views served by `/logs/*`.
+- **Append/checkpoint journal:** store accepted records and gap records before ACK. The local JSONL journal normally contains one accepted `LogEvent` object per line; retention compaction may rewrite it to a LogIngest checkpoint line plus the newest valid event suffix.
+- **Dedup index:** track each worker's highest accepted contiguous sequence plus bounded covered-ahead ranges so retransmits are idempotent. Checkpoints preserve that coverage across broker restarts and compaction.
+- **Bounded read cache:** maintain configurable buffers for recent global logs, per-worker logs, per-task logs, and `(workerId, taskId)` views served by `/logs/*`. Restart recovery rebuilds those caches from retained valid event lines; old compacted-away events are intentionally no longer queryable.
 - **Info API boundary:** keep `/info` focused on scheduler state and expose worker log reads through dedicated `/logs` endpoints.
-- **Recovery:** on broker restart, rebuild the dedup watermark and read cache from the journal or explicitly document which cache data is warm-only.
+- **Recovery:** on broker restart, `newLogIngestState` replays the journal/checkpoint, skips malformed or partial JSONL lines, increments `malformedJournalLines`, restores accepted-through watermarks, and keeps already-covered worker retries from appending duplicate events.
 
 ## Query API shape
 
@@ -117,7 +117,7 @@ TP-023 adds broker-side query routes to the existing InfoStorage HTTP server. Th
 - `/<service>/logs/task/:taskId` — most recent accepted events for one task UUID.
 - `/<service>/logs/stats` — counters for accepted events, duplicates, sequence gaps, visible dropped spans, rejected reasons, worker/task cache cardinality, and accepted-through watermarks by worker.
 
-Each log query response has shape `{ "count": number, "events": LogEvent[] }`. Stats responses use stable counter keys such as `acceptedEvents`, `duplicateEvents`, `sequenceGaps`, `droppedEvents`, `rejectedEvents`, and `acceptedThroughByWorker`.
+Each log query response has shape `{ "count": number, "events": LogEvent[] }`. Stats responses use stable counter keys such as `acceptedEvents`, `duplicateEvents`, `sequenceGaps`, `droppedEvents`, `rejectedEvents`, `malformedJournalLines`, and `acceptedThroughByWorker`.
 
 The `/<service>/info` response is intentionally scheduler-only. Structured LogIngest data is exposed through `/logs/...` rather than embedded into `/info`, keeping snapshots lightweight while preserving worker/task log queryability.
 
@@ -160,9 +160,10 @@ TP-022 exposes `LogIngestConfig` and `defaultLogIngestConfig` through `Lotos.Zmq
 2. **Done in TP-023:** introduce LogIngest broker service and durable journal behind a bounded cache.
 3. **Done in TP-024:** add a worker logging service with a bounded pending queue, batch retry, and explicit drop/gap records.
 4. **Done in TP-025:** remove the InfoStorage full-log snapshot coupling, update smoke tests to assert `/logs/worker/<workerId>` and `/logs/stats`, and document `/info` as scheduler-only.
-5. Rename public-facing callback/config fields only with a documented compatibility path for adopters.
+5. **Done in TP-026:** reload LogIngest state from the JSONL journal/checkpoint on broker startup, tolerate malformed/partial journal lines, compact oversized journals under `logIngestRetentionBytes`, and apply `logIngestSocketHWM` to logging sockets.
+6. Rename public-facing callback/config fields only with a documented compatibility path for adopters.
 
-## TP-024/TP-025 implementation notes
+## TP-024/TP-025/TP-026 implementation notes
 
 TP-024 introduces `Lotos.Zmq.LBW.LogTransport` and rewires `TaskAcceptorAPI` with:
 
@@ -173,12 +174,13 @@ TP-024 introduces `Lotos.Zmq.LBW.LogTransport` and rewires `TaskAcceptorAPI` wit
 - TaskSchedule command output mapping: `STDOUT:` lines become `LogStdout`/`LogInfo`, `STDERR:` lines become `LogStderr`/`LogError`, and final command results become `LogResult` with success/failure severity.
 - Config compatibility: old broker/worker JSON that omits `logIngest`/`workerLogging` derives a split reliable endpoint from the legacy logging endpoint (demo `tcp://127.0.0.1:5557` -> `tcp://127.0.0.1:5558`). The sample TaskSchedule configs now set the reliable endpoint explicitly.
 - TP-025 keeps worker `LogAck` matching at wire precision so whole-second ACK serialization does not strand accepted in-flight batches; this preserves at-least-once retry semantics without changing the global ACK frame shape.
+- TP-026 applies `logIngestSocketHWM` as both `Z_SndHWM` and `Z_RcvHWM` on the broker LogIngest ROUTER before bind and the worker logging DEALER before connect.
+- TP-026 enforces journal retention after accepted appends. If the configured byte cap is smaller than the checkpoint plus required retained suffix, correctness wins and the cap remains approximate; malformed/partial lines are dropped during replay/compaction with `malformedJournalLines` evidence.
 
 Runtime caveats:
 
-- `logIngestSocketHWM` is still a config surface for future socket-level hardening; current code enforces worker memory and batch bounds but does not apply socket HWM options.
 - `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` remain in config for compatibility/default derivation, but InfoStorage no longer binds a worker-log socket or retains full worker logs.
-- Delivery remains at-least-once. Workers retry unacked batches, and LogIngest deduplicates accepted sequence coverage; exactly-once delivery is not claimed.
+- Delivery remains at-least-once. Workers retry unacked batches, and LogIngest deduplicates accepted sequence coverage across restart/compaction; exactly-once delivery is not claimed.
 
 ## TP-023 implementation notes
 
@@ -193,5 +195,5 @@ TP-023 introduces `Lotos.Zmq.LBS.LogIngest` with:
 Conservative runtime integration details and limitations:
 
 - `runLBS` creates LogIngest state for the `/logs/...` routes and starts the ROUTER on `logIngestAddr` even when explicit configs reuse the legacy logging address; there is no active InfoStorage logging socket to collide with.
-- Journal recovery on broker restart, retention/compaction enforcement, socket-level HWM application, and public compatibility-name cleanup remain follow-up work.
+- Public compatibility-name cleanup remains follow-up work; the legacy logging address/callback names still derive defaults while runtime ingestion uses LogIngest.
 - `LogAck.acceptedThrough` is a contiguous durability watermark, not an exactly-once guarantee. Delivery remains at-least-once with idempotent broker ingestion.

@@ -20,18 +20,20 @@ module Lotos.Zmq.LBS.LogIngest
   )
 where
 
+import Control.Applicative ((<|>))
 import Control.Concurrent (ThreadId)
 import Control.Concurrent.MVar
-import Control.Monad (forever)
+import Control.Monad (forever, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson ((.=))
 import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.ByteString.Lazy.Char8 qualified as LazyByteStringChar8
 import Data.Foldable qualified as Foldable
 import Data.List (sortOn)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe, maybeToList)
+import Data.Maybe (fromMaybe, mapMaybe, maybeToList)
 import Data.Sequence (Seq, (|>))
 import Data.Sequence qualified as Seq
 import Data.Text qualified as Text
@@ -42,7 +44,7 @@ import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
 import Lotos.Zmq.Util
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, doesFileExist, renameFile)
 import System.FilePath (takeDirectory)
 import Zmqx
 import Zmqx.Router qualified
@@ -60,6 +62,7 @@ data LogIngestStats = LogIngestStats
     logStatsSequenceGaps :: Int,
     logStatsDroppedEvents :: Int,
     logStatsRejectedEvents :: Int,
+    logStatsMalformedJournalLines :: Int,
     logStatsWorkers :: Int,
     logStatsTasks :: Int,
     logStatsAcceptedThroughByWorker :: Map.Map RoutingID Word64
@@ -74,6 +77,7 @@ instance Aeson.ToJSON LogIngestStats where
         "sequenceGaps" .= logStatsSequenceGaps,
         "droppedEvents" .= logStatsDroppedEvents,
         "rejectedEvents" .= logStatsRejectedEvents,
+        "malformedJournalLines" .= logStatsMalformedJournalLines,
         "workers" .= logStatsWorkers,
         "tasks" .= logStatsTasks,
         "acceptedThroughByWorker" .= logStatsAcceptedThroughByWorker
@@ -98,7 +102,8 @@ data LogCounters = LogCounters
     counterDuplicateEvents :: Int,
     counterSequenceGaps :: Int,
     counterDroppedEvents :: Int,
-    counterRejectedEvents :: Int
+    counterRejectedEvents :: Int,
+    counterMalformedJournalLines :: Int
   }
   deriving (Show, Eq)
 
@@ -118,13 +123,30 @@ data LogStore = LogStore
   }
   deriving (Show, Eq)
 
+data JournalCheckpoint = JournalCheckpoint
+  { checkpointWorkerSeq :: Map.Map RoutingID WorkerSeqState,
+    checkpointCounters :: LogCounters
+  }
+  deriving (Show, Eq)
+
+data JournalEntry
+  = JournalEvent LogEvent
+  | JournalCheckpointEntry JournalCheckpoint
+  deriving (Show, Eq)
+
+data JournalReplay = JournalReplay
+  { replayStore :: LogStore,
+    replayAfterCheckpoint :: Bool
+  }
+  deriving (Show, Eq)
+
 data EventOutcome
   = EventAccepted (Maybe Text.Text) Int
   | EventDuplicate
   deriving (Show, Eq)
 
 emptyCounters :: LogCounters
-emptyCounters = LogCounters 0 0 0 0 0
+emptyCounters = LogCounters 0 0 0 0 0 0
 
 emptyWorkerSeqState :: WorkerSeqState
 emptyWorkerSeqState = WorkerSeqState 0 []
@@ -140,8 +162,71 @@ emptyLogStore =
       storeCounters = emptyCounters
     }
 
+instance Aeson.ToJSON LogCounters where
+  toJSON LogCounters {..} =
+    Aeson.object
+      [ "acceptedEvents" .= counterAcceptedEvents,
+        "duplicateEvents" .= counterDuplicateEvents,
+        "sequenceGaps" .= counterSequenceGaps,
+        "droppedEvents" .= counterDroppedEvents,
+        "rejectedEvents" .= counterRejectedEvents,
+        "malformedJournalLines" .= counterMalformedJournalLines
+      ]
+
+instance Aeson.FromJSON LogCounters where
+  parseJSON = Aeson.withObject "LogCounters" $ \v ->
+    LogCounters
+      <$> v Aeson..: "acceptedEvents"
+      <*> v Aeson..: "duplicateEvents"
+      <*> v Aeson..: "sequenceGaps"
+      <*> v Aeson..: "droppedEvents"
+      <*> v Aeson..: "rejectedEvents"
+      <*> (v Aeson..:? "malformedJournalLines" Aeson..!= 0)
+
+instance Aeson.ToJSON WorkerSeqState where
+  toJSON WorkerSeqState {..} =
+    Aeson.object
+      [ "acceptedThrough" .= wssAcceptedThrough,
+        "coveredAhead" .= wssCoveredAhead
+      ]
+
+instance Aeson.FromJSON WorkerSeqState where
+  parseJSON = Aeson.withObject "WorkerSeqState" $ \v ->
+    WorkerSeqState
+      <$> v Aeson..: "acceptedThrough"
+      <*> v Aeson..: "coveredAhead"
+
+instance Aeson.ToJSON JournalCheckpoint where
+  toJSON JournalCheckpoint {..} =
+    Aeson.object
+      [ "entryType" .= ("log-ingest-checkpoint" :: Text.Text),
+        "workerSeq" .= checkpointWorkerSeq,
+        "counters" .= checkpointCounters
+      ]
+
+instance Aeson.FromJSON JournalCheckpoint where
+  parseJSON = Aeson.withObject "JournalCheckpoint" $ \v -> do
+    entryType <- v Aeson..: "entryType"
+    if entryType == ("log-ingest-checkpoint" :: Text.Text)
+      then
+        JournalCheckpoint
+          <$> v Aeson..: "workerSeq"
+          <*> v Aeson..: "counters"
+      else fail $ "unknown LogIngest journal entryType: " <> Text.unpack entryType
+
+instance Aeson.ToJSON JournalEntry where
+  toJSON (JournalEvent event) = Aeson.toJSON event
+  toJSON (JournalCheckpointEntry checkpoint) = Aeson.toJSON checkpoint
+
+instance Aeson.FromJSON JournalEntry where
+  parseJSON value =
+    (JournalCheckpointEntry <$> Aeson.parseJSON value)
+      <|> (JournalEvent <$> Aeson.parseJSON value)
+
 newLogIngestState :: LogIngestConfig -> IO LogIngestState
-newLogIngestState cfg = LogIngestState cfg <$> newMVar emptyLogStore
+newLogIngestState cfg = do
+  store <- loadJournal cfg
+  LogIngestState cfg <$> newMVar store
 
 -- | Persist/cache one decoded worker log batch and return the ACK to send.
 --
@@ -149,16 +234,20 @@ newLogIngestState cfg = LogIngestState cfg <$> newMVar emptyLogStore
 -- state is advanced. If the append fails, no ACK is produced by callers using
 -- 'runLogIngest' because the exception escapes this function.
 ingestLogBatch :: LogIngestState -> LogBatch -> IO LogAck
-ingestLogBatch LogIngestState {..} batch =
-  modifyMVar logIngestStateStore $ \store -> do
-    let (newStore, acceptedEvents, ack) = applyBatch logIngestStateConfig store batch
-    appendJournal logIngestStateConfig acceptedEvents
-    pure (newStore, ack)
+ingestLogBatch LogIngestState {..} batch = do
+  (ack, newStore) <-
+    modifyMVar logIngestStateStore $ \store -> do
+      let (newStore, acceptedEvents, ack) = applyBatch logIngestStateConfig store batch
+      appendJournal logIngestStateConfig acceptedEvents
+      pure (newStore, (ack, newStore))
+  enforceJournalRetention logIngestStateConfig newStore
+  pure ack
 
 -- | Start the LogIngest ROUTER loop on the configured endpoint.
 runLogIngest :: LogIngestConfig -> LogIngestState -> Logger.LotosApp ThreadId
 runLogIngest cfg@LogIngestConfig {..} state = do
   router <- zmqUnwrap $ Zmqx.Router.open $ Zmqx.name "logIngestRouter"
+  liftIO $ applySocketHWM router logIngestSocketHWM
   zmqUnwrap $ Zmqx.bind router logIngestAddr
   Logger.logApp Logger.INFO $ "LogIngest ROUTER started at " <> Text.unpack logIngestAddr
   Logger.forkApp $ logIngestLoop cfg state router
@@ -298,9 +387,110 @@ cacheAcceptedEvent LogIngestConfig {..} event@LogEvent {..} store =
 appendJournal :: LogIngestConfig -> [LogEvent] -> IO ()
 appendJournal LogIngestConfig {..} events = do
   createDirectoryIfMissing True $ takeDirectory logIngestJournalPath
-  LazyByteString.appendFile logIngestJournalPath $ LazyByteString.concat $ fmap encodeLine events
+  LazyByteString.appendFile logIngestJournalPath $ LazyByteString.concat $ fmap encodeEventLine events
+
+loadJournal :: LogIngestConfig -> IO LogStore
+loadJournal cfg@LogIngestConfig {..} = do
+  exists <- doesFileExist logIngestJournalPath
+  if exists
+    then do
+      journalBytes <- LazyByteString.fromStrict <$> ByteString.readFile logIngestJournalPath
+      pure $ replayStore $ foldl' (applyJournalLine cfg) (JournalReplay emptyLogStore False) (LazyByteStringChar8.lines journalBytes)
+    else pure emptyLogStore
+
+applyJournalLine :: LogIngestConfig -> JournalReplay -> LazyByteString.ByteString -> JournalReplay
+applyJournalLine cfg replay line
+  | LazyByteString.null line = replay
+  | otherwise =
+      case Aeson.eitherDecode line of
+        Right entry -> applyJournalEntry cfg replay entry
+        Left _err -> replay {replayStore = incrementMalformedJournalLines 1 (replayStore replay)}
+
+applyJournalEntry :: LogIngestConfig -> JournalReplay -> JournalEntry -> JournalReplay
+applyJournalEntry cfg replay (JournalEvent event) =
+  replay {replayStore = applyRecoveredEvent cfg (replayAfterCheckpoint replay) (replayStore replay) event}
+applyJournalEntry _cfg replay (JournalCheckpointEntry checkpoint) =
+  replay
+    { replayStore = applyCheckpoint checkpoint (replayStore replay),
+      replayAfterCheckpoint = True
+    }
+
+applyCheckpoint :: JournalCheckpoint -> LogStore -> LogStore
+applyCheckpoint JournalCheckpoint {..} store =
+  store
+    { storeWorkerSeq = checkpointWorkerSeq,
+      storeCounters =
+        checkpointCounters
+          { counterMalformedJournalLines =
+              counterMalformedJournalLines checkpointCounters
+                + counterMalformedJournalLines (storeCounters store)
+          }
+    }
+
+applyRecoveredEvent :: LogIngestConfig -> Bool -> LogStore -> LogEvent -> LogStore
+applyRecoveredEvent cfg cacheCoveredEvent store event =
+  case validateRecoveredLogEvent event of
+    [] ->
+      let (seqStore, outcome) = recordEventCoverage cfg event store
+       in case outcome of
+            EventDuplicate
+              | cacheCoveredEvent -> cacheAcceptedEvent cfg event seqStore
+              | otherwise -> incrementDuplicate seqStore
+            EventAccepted gapReason droppedCount ->
+              cacheAcceptedEvent cfg event $ incrementAccepted droppedCount (maybe 0 (const 1) gapReason) seqStore
+    _eventErrors -> incrementMalformedJournalLines 1 store
+
+validateRecoveredLogEvent :: LogEvent -> [Text.Text]
+validateRecoveredLogEvent LogEvent {..} =
+  case (logEventDroppedFrom, logEventDroppedThrough) of
+    (Nothing, Nothing) -> []
+    (Just fromSeq, Just throughSeq) -> ["LogEvent droppedFrom exceeds droppedThrough" | fromSeq > throughSeq]
+    _ -> ["LogEvent drop range must set both droppedFrom and droppedThrough"]
+
+enforceJournalRetention :: LogIngestConfig -> LogStore -> IO ()
+enforceJournalRetention LogIngestConfig {..} store = do
+  exists <- doesFileExist logIngestJournalPath
+  when exists $ do
+    journalBytes <- LazyByteString.fromStrict <$> ByteString.readFile logIngestJournalPath
+    let retentionCap = toInteger $ max 0 logIngestRetentionBytes
+    when (toInteger (LazyByteString.length journalBytes) > retentionCap) $ do
+      let validEvents = journalEventsFromLines $ LazyByteStringChar8.lines journalBytes
+          retainedEvents = retainedJournalSuffix retentionCap store validEvents
+          checkpoint = JournalCheckpoint (storeWorkerSeq store) (storeCounters store)
+          compactedBytes = encodeJournalCheckpointLine checkpoint <> LazyByteString.concat (fmap encodeEventLine retainedEvents)
+          tmpPath = logIngestJournalPath <> ".tmp"
+      createDirectoryIfMissing True $ takeDirectory logIngestJournalPath
+      LazyByteString.writeFile tmpPath compactedBytes
+      renameFile tmpPath logIngestJournalPath
+
+journalEventsFromLines :: [LazyByteString.ByteString] -> [LogEvent]
+journalEventsFromLines = mapMaybe journalEventFromLine
+
+journalEventFromLine :: LazyByteString.ByteString -> Maybe LogEvent
+journalEventFromLine line =
+  case Aeson.eitherDecode line of
+    Right (JournalEvent event) -> Just event
+    _ -> Nothing
+
+retainedJournalSuffix :: Integer -> LogStore -> [LogEvent] -> [LogEvent]
+retainedJournalSuffix retentionCap store events = go events
   where
-    encodeLine event = Aeson.encode event <> LazyByteString.singleton 10
+    checkpoint = JournalCheckpoint (storeWorkerSeq store) (storeCounters store)
+    checkpointBytes = encodeJournalCheckpointLine checkpoint
+    go retained
+      | encodedRetainedSize checkpointBytes retained <= retentionCap || null retained = retained
+      | otherwise = go (drop 1 retained)
+
+encodedRetainedSize :: LazyByteString.ByteString -> [LogEvent] -> Integer
+encodedRetainedSize checkpointBytes events =
+  toInteger (LazyByteString.length checkpointBytes)
+    + sum (fmap (toInteger . LazyByteString.length . encodeEventLine) events)
+
+encodeEventLine :: LogEvent -> LazyByteString.ByteString
+encodeEventLine event = Aeson.encode event <> LazyByteString.singleton 10
+
+encodeJournalCheckpointLine :: JournalCheckpoint -> LazyByteString.ByteString
+encodeJournalCheckpointLine checkpoint = Aeson.encode (JournalCheckpointEntry checkpoint) <> LazyByteString.singleton 10
 
 mkQueryResult :: Seq LogEvent -> LogQueryResult
 mkQueryResult events =
@@ -315,6 +505,7 @@ storeStats LogStore {..} =
       logStatsSequenceGaps = counterSequenceGaps storeCounters,
       logStatsDroppedEvents = counterDroppedEvents storeCounters,
       logStatsRejectedEvents = counterRejectedEvents storeCounters,
+      logStatsMalformedJournalLines = counterMalformedJournalLines storeCounters,
       logStatsWorkers = Map.size storeByWorker,
       logStatsTasks = Map.size storeByTask,
       logStatsAcceptedThroughByWorker = Map.map wssAcceptedThrough storeWorkerSeq
@@ -345,6 +536,12 @@ incrementRejected 0 store = store
 incrementRejected rejectedCount store =
   let counters = storeCounters store
    in store {storeCounters = counters {counterRejectedEvents = counterRejectedEvents counters + rejectedCount}}
+
+incrementMalformedJournalLines :: Int -> LogStore -> LogStore
+incrementMalformedJournalLines 0 store = store
+incrementMalformedJournalLines malformedCount store =
+  let counters = storeCounters store
+   in store {storeCounters = counters {counterMalformedJournalLines = counterMalformedJournalLines counters + malformedCount}}
 
 boundedInsert :: Int -> a -> Seq a -> Seq a
 boundedInsert capacity event events
@@ -441,3 +638,9 @@ word64SpanToInt fromSeq throughSeq =
 
 showText :: (Show a) => a -> Text.Text
 showText = Text.pack . show
+
+applySocketHWM :: Zmqx.Router -> Int -> IO ()
+applySocketHWM router configuredHWM = do
+  let hwm = fromIntegral $ max 1 configuredHWM
+  Zmqx.setSocketOpt router (Zmqx.Z_SndHWM hwm)
+  Zmqx.setSocketOpt router (Zmqx.Z_RcvHWM hwm)
