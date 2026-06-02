@@ -47,6 +47,12 @@ module Lotos.Zmq
     Notify (..),
     WorkerLogging (..),
     workerLoggingToTextTuple,
+    LogStream (..),
+    LogLevel (..),
+    LogDropPolicy (..),
+    LogEvent (..),
+    LogBatch (..),
+    LogAck (..),
 
     -- * worker task maps and event triggers
     TSWorkerTasksMap,
@@ -79,6 +85,8 @@ module Lotos.Zmq
     SocketLayerConfig (..),
     TaskProcessorConfig (..),
     InfoStorageConfig (..),
+    LogIngestConfig (..),
+    defaultLogIngestConfig,
 
     -- * error
     ZmqError (..),

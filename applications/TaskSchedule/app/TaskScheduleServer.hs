@@ -59,7 +59,8 @@ defaultBrokerConfig =
             loggingAddr = "tcp://127.0.0.1:5557",
             loggingsBufferSize = 1000,
             infoFetchIntervalSec = 10
-          }
+          },
+      logIngest = defaultLogIngestConfig "tcp://127.0.0.1:5557"
     }
 
 usage :: String

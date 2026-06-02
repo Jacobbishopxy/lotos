@@ -1,4 +1,5 @@
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- file: Adt.hs
 -- author: Jacob Xie
@@ -59,6 +60,12 @@ module Lotos.Zmq.Adt
     -- * worker logging
     WorkerLogging (..),
     workerLoggingToTextTuple,
+    LogStream (..),
+    LogLevel (..),
+    LogDropPolicy (..),
+    LogEvent (..),
+    LogBatch (..),
+    LogAck (..),
 
     -- * worker liveness
     AliveSensor (..),
@@ -90,6 +97,7 @@ where
 import Control.Concurrent.STM
 import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as ByteString
+import Data.Char (isDigit)
 import Data.ByteString.Char8 qualified as Char8
 import Data.List (find)
 import Data.Map.Strict qualified as Map
@@ -97,6 +105,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Data.Time (UTCTime, addUTCTime, defaultTimeLocale, diffUTCTime, formatTime, getCurrentTime, parseTimeM)
 import Data.UUID qualified as UUID
+import Data.Word (Word64)
 import Data.UUID.V4 (nextRandom)
 import Lotos.TSD.Map
 import Lotos.Zmq.Error
@@ -288,11 +297,22 @@ partitionRetryTasks now =
 
 -- | Timestamp ACK used for accepted client requests and worker reports.
 newtype Ack = Ack UTCTime
-  deriving (Show)
+  deriving (Show, Eq)
+
+ackToText :: Ack -> Text.Text
+ackToText (Ack time) = Text.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" time)
+
+instance Aeson.ToJSON Ack where
+  toJSON = Aeson.String . ackToText
+
+instance Aeson.FromJSON Ack where
+  parseJSON = Aeson.withText "Ack" $ \t ->
+    case ackFromText t of
+      Right ack -> pure ack
+      Left err -> fail $ show err
 
 instance ToZmq Ack where
-  toZmq (Ack time) =
-    [Char8.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" time)]
+  toZmq = (: []) . textToBS . ackToText
 
 instance FromZmq Ack where
   fromZmq [timeBs] = ackFromBs timeBs
@@ -529,7 +549,7 @@ instance FromZmq Notify where
 -- as @[taskUuid, loggingText]@. Info storage groups retained log lines by
 -- worker id and task id.
 data WorkerLogging = WorkerLogging TaskID Text.Text
-  deriving (Show)
+  deriving (Show, Eq)
 
 instance ToZmq WorkerLogging where
   toZmq (WorkerLogging tid txt) = [uuidToBS tid, textToBS txt]
@@ -540,6 +560,361 @@ instance FromZmq WorkerLogging where
 
 workerLoggingToTextTuple :: WorkerLogging -> (Text.Text, Text.Text)
 workerLoggingToTextTuple (WorkerLogging tid txt) = (UUID.toText tid, txt)
+
+-- | Logical stream for reliable worker log events.
+data LogStream
+  = LogStdout
+  | LogStderr
+  | LogProgress
+  | LogResult
+  deriving (Show, Eq)
+
+-- | Severity attached to a reliable worker log event.
+data LogLevel
+  = LogDebug
+  | LogInfo
+  | LogWarn
+  | LogError
+  deriving (Show, Eq)
+
+-- | Worker-side policy used when a bounded log queue is full.
+data LogDropPolicy
+  = LogDropNewest
+  | LogDropOldest
+  | LogDropLowPriority
+  deriving (Show, Eq)
+
+-- | Structured worker log event for the planned reliable LogIngest transport.
+--
+-- Serialized frame shape:
+-- @[workerId, taskUuid, seq, timestamp, stream, level, message, droppedFrom, droppedThrough]@.
+-- The final two frames are empty for ordinary lines and set for synthetic gap
+-- records that make worker-side drops visible to readers.
+data LogEvent = LogEvent
+  { logEventWorkerId :: RoutingID,
+    -- ^ Worker that produced the event.
+    logEventTaskId :: TaskID,
+    -- ^ Task associated with the event.
+    logEventSeq :: Word64,
+    -- ^ Monotonic per-worker or per-task sequence number selected by the worker.
+    logEventTimestamp :: UTCTime,
+    -- ^ Worker-side event time.
+    logEventStream :: LogStream,
+    -- ^ Logical stream for display and retention policy.
+    logEventLevel :: LogLevel,
+    -- ^ Severity for filtering and drop-priority decisions.
+    logEventMessage :: Text.Text,
+    -- ^ Log line text or gap/drop reason.
+    logEventDroppedFrom :: Maybe Word64,
+    -- ^ First dropped sequence number for a synthetic gap record.
+    logEventDroppedThrough :: Maybe Word64
+    -- ^ Last dropped sequence number for a synthetic gap record.
+  }
+  deriving (Show, Eq)
+
+-- | Ordered log batch sent by a worker DEALER to the broker LogIngest ROUTER.
+--
+-- Serialized frame shape:
+-- @[batchAck, workerId, firstSeq, eventCount, eventFrames...]@ where each event
+-- uses the fixed 'LogEvent' frame shape above.
+data LogBatch = LogBatch
+  { logBatchAck :: Ack,
+    -- ^ Batch id / send timestamp retained by the worker until acknowledged.
+    logBatchWorkerId :: RoutingID,
+    -- ^ Worker routing id used by the planned logging DEALER socket.
+    logBatchFirstSeq :: Word64,
+    -- ^ First event sequence represented in this batch.
+    logBatchEvents :: [LogEvent]
+    -- ^ Ordered log events or explicit gap records.
+  }
+  deriving (Show, Eq)
+
+-- | ACK returned after LogIngest durably accepts a batch.
+--
+-- Serialized frame shape:
+-- @[batchAck, workerId, acceptedThrough, rejectedCount, rejectedReasons...]@.
+data LogAck = LogAck
+  { logAckBatchAck :: Ack,
+    -- ^ Batch id being acknowledged.
+    logAckWorkerId :: RoutingID,
+    -- ^ Worker whose contiguous sequence watermark advanced.
+    logAckAcceptedThrough :: Word64,
+    -- ^ Highest contiguous sequence durably accepted for this worker.
+    logAckRejected :: [Text.Text]
+    -- ^ Human-readable rejection reasons for malformed or oversized records.
+  }
+  deriving (Show, Eq)
+
+logStreamToText :: LogStream -> Text.Text
+logStreamToText LogStdout = "stdout"
+logStreamToText LogStderr = "stderr"
+logStreamToText LogProgress = "progress"
+logStreamToText LogResult = "result"
+
+logStreamFromText :: Text.Text -> Either ZmqError LogStream
+logStreamFromText "stdout" = Right LogStdout
+logStreamFromText "stderr" = Right LogStderr
+logStreamFromText "progress" = Right LogProgress
+logStreamFromText "result" = Right LogResult
+logStreamFromText value = Left $ ZmqParsing $ "Invalid LogStream: " <> value
+
+logLevelToText :: LogLevel -> Text.Text
+logLevelToText LogDebug = "debug"
+logLevelToText LogInfo = "info"
+logLevelToText LogWarn = "warn"
+logLevelToText LogError = "error"
+
+logLevelFromText :: Text.Text -> Either ZmqError LogLevel
+logLevelFromText "debug" = Right LogDebug
+logLevelFromText "info" = Right LogInfo
+logLevelFromText "warn" = Right LogWarn
+logLevelFromText "error" = Right LogError
+logLevelFromText value = Left $ ZmqParsing $ "Invalid LogLevel: " <> value
+
+logDropPolicyToText :: LogDropPolicy -> Text.Text
+logDropPolicyToText LogDropNewest = "drop-newest"
+logDropPolicyToText LogDropOldest = "drop-oldest"
+logDropPolicyToText LogDropLowPriority = "drop-low-priority"
+
+logDropPolicyFromText :: Text.Text -> Either ZmqError LogDropPolicy
+logDropPolicyFromText "drop-newest" = Right LogDropNewest
+logDropPolicyFromText "drop-oldest" = Right LogDropOldest
+logDropPolicyFromText "drop-low-priority" = Right LogDropLowPriority
+logDropPolicyFromText value = Left $ ZmqParsing $ "Invalid LogDropPolicy: " <> value
+
+word64ToBS :: Word64 -> ByteString.ByteString
+word64ToBS = Char8.pack . show
+
+word64FromBS :: ByteString.ByteString -> Either ZmqError Word64
+word64FromBS bs =
+  let raw = Char8.unpack bs
+      invalid = Left $ ZmqParsing $ "Invalid Word64: " <> Text.pack raw
+   in if null raw || any (not . isDigit) raw
+        then invalid
+        else case reads raw :: [(Integer, String)] of
+          [(value, "")] | value <= toInteger (maxBound :: Word64) -> Right $ fromInteger value
+          _ -> invalid
+
+maybeWord64ToBS :: Maybe Word64 -> ByteString.ByteString
+maybeWord64ToBS Nothing = ByteString.empty
+maybeWord64ToBS (Just value) = word64ToBS value
+
+maybeWord64FromBS :: ByteString.ByteString -> Either ZmqError (Maybe Word64)
+maybeWord64FromBS bs
+  | ByteString.null bs = Right Nothing
+  | otherwise = Just <$> word64FromBS bs
+
+utcToBS :: UTCTime -> ByteString.ByteString
+utcToBS = Char8.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
+
+utcFromBS :: ByteString.ByteString -> Either ZmqError UTCTime
+utcFromBS bs =
+  case parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" (Char8.unpack bs) of
+    Just time -> Right time
+    Nothing -> Left $ ZmqParsing "Failed to parse LogEvent timestamp"
+
+instance ToZmq LogStream where
+  toZmq = (: []) . textToBS . logStreamToText
+
+instance FromZmq LogStream where
+  fromZmq [streamBs] = textFromBS streamBs >>= logStreamFromText
+  fromZmq _ = Left $ ZmqParsing "Invalid format for LogStream"
+
+instance ToZmq LogLevel where
+  toZmq = (: []) . textToBS . logLevelToText
+
+instance FromZmq LogLevel where
+  fromZmq [levelBs] = textFromBS levelBs >>= logLevelFromText
+  fromZmq _ = Left $ ZmqParsing "Invalid format for LogLevel"
+
+instance ToZmq LogDropPolicy where
+  toZmq = (: []) . textToBS . logDropPolicyToText
+
+instance FromZmq LogDropPolicy where
+  fromZmq [policyBs] = textFromBS policyBs >>= logDropPolicyFromText
+  fromZmq _ = Left $ ZmqParsing "Invalid format for LogDropPolicy"
+
+logEventFrameCount :: Int
+logEventFrameCount = 9
+
+instance ToZmq LogEvent where
+  toZmq LogEvent {..} =
+    [ textToBS logEventWorkerId,
+      uuidToBS logEventTaskId,
+      word64ToBS logEventSeq,
+      utcToBS logEventTimestamp
+    ]
+      <> toZmq logEventStream
+      <> toZmq logEventLevel
+      <> [ textToBS logEventMessage,
+           maybeWord64ToBS logEventDroppedFrom,
+           maybeWord64ToBS logEventDroppedThrough
+         ]
+
+instance FromZmq LogEvent where
+  fromZmq [workerBs, taskBs, seqBs, timestampBs, streamBs, levelBs, messageBs, droppedFromBs, droppedThroughBs] = do
+    workerId <- textFromBS workerBs
+    taskId <- uuidFromBS taskBs
+    seqNo <- word64FromBS seqBs
+    timestamp <- utcFromBS timestampBs
+    stream <- fromZmq [streamBs]
+    level <- fromZmq [levelBs]
+    message <- textFromBS messageBs
+    droppedFrom <- maybeWord64FromBS droppedFromBs
+    droppedThrough <- maybeWord64FromBS droppedThroughBs
+    pure $ LogEvent workerId taskId seqNo timestamp stream level message droppedFrom droppedThrough
+  fromZmq _ = Left $ ZmqParsing "Invalid format for LogEvent"
+
+instance ToZmq LogBatch where
+  toZmq LogBatch {..} =
+    toZmq logBatchAck
+      <> [ textToBS logBatchWorkerId,
+           word64ToBS logBatchFirstSeq,
+           intToBS (length logBatchEvents)
+         ]
+      <> concatMap toZmq logBatchEvents
+
+instance FromZmq LogBatch where
+  fromZmq (ackBs : workerBs : firstSeqBs : eventCountBs : eventFrames) = do
+    batchAck <- fromZmq [ackBs]
+    workerId <- textFromBS workerBs
+    firstSeq <- word64FromBS firstSeqBs
+    eventCount <- intFromBS eventCountBs
+    eventChunks <- logEventChunks eventCount eventFrames
+    events <- traverse fromZmq eventChunks
+    pure $ LogBatch batchAck workerId firstSeq events
+  fromZmq _ = Left $ ZmqParsing "Invalid format for LogBatch"
+
+logEventChunks :: Int -> [ByteString.ByteString] -> Either ZmqError [[ByteString.ByteString]]
+logEventChunks eventCount eventFrames
+  | eventCount < 0 = Left $ ZmqParsing "LogBatch event count cannot be negative"
+  | otherwise = go eventCount eventFrames
+  where
+    go 0 [] = Right []
+    go 0 _ = Left $ ZmqParsing "LogBatch contains extra event frames"
+    go remaining frames =
+      let (eventFrame, rest) = splitAt logEventFrameCount frames
+       in if length eventFrame == logEventFrameCount
+            then (eventFrame :) <$> go (remaining - 1) rest
+            else Left $ ZmqParsing "LogBatch ended before all event frames were present"
+
+instance ToZmq LogAck where
+  toZmq LogAck {..} =
+    toZmq logAckBatchAck
+      <> [ textToBS logAckWorkerId,
+           word64ToBS logAckAcceptedThrough,
+           intToBS (length logAckRejected)
+         ]
+      <> fmap textToBS logAckRejected
+
+instance FromZmq LogAck where
+  fromZmq (ackBs : workerBs : acceptedThroughBs : rejectedCountBs : rejectedFrames) = do
+    batchAck <- fromZmq [ackBs]
+    workerId <- textFromBS workerBs
+    acceptedThrough <- word64FromBS acceptedThroughBs
+    rejectedCount <- intFromBS rejectedCountBs
+    if rejectedCount < 0
+      then Left $ ZmqParsing "LogAck rejected count cannot be negative"
+      else
+        if rejectedCount == length rejectedFrames
+          then do
+            rejected <- traverse textFromBS rejectedFrames
+            pure $ LogAck batchAck workerId acceptedThrough rejected
+          else Left $ ZmqParsing "LogAck rejected count does not match rejected frames"
+  fromZmq _ = Left $ ZmqParsing "Invalid format for LogAck"
+
+instance Aeson.ToJSON LogStream where
+  toJSON = Aeson.String . logStreamToText
+
+instance Aeson.FromJSON LogStream where
+  parseJSON = Aeson.withText "LogStream" $ \value ->
+    case logStreamFromText value of
+      Right stream -> pure stream
+      Left err -> fail $ show err
+
+instance Aeson.ToJSON LogLevel where
+  toJSON = Aeson.String . logLevelToText
+
+instance Aeson.FromJSON LogLevel where
+  parseJSON = Aeson.withText "LogLevel" $ \value ->
+    case logLevelFromText value of
+      Right level -> pure level
+      Left err -> fail $ show err
+
+instance Aeson.ToJSON LogDropPolicy where
+  toJSON = Aeson.String . logDropPolicyToText
+
+instance Aeson.FromJSON LogDropPolicy where
+  parseJSON = Aeson.withText "LogDropPolicy" $ \value ->
+    case logDropPolicyFromText value of
+      Right policy -> pure policy
+      Left err -> fail $ show err
+
+instance Aeson.ToJSON LogEvent where
+  toJSON LogEvent {..} =
+    Aeson.object
+      [ "workerId" Aeson..= logEventWorkerId,
+        "taskId" Aeson..= UUID.toText logEventTaskId,
+        "seq" Aeson..= logEventSeq,
+        "timestamp" Aeson..= logEventTimestamp,
+        "stream" Aeson..= logEventStream,
+        "level" Aeson..= logEventLevel,
+        "message" Aeson..= logEventMessage,
+        "droppedFrom" Aeson..= logEventDroppedFrom,
+        "droppedThrough" Aeson..= logEventDroppedThrough
+      ]
+
+instance Aeson.FromJSON LogEvent where
+  parseJSON = Aeson.withObject "LogEvent" $ \v -> do
+    taskIdText <- v Aeson..: "taskId"
+    taskId <-
+      case UUID.fromString (Text.unpack taskIdText) of
+        Just uuid -> pure uuid
+        Nothing -> fail $ "Invalid LogEvent taskId: " <> Text.unpack taskIdText
+    LogEvent
+      <$> v Aeson..: "workerId"
+      <*> pure taskId
+      <*> v Aeson..: "seq"
+      <*> v Aeson..: "timestamp"
+      <*> v Aeson..: "stream"
+      <*> v Aeson..: "level"
+      <*> v Aeson..: "message"
+      <*> v Aeson..:? "droppedFrom"
+      <*> v Aeson..:? "droppedThrough"
+
+instance Aeson.ToJSON LogBatch where
+  toJSON LogBatch {..} =
+    Aeson.object
+      [ "batchAck" Aeson..= logBatchAck,
+        "workerId" Aeson..= logBatchWorkerId,
+        "firstSeq" Aeson..= logBatchFirstSeq,
+        "events" Aeson..= logBatchEvents
+      ]
+
+instance Aeson.FromJSON LogBatch where
+  parseJSON = Aeson.withObject "LogBatch" $ \v ->
+    LogBatch
+      <$> v Aeson..: "batchAck"
+      <*> v Aeson..: "workerId"
+      <*> v Aeson..: "firstSeq"
+      <*> v Aeson..: "events"
+
+instance Aeson.ToJSON LogAck where
+  toJSON LogAck {..} =
+    Aeson.object
+      [ "batchAck" Aeson..= logAckBatchAck,
+        "workerId" Aeson..= logAckWorkerId,
+        "acceptedThrough" Aeson..= logAckAcceptedThrough,
+        "rejected" Aeson..= logAckRejected
+      ]
+
+instance Aeson.FromJSON LogAck where
+  parseJSON = Aeson.withObject "LogAck" $ \v ->
+    LogAck
+      <$> v Aeson..: "batchAck"
+      <*> v Aeson..: "workerId"
+      <*> v Aeson..: "acceptedThrough"
+      <*> v Aeson..: "rejected"
 
 ----------------------------------------------------------------------------------------------------
 -- WorkerTasksMap

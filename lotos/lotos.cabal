@@ -120,6 +120,17 @@ test-suite test-zmq-client-ack-frames
   build-depends:
     , zmqx
 
+test-suite test-zmq-log-protocol-config
+  import:         shared-properties, test
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        ZmqLogProtocolConfig.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , aeson
+    , bytestring
+    , time
+
 ----------------------------------------------------------------------------------------------------
 -- Demos: runnable examples that should not execute under `cabal test all`.
 ----------------------------------------------------------------------------------------------------

@@ -35,6 +35,7 @@ defaultWorkerConfig =
       workerDealerPairAddr = "inproc://TaskScheduleWorker",
       loadBalancerBackendAddr = "tcp://127.0.0.1:5556",
       loadBalancerLoggingAddr = "tcp://127.0.0.1:5557",
+      workerLogging = defaultLogIngestConfig "tcp://127.0.0.1:5557",
       workerStatusReportIntervalSec = 5,
       parallelTasksNo = 4
     }

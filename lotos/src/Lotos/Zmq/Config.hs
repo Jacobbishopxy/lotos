@@ -13,6 +13,8 @@ module Lotos.Zmq.Config
     SocketLayerConfig (..),
     TaskProcessorConfig (..),
     InfoStorageConfig (..),
+    LogIngestConfig (..),
+    defaultLogIngestConfig,
     LBConstraint,
 
     -- * loadbalancer server config
@@ -149,6 +151,87 @@ data InfoStorageConfig = InfoStorageConfig
   }
   deriving (Show, Generic, Aeson.FromJSON)
 
+-- | Planned reliable LogIngest transport configuration.
+--
+-- The current runtime still uses the compatibility PUB/SUB fields above. This
+-- config is intentionally optional in broker/worker JSON so existing config
+-- files decode unchanged until a later TP switches the transport.
+data LogIngestConfig = LogIngestConfig
+  { logIngestAddr :: Text.Text,
+    -- ^ ROUTER/DEALER endpoint for the planned reliable logging channel.
+    logIngestSocketHWM :: Int,
+    -- ^ ZeroMQ high-water mark for logging sockets.
+    logIngestBatchMaxRecords :: Int,
+    -- ^ Maximum records in one 'LogBatch'.
+    logIngestBatchMaxBytes :: Int,
+    -- ^ Maximum encoded payload bytes in one batch.
+    logIngestLineMaxBytes :: Int,
+    -- ^ Maximum accepted bytes for one log line.
+    logIngestWorkerQueueHWM :: Int,
+    -- ^ Maximum pending events buffered by one worker before drop policy applies.
+    logIngestReadCacheSize :: Int,
+    -- ^ Per task/worker in-memory read-cache ring size.
+    logIngestReadCacheMaxTasks :: Int,
+    -- ^ Maximum task buckets retained by the broker read cache.
+    logIngestJournalPath :: FilePath,
+    -- ^ Append-only persistence path owned by the future LogIngest service.
+    logIngestRetentionBytes :: Int,
+    -- ^ Approximate journal retention cap in bytes before compaction/rotation.
+    logIngestDropPolicy :: LogDropPolicy
+    -- ^ Worker-side policy for bounded-queue pressure.
+  }
+  deriving (Show, Generic)
+
+-- | Backward-compatible defaults for the planned reliable logging channel.
+--
+-- The address argument lets broker defaults derive from 'loggingAddr' and worker
+-- defaults derive from 'loadBalancerLoggingAddr', preserving old JSON config
+-- behavior while making the new knobs explicit for adopters that opt in early.
+defaultLogIngestConfig :: Text.Text -> LogIngestConfig
+defaultLogIngestConfig addr =
+  LogIngestConfig
+    { logIngestAddr = addr,
+      logIngestSocketHWM = 1000,
+      logIngestBatchMaxRecords = 100,
+      logIngestBatchMaxBytes = 1048576,
+      logIngestLineMaxBytes = 65536,
+      logIngestWorkerQueueHWM = 10000,
+      logIngestReadCacheSize = 1000,
+      logIngestReadCacheMaxTasks = 1000,
+      logIngestJournalPath = "logs/worker-logs.journal",
+      logIngestRetentionBytes = 104857600,
+      logIngestDropPolicy = LogDropOldest
+    }
+
+instance Aeson.FromJSON LogIngestConfig where
+  parseJSON = Aeson.withObject "LogIngestConfig" $ \v -> do
+    let defaults = defaultLogIngestConfig "tcp://127.0.0.1:5558"
+    addr <- maybe (logIngestAddr defaults) id <$> v Aeson..:? "logIngestAddr"
+    socketHWM <- maybe (logIngestSocketHWM defaults) id <$> v Aeson..:? "logIngestSocketHWM"
+    batchMaxRecords <- maybe (logIngestBatchMaxRecords defaults) id <$> v Aeson..:? "logIngestBatchMaxRecords"
+    batchMaxBytes <- maybe (logIngestBatchMaxBytes defaults) id <$> v Aeson..:? "logIngestBatchMaxBytes"
+    lineMaxBytes <- maybe (logIngestLineMaxBytes defaults) id <$> v Aeson..:? "logIngestLineMaxBytes"
+    workerQueueHWM <- maybe (logIngestWorkerQueueHWM defaults) id <$> v Aeson..:? "logIngestWorkerQueueHWM"
+    readCacheSize <- maybe (logIngestReadCacheSize defaults) id <$> v Aeson..:? "logIngestReadCacheSize"
+    readCacheMaxTasks <- maybe (logIngestReadCacheMaxTasks defaults) id <$> v Aeson..:? "logIngestReadCacheMaxTasks"
+    journalPath <- maybe (logIngestJournalPath defaults) id <$> v Aeson..:? "logIngestJournalPath"
+    retentionBytes <- maybe (logIngestRetentionBytes defaults) id <$> v Aeson..:? "logIngestRetentionBytes"
+    dropPolicy <- maybe (logIngestDropPolicy defaults) id <$> v Aeson..:? "logIngestDropPolicy"
+    pure $
+      LogIngestConfig
+        { logIngestAddr = addr,
+          logIngestSocketHWM = socketHWM,
+          logIngestBatchMaxRecords = batchMaxRecords,
+          logIngestBatchMaxBytes = batchMaxBytes,
+          logIngestLineMaxBytes = lineMaxBytes,
+          logIngestWorkerQueueHWM = workerQueueHWM,
+          logIngestReadCacheSize = readCacheSize,
+          logIngestReadCacheMaxTasks = readCacheMaxTasks,
+          logIngestJournalPath = journalPath,
+          logIngestRetentionBytes = retentionBytes,
+          logIngestDropPolicy = dropPolicy
+        }
+
 -- | Complete server configuration consumed by 'runLBS'.
 data BrokerServiceConfig = BrokerServiceConfig
   { taskScheduler :: TaskSchedulerConfig,
@@ -157,10 +240,28 @@ data BrokerServiceConfig = BrokerServiceConfig
     -- ^ Client/worker ZeroMQ endpoints.
     taskProcessor :: TaskProcessorConfig,
     -- ^ Scheduler batching and trigger behavior.
-    infoStorage :: InfoStorageConfig
+    infoStorage :: InfoStorageConfig,
     -- ^ HTTP info API and worker-log snapshot behavior.
+    logIngest :: LogIngestConfig
+    -- ^ Planned reliable logging transport knobs. Optional in JSON for compatibility.
   }
-  deriving (Show, Generic, Aeson.FromJSON)
+  deriving (Show, Generic)
+
+instance Aeson.FromJSON BrokerServiceConfig where
+  parseJSON = Aeson.withObject "BrokerServiceConfig" $ \v -> do
+    parsedTaskScheduler <- v Aeson..: "taskScheduler"
+    parsedSocketLayer <- v Aeson..: "socketLayer"
+    parsedTaskProcessor <- v Aeson..: "taskProcessor"
+    parsedInfoStorage <- v Aeson..: "infoStorage"
+    parsedLogIngest <- maybe (defaultLogIngestConfig (loggingAddr parsedInfoStorage)) id <$> v Aeson..:? "logIngest"
+    pure $
+      BrokerServiceConfig
+        { taskScheduler = parsedTaskScheduler,
+          socketLayer = parsedSocketLayer,
+          taskProcessor = parsedTaskProcessor,
+          infoStorage = parsedInfoStorage,
+          logIngest = parsedLogIngest
+        }
 
 -- | Read a broker JSON config using the record field names above.
 readBrokerConfig :: FilePath -> IO BrokerServiceConfig
@@ -184,12 +285,34 @@ data WorkerServiceConfig = WorkerServiceConfig
     -- ^ DEALER endpoint for scheduled tasks and worker/task status reports.
     loadBalancerLoggingAddr :: Text.Text,
     -- ^ PUB endpoint for task stdout/stderr and final command-result logs.
+    workerLogging :: LogIngestConfig,
+    -- ^ Planned reliable logging DEALER config. Optional in JSON for compatibility.
     workerStatusReportIntervalSec :: Int,
     -- ^ Seconds between calls to 'StatusReporter.gatherStatus'.
     parallelTasksNo :: Int
     -- ^ Maximum number of queued tasks handed to 'TaskAcceptor.processTasks' at once.
   }
-  deriving (Show, Generic, Aeson.FromJSON)
+  deriving (Show, Generic)
+
+instance Aeson.FromJSON WorkerServiceConfig where
+  parseJSON = Aeson.withObject "WorkerServiceConfig" $ \v -> do
+    parsedWorkerId <- v Aeson..: "workerId"
+    parsedWorkerDealerPairAddr <- v Aeson..: "workerDealerPairAddr"
+    parsedLoadBalancerBackendAddr <- v Aeson..: "loadBalancerBackendAddr"
+    parsedLoadBalancerLoggingAddr <- v Aeson..: "loadBalancerLoggingAddr"
+    parsedWorkerLogging <- maybe (defaultLogIngestConfig parsedLoadBalancerLoggingAddr) id <$> v Aeson..:? "workerLogging"
+    parsedWorkerStatusReportIntervalSec <- v Aeson..: "workerStatusReportIntervalSec"
+    parsedParallelTasksNo <- v Aeson..: "parallelTasksNo"
+    pure $
+      WorkerServiceConfig
+        { workerId = parsedWorkerId,
+          workerDealerPairAddr = parsedWorkerDealerPairAddr,
+          loadBalancerBackendAddr = parsedLoadBalancerBackendAddr,
+          loadBalancerLoggingAddr = parsedLoadBalancerLoggingAddr,
+          workerLogging = parsedWorkerLogging,
+          workerStatusReportIntervalSec = parsedWorkerStatusReportIntervalSec,
+          parallelTasksNo = parsedParallelTasksNo
+        }
 
 -- | Read a worker JSON config using the record field names above.
 readWorkerConfig :: FilePath -> IO WorkerServiceConfig
