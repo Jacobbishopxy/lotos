@@ -96,6 +96,7 @@ test-suite test-worker-lifecycle
     , HUnit
     , lotos
     , TaskSchedule:ts-worker-lib
+    , text
     , time
 
 ------------------------------------------------------------------------------------------------

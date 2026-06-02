@@ -7,7 +7,8 @@
 -- brief:
 
 module Lotos.Zmq.LBW
-  ( TaskAcceptorAPI (..),
+  ( LogEnqueueResult (..),
+    TaskAcceptorAPI (..),
     TaskAcceptor (..),
     WorkerInfo (..),
     StatusReporterAPI (..),
@@ -25,20 +26,21 @@ where
 
 import Control.Concurrent (myThreadId, threadDelay)
 import Control.Concurrent.STM
-import Control.Monad (unless, when)
+import Control.Monad (unless, void, when)
 import Control.Monad.RWS
 import Data.Function
+import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
-import Lotos.Logger
+import Lotos.Logger hiding (LogLevel)
 import Lotos.TSD.Queue
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error (ZmqError, zmqThrow, zmqUnwrap)
+import Lotos.Zmq.LBW.LogTransport
 import Lotos.Zmq.Util (textToBS)
 import Zmqx
 import Zmqx.Dealer
 import Zmqx.Pair
-import Zmqx.Pub
 
 ----------------------------------------------------------------------------------------------------
 
@@ -49,7 +51,11 @@ import Zmqx.Pub
 -- task status frames over the backend connection.
 data TaskAcceptorAPI = TaskAcceptorAPI
   { taPubTaskLogging :: WorkerLogging -> IO (),
-    -- ^ Publish task-scoped stdout/stderr/progress text to info storage.
+    -- ^ Compatibility callback for task-scoped log text. It now enqueues a
+    -- reliable stdout/info 'LogEvent' rather than publishing directly.
+    taSendTaskLog :: LogStream -> LogLevel -> TaskID -> Text.Text -> IO LogEnqueueResult,
+    -- ^ Enqueue a structured reliable task log event. This returns after bounded
+    -- local buffering; broker durability is confirmed asynchronously by batched ACKs.
     taSendTaskStatus :: (TaskID, TaskStatus) -> IO ()
     -- ^ Report lifecycle transitions such as 'TaskProcessing', 'TaskSucceed', or 'TaskFailed'.
   }
@@ -102,7 +108,7 @@ data WorkerInfo = WorkerInfo
 -- * Task queue (taskQueue)
 -- * Event trigger for periodic status updates (trigger)
 -- * ZMQ dealer socket for task/status communication (workerDealer)
--- * ZMQ pub socket for logging (workerPub)
+-- * Dedicated reliable log transport buffer/DEALER (workerLogTransport)
 -- * Task acceptor API wrapper (taskAcceptorAPI)
 -- * Current worker status (workerInfo)
 -- * Version tracking (ver)
@@ -116,9 +122,9 @@ data WorkerService ta sr t w
     -- receives message (tasks) from LBS (load balancer server);
     -- sends message (worker status) to LBS.
     workerDealerPair :: Zmqx.Pair,
-    -- sends message (loggings) to LBS
-    workerPub :: Zmqx.Pub,
-    -- a wrapper for `pubTaskLogging` & `sendTaskStatus`
+    -- buffers and sends task logs to broker LogIngest.
+    workerLogTransport :: WorkerLogTransport,
+    -- a wrapper for log enqueueing & `sendTaskStatus`
     taskAcceptorAPI :: TaskAcceptorAPI,
     workerInfo :: TVar WorkerInfo,
     ver :: Int
@@ -130,7 +136,7 @@ data WorkerService ta sr t w
 --
 -- Initializes:
 -- * Task queue and event trigger
--- * ZMQ dealer and pub sockets
+-- * ZMQ dealer pair and reliable log transport
 -- * Task acceptor API
 -- * Worker status information
 mkWorkerService ::
@@ -151,14 +157,15 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
   wDealerPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "workerDealerPair"
   zmqUnwrap $ Zmqx.bind wDealerPair workerDealerPairAddr
 
-  -- worker Pub init
-  wPub <- zmqUnwrap $ Zmqx.Pub.open $ Zmqx.name "workerPub"
-  zmqUnwrap $ Zmqx.connect wPub loadBalancerLoggingAddr
+  -- worker reliable log transport init. The ZMQ DEALER itself is opened by the
+  -- logging loop in runWorkerService so task callbacks only touch bounded memory.
+  workerLogTransport <- liftIO $ newWorkerLogTransport ws
 
   -- create taskAcceptorAPI instance
   let taskAcceptorAPI =
         TaskAcceptorAPI
-          { taPubTaskLogging = \wl -> zmqThrow $ Zmqx.sends wPub (textToBS workerId : toZmq wl),
+          { taPubTaskLogging = \wl -> void $ enqueueWorkerLogging workerLogTransport wl,
+            taSendTaskLog = enqueueWorkerLog workerLogTransport,
             taSendTaskStatus = \(tid, ts) -> do
               ack <- newAck
               zmqThrow $ Zmqx.sends wDealerPair $ toZmq $ WorkerReportTaskStatus ack tid ts
@@ -174,7 +181,7 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
       taskQueue
       trigger
       wDealerPair
-      wPub
+      workerLogTransport
       taskAcceptorAPI
       workerInfo
       0
@@ -205,6 +212,10 @@ runWorkerService ws WorkerServiceConfig {..} = do
   -- worker Dealer Pair init in a separate thread
   wDealerPair' <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "workerDealerPair'"
   zmqUnwrap $ Zmqx.connect wDealerPair' workerDealerPairAddr
+
+  -- start the reliable logging loop on its own DEALER channel.
+  tLog <- runWorkerLogTransport (workerLogTransport ws)
+  logApp INFO $ "workerLogTransport threadID: " <> show tLog
 
   -- start the socket loop
   socketLoop ws wDealer wDealerPair'
@@ -326,7 +337,7 @@ listTasksInQueue WorkerService {taskQueue} =
 -- | Publish a task log frame using the worker id as the PUB/SUB topic.
 pubTaskLogging :: WorkerService ta sr t w -> WorkerLogging -> LotosApp ()
 pubTaskLogging WorkerService {..} wl =
-  zmqUnwrap $ Zmqx.sends workerPub $ textToBS (workerId conf) : toZmq wl
+  liftIO $ void $ enqueueWorkerLogging workerLogTransport wl
 
 -- | Send a task-status transition back to the broker backend.
 sendTaskStatus :: WorkerService ta sr t w -> TaskID -> TaskStatus -> LotosApp ()

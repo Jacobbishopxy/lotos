@@ -47,6 +47,7 @@ library
     Lotos.Zmq.Internal.Liveness
     Lotos.Zmq.Internal.Retry
     Lotos.Zmq.LBS.LogIngest
+    Lotos.Zmq.LBW.LogTransport
 
   other-modules:
     Lotos.Proc.ConcExecutor
@@ -145,6 +146,15 @@ test-suite test-zmq-log-ingest
     , text
     , time
     , zmqx
+
+test-suite test-zmq-worker-log-transport
+  import:         shared-properties, test
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        ZmqWorkerLogTransport.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , time
 
 ----------------------------------------------------------------------------------------------------
 -- Demos: runnable examples that should not execute under `cabal test all`.

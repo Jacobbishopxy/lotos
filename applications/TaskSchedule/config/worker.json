@@ -4,5 +4,21 @@
   "loadBalancerBackendAddr": "tcp://127.0.0.1:5556",
   "loadBalancerLoggingAddr": "tcp://127.0.0.1:5557",
   "workerStatusReportIntervalSec": 5,
-  "parallelTasksNo": 4
+  "parallelTasksNo": 4,
+  "workerLogging": {
+    "logIngestAddr": "tcp://127.0.0.1:5558",
+    "logIngestSocketHWM": 1000,
+    "logIngestBatchMaxRecords": 100,
+    "logIngestBatchMaxBytes": 1048576,
+    "logIngestLineMaxBytes": 65536,
+    "logIngestWorkerQueueHWM": 10000,
+    "logIngestFlushIntervalMicros": 100000,
+    "logIngestAckTimeoutMicros": 1000000,
+    "logIngestRetryBackoffMicros": 250000,
+    "logIngestReadCacheSize": 1000,
+    "logIngestReadCacheMaxTasks": 1000,
+    "logIngestJournalPath": "logs/worker-logs.journal",
+    "logIngestRetentionBytes": 104857600,
+    "logIngestDropPolicy": "drop-oldest"
+  }
 }

@@ -87,6 +87,7 @@ module Lotos.Zmq
     InfoStorageConfig (..),
     LogIngestConfig (..),
     defaultLogIngestConfig,
+    defaultReliableLogIngestAddr,
 
     -- * error
     ZmqError (..),
@@ -97,6 +98,7 @@ module Lotos.Zmq
     runLBS,
 
     -- * load balancer worker
+    LogEnqueueResult (..),
     TaskAcceptorAPI (..),
     TaskAcceptor (..),
     WorkerInfo (..),

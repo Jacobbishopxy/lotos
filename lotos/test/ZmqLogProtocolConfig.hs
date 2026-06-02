@@ -124,11 +124,11 @@ logSequenceFramesRejectNegativeAndOverflow = do
 oldBrokerAndWorkerConfigsGetLoggingDefaults :: Assertion
 oldBrokerAndWorkerConfigsGetLoggingDefaults = do
   brokerCfg <- unwrapEither (Aeson.eitherDecode oldBrokerConfigJson)
-  logIngestAddr (logIngest brokerCfg) @?= loggingAddr (infoStorage brokerCfg)
+  logIngestAddr (logIngest brokerCfg) @?= defaultReliableLogIngestAddr (loggingAddr (infoStorage brokerCfg))
   logIngestDropPolicy (logIngest brokerCfg) @?= LogDropOldest
   workerCfg <- unwrapEither (Aeson.eitherDecode oldWorkerConfigJson)
-  logIngestAddr (workerLogging workerCfg) @?= loadBalancerLoggingAddr workerCfg
-  logIngestWorkerQueueHWM (workerLogging workerCfg) @?= logIngestWorkerQueueHWM (defaultLogIngestConfig (loadBalancerLoggingAddr workerCfg))
+  logIngestAddr (workerLogging workerCfg) @?= defaultReliableLogIngestAddr (loadBalancerLoggingAddr workerCfg)
+  logIngestWorkerQueueHWM (workerLogging workerCfg) @?= logIngestWorkerQueueHWM (defaultLogIngestConfig (defaultReliableLogIngestAddr (loadBalancerLoggingAddr workerCfg)))
 
 partialLogIngestConfigUsesDefaults :: Assertion
 partialLogIngestConfigUsesDefaults = do
@@ -137,6 +137,9 @@ partialLogIngestConfigUsesDefaults = do
   logIngestDropPolicy cfg @?= LogDropLowPriority
   logIngestBatchMaxRecords cfg @?= logIngestBatchMaxRecords (defaultLogIngestConfig "tcp://127.0.0.1:5558")
   logIngestLineMaxBytes cfg @?= logIngestLineMaxBytes (defaultLogIngestConfig "tcp://127.0.0.1:5558")
+  logIngestFlushIntervalMicros cfg @?= logIngestFlushIntervalMicros (defaultLogIngestConfig "tcp://127.0.0.1:5558")
+  logIngestAckTimeoutMicros cfg @?= logIngestAckTimeoutMicros (defaultLogIngestConfig "tcp://127.0.0.1:5558")
+  logIngestRetryBackoffMicros cfg @?= logIngestRetryBackoffMicros (defaultLogIngestConfig "tcp://127.0.0.1:5558")
 
 tests :: Test
 tests =

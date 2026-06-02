@@ -20,5 +20,21 @@
     "loggingAddr": "tcp://127.0.0.1:5557",
     "loggingsBufferSize": 1000,
     "infoFetchIntervalSec": 10
+  },
+  "logIngest": {
+    "logIngestAddr": "tcp://127.0.0.1:5558",
+    "logIngestSocketHWM": 1000,
+    "logIngestBatchMaxRecords": 100,
+    "logIngestBatchMaxBytes": 1048576,
+    "logIngestLineMaxBytes": 65536,
+    "logIngestWorkerQueueHWM": 10000,
+    "logIngestFlushIntervalMicros": 100000,
+    "logIngestAckTimeoutMicros": 1000000,
+    "logIngestRetryBackoffMicros": 250000,
+    "logIngestReadCacheSize": 1000,
+    "logIngestReadCacheMaxTasks": 1000,
+    "logIngestJournalPath": "logs/worker-logs.journal",
+    "logIngestRetentionBytes": 104857600,
+    "logIngestDropPolicy": "drop-oldest"
   }
 }

@@ -15,6 +15,7 @@ module Lotos.Zmq.Config
     InfoStorageConfig (..),
     LogIngestConfig (..),
     defaultLogIngestConfig,
+    defaultReliableLogIngestAddr,
     LBConstraint,
 
     -- * loadbalancer server config
@@ -169,6 +170,12 @@ data LogIngestConfig = LogIngestConfig
     -- ^ Maximum accepted bytes for one log line.
     logIngestWorkerQueueHWM :: Int,
     -- ^ Maximum pending events buffered by one worker before drop policy applies.
+    logIngestFlushIntervalMicros :: Int,
+    -- ^ Maximum idle time before the worker flushes a partial log batch.
+    logIngestAckTimeoutMicros :: Int,
+    -- ^ Bounded worker wait for a matching LogAck before retrying an in-flight batch.
+    logIngestRetryBackoffMicros :: Int,
+    -- ^ Sleep between retries so broker outages do not create a tight resend loop.
     logIngestReadCacheSize :: Int,
     -- ^ Per task/worker in-memory read-cache ring size.
     logIngestReadCacheMaxTasks :: Int,
@@ -196,12 +203,28 @@ defaultLogIngestConfig addr =
       logIngestBatchMaxBytes = 1048576,
       logIngestLineMaxBytes = 65536,
       logIngestWorkerQueueHWM = 10000,
+      logIngestFlushIntervalMicros = 100000,
+      logIngestAckTimeoutMicros = 1000000,
+      logIngestRetryBackoffMicros = 250000,
       logIngestReadCacheSize = 1000,
       logIngestReadCacheMaxTasks = 1000,
       logIngestJournalPath = "logs/worker-logs.journal",
       logIngestRetentionBytes = 104857600,
       logIngestDropPolicy = LogDropOldest
     }
+
+-- | Derive the reliable LogIngest endpoint from the legacy PUB/SUB endpoint.
+-- TCP addresses use the next port (5557 -> 5558 in the demo); non-port
+-- addresses get a suffix so the ROUTER does not collide with InfoStorage SUB.
+defaultReliableLogIngestAddr :: Text.Text -> Text.Text
+defaultReliableLogIngestAddr legacyAddr =
+  case Text.breakOnEnd ":" legacyAddr of
+    (prefix, portText)
+      | not (Text.null prefix),
+        [(port, "")] <- reads (Text.unpack portText) :: [(Int, String)],
+        port < maxBound ->
+          prefix <> Text.pack (show (port + 1))
+    _ -> legacyAddr <> "-log-ingest"
 
 instance Aeson.FromJSON LogIngestConfig where
   parseJSON = Aeson.withObject "LogIngestConfig" $ \v -> do
@@ -212,6 +235,9 @@ instance Aeson.FromJSON LogIngestConfig where
     batchMaxBytes <- maybe (logIngestBatchMaxBytes defaults) id <$> v Aeson..:? "logIngestBatchMaxBytes"
     lineMaxBytes <- maybe (logIngestLineMaxBytes defaults) id <$> v Aeson..:? "logIngestLineMaxBytes"
     workerQueueHWM <- maybe (logIngestWorkerQueueHWM defaults) id <$> v Aeson..:? "logIngestWorkerQueueHWM"
+    flushIntervalMicros <- maybe (logIngestFlushIntervalMicros defaults) id <$> v Aeson..:? "logIngestFlushIntervalMicros"
+    ackTimeoutMicros <- maybe (logIngestAckTimeoutMicros defaults) id <$> v Aeson..:? "logIngestAckTimeoutMicros"
+    retryBackoffMicros <- maybe (logIngestRetryBackoffMicros defaults) id <$> v Aeson..:? "logIngestRetryBackoffMicros"
     readCacheSize <- maybe (logIngestReadCacheSize defaults) id <$> v Aeson..:? "logIngestReadCacheSize"
     readCacheMaxTasks <- maybe (logIngestReadCacheMaxTasks defaults) id <$> v Aeson..:? "logIngestReadCacheMaxTasks"
     journalPath <- maybe (logIngestJournalPath defaults) id <$> v Aeson..:? "logIngestJournalPath"
@@ -225,6 +251,9 @@ instance Aeson.FromJSON LogIngestConfig where
           logIngestBatchMaxBytes = batchMaxBytes,
           logIngestLineMaxBytes = lineMaxBytes,
           logIngestWorkerQueueHWM = workerQueueHWM,
+          logIngestFlushIntervalMicros = flushIntervalMicros,
+          logIngestAckTimeoutMicros = ackTimeoutMicros,
+          logIngestRetryBackoffMicros = retryBackoffMicros,
           logIngestReadCacheSize = readCacheSize,
           logIngestReadCacheMaxTasks = readCacheMaxTasks,
           logIngestJournalPath = journalPath,
@@ -253,7 +282,7 @@ instance Aeson.FromJSON BrokerServiceConfig where
     parsedSocketLayer <- v Aeson..: "socketLayer"
     parsedTaskProcessor <- v Aeson..: "taskProcessor"
     parsedInfoStorage <- v Aeson..: "infoStorage"
-    parsedLogIngest <- maybe (defaultLogIngestConfig (loggingAddr parsedInfoStorage)) id <$> v Aeson..:? "logIngest"
+    parsedLogIngest <- maybe (defaultLogIngestConfig (defaultReliableLogIngestAddr (loggingAddr parsedInfoStorage))) id <$> v Aeson..:? "logIngest"
     pure $
       BrokerServiceConfig
         { taskScheduler = parsedTaskScheduler,
@@ -300,7 +329,7 @@ instance Aeson.FromJSON WorkerServiceConfig where
     parsedWorkerDealerPairAddr <- v Aeson..: "workerDealerPairAddr"
     parsedLoadBalancerBackendAddr <- v Aeson..: "loadBalancerBackendAddr"
     parsedLoadBalancerLoggingAddr <- v Aeson..: "loadBalancerLoggingAddr"
-    parsedWorkerLogging <- maybe (defaultLogIngestConfig parsedLoadBalancerLoggingAddr) id <$> v Aeson..:? "workerLogging"
+    parsedWorkerLogging <- maybe (defaultLogIngestConfig (defaultReliableLogIngestAddr parsedLoadBalancerLoggingAddr)) id <$> v Aeson..:? "workerLogging"
     parsedWorkerStatusReportIntervalSec <- v Aeson..: "workerStatusReportIntervalSec"
     parsedParallelTasksNo <- v Aeson..: "parallelTasksNo"
     pure $

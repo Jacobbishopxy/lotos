@@ -15,9 +15,10 @@ module Worker
   )
 where
 
+import Control.Monad (void)
 import Control.Monad.IO.Class
 import Data.Text qualified as Text
-import Lotos.Logger
+import Lotos.Logger hiding (LogLevel)
 import Lotos.Proc
 import Lotos.Zmq
 import Adt
@@ -43,12 +44,22 @@ instance TaskAcceptor SimpleWorker ClientTask where
         CommandRequest
           { cmdString = command $ taskProp task,
             cmdTimeout = taskTimeout task,
-            loggingIO = \txt -> taPubTaskLogging $ WorkerLogging (unsafeGetTaskID task) (Text.pack txt),
+            loggingIO = \txt -> do
+              let (stream, level, message) = classifyCommandOutput (Text.pack txt)
+              void $ taSendTaskLog stream level (unsafeGetTaskID task) message,
             startIO = taSendTaskStatus (unsafeGetTaskID task, TaskProcessing),
             finishIO = \res -> do
-              taPubTaskLogging $ WorkerLogging (unsafeGetTaskID task) (Text.pack $ show res)
-              taSendTaskStatus (unsafeGetTaskID task, cvtCommandResult2TaskStatus res)
+              let terminalStatus = cvtCommandResult2TaskStatus res
+                  resultLevel = if terminalStatus == TaskSucceed then LogInfo else LogError
+              void $ taSendTaskLog LogResult resultLevel (unsafeGetTaskID task) (Text.pack $ show res)
+              taSendTaskStatus (unsafeGetTaskID task, terminalStatus)
           }
+
+classifyCommandOutput :: Text.Text -> (LogStream, LogLevel, Text.Text)
+classifyCommandOutput raw
+  | Just message <- Text.stripPrefix "STDERR: " raw = (LogStderr, LogError, message)
+  | Just message <- Text.stripPrefix "STDOUT: " raw = (LogStdout, LogInfo, message)
+  | otherwise = (LogStdout, LogInfo, raw)
 
 instance StatusReporter SimpleWorker WorkerState where
   -- | Combine OS load metrics with framework-maintained queue/processing counts.

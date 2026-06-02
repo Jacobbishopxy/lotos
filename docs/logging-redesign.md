@@ -1,6 +1,6 @@
 # Worker Logging Redesign
 
-**Status:** Broker LogIngest skeleton implemented in TP-023 with the TP-022 protocol/config surface. Runtime worker logging still uses the TP-013 InfoStorage PUB/SUB compatibility path by default until a later TP switches workers to the reliable DEALER transport.
+**Status:** Worker DEALER log transport is implemented in TP-024 on top of the TP-022 protocol/config surface and TP-023 broker LogIngest. Runtime workers enqueue bounded `LogEvent`s, send `LogBatch`es on a dedicated logging DEALER, and retry until LogIngest returns `LogAck`s. The legacy InfoStorage PUB/SUB path remains available for compatibility, but TaskSchedule defaults now use a split LogIngest endpoint (`5558`) for reliable worker logs.
 
 ## Decision
 
@@ -157,10 +157,27 @@ TP-022 exposes `LogIngestConfig` and `defaultLogIngestConfig` through `Lotos.Zmq
 ## Migration outline
 
 1. **Done in TP-022:** add protocol types and frame/config regression tests for `LogEvent`, `LogBatch`, `LogAck`, `LogStream`, `LogLevel`, `LogDropPolicy`, and `LogIngestConfig`.
-2. Introduce LogIngest broker service and durable journal behind a bounded cache.
-3. Add a worker logging service with a bounded pending queue, batch retry, and explicit drop/gap records.
-4. Rewire InfoStorage to read recent logs from LogIngest/cache instead of binding a SUB socket.
+2. **Done in TP-023:** introduce LogIngest broker service and durable journal behind a bounded cache.
+3. **Done in TP-024:** add a worker logging service with a bounded pending queue, batch retry, and explicit drop/gap records.
+4. **Partially done in TP-024:** backfill legacy `workerLoggingsMap` from recent LogIngest events while keeping the SUB socket for compatibility; a full removal/rename of the PUB/SUB compatibility surface remains a follow-up decision.
 5. Rename public-facing callback/config fields only with a documented compatibility path for adopters.
+
+## TP-024 implementation notes
+
+TP-024 introduces `Lotos.Zmq.LBW.LogTransport` and rewires `TaskAcceptorAPI` with:
+
+- Bounded worker memory via `logIngestWorkerQueueHWM`; enqueue callbacks mutate only local state and never wait for broker durability.
+- Dedicated worker logging DEALER sockets connected to `workerLogging.logIngestAddr`, separate from the backend task/status DEALER.
+- Partial-batch flushing and retry behavior controlled by `logIngestFlushIntervalMicros`, `logIngestAckTimeoutMicros`, and `logIngestRetryBackoffMicros`.
+- Worker-wide monotonic sequence numbers aligned with broker `acceptedThroughByWorker`. Overflow replaces contiguous low-priority spans with warn-level synthetic gap `LogEvent`s containing `droppedFrom`/`droppedThrough` so `/logs/stats.droppedEvents`, `/logs/stats.sequenceGaps`, and query endpoints expose loss.
+- TaskSchedule command output mapping: `STDOUT:` lines become `LogStdout`/`LogInfo`, `STDERR:` lines become `LogStderr`/`LogError`, and final command results become `LogResult` with success/failure severity.
+- Config compatibility: old broker/worker JSON that omits `logIngest`/`workerLogging` derives a split reliable endpoint from the legacy logging endpoint (demo `tcp://127.0.0.1:5557` -> `tcp://127.0.0.1:5558`). The sample TaskSchedule configs now set the reliable endpoint explicitly.
+
+Runtime caveats:
+
+- `logIngestSocketHWM` is still a config surface for future socket-level hardening; TP-024 enforces worker memory and batch bounds but does not apply socket HWM options.
+- The legacy InfoStorage SUB socket remains bound to `infoStorage.loggingAddr` so older PUB workers can still feed `/info.workerLoggingsMap`; new reliable logs also backfill that map from the bounded LogIngest cache.
+- Delivery remains at-least-once. Workers retry unacked batches, and LogIngest deduplicates accepted sequence coverage; exactly-once delivery is not claimed.
 
 ## TP-023 implementation notes
 
@@ -175,5 +192,5 @@ TP-023 introduces `Lotos.Zmq.LBS.LogIngest` with:
 Conservative runtime integration details and limitations:
 
 - `runLBS` creates LogIngest state for the `/logs/...` routes. It starts the ROUTER only when `logIngestAddr` differs from legacy `InfoStorageConfig.loggingAddr`; old configs default these to the same address, so the ROUTER is skipped to avoid breaking the existing PUB/SUB smoke path.
-- Worker-side reliable logging DEALER, retry/backoff, queue drop policy, journal recovery on broker restart, retention/compaction, and full replacement of `workerLoggingsMap` remain follow-up work.
+- Journal recovery on broker restart, retention/compaction, socket-level HWM application, and full removal/rename of the legacy PUB/SUB compatibility surface remain follow-up work.
 - `LogAck.acceptedThrough` is a contiguous durability watermark, not an exactly-once guarantee. Delivery remains at-least-once with idempotent broker ingestion.

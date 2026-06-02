@@ -324,7 +324,7 @@ infoLoop iss@InfoStorageServer {..} layer = do
     infoLoop iss {subscriberInfo = si, trigger = newTrigger} layer
 
   -- 3. process the info, `TaskSchedulerData` -> `InfoStorage`; Update the shared `infoStorage` using `MVar`
-  newIS <- mkInfoStorage layer si
+  newIS <- mkInfoStorage layer si logIngestState
   liftIO $ modifyMVar_ infoStorage $ \_ -> pure newIS
 
   -- 4. loop, preserving accumulated worker logging buffers across snapshots
@@ -337,14 +337,18 @@ mkInfoStorage ::
   (FromZmq t, ToZmq t, FromZmq w) =>
   TaskSchedulerData t w ->
   SubscriberInfo ->
+  LogIngestState ->
   LotosApp (InfoStorage t w)
-mkInfoStorage (TaskSchedulerData tq ftq wtm wsm _ gbb) si = do
+mkInfoStorage (TaskSchedulerData tq ftq wtm wsm _ gbb) si logIngestState = do
   tasksInQueue <- liftIO $ readQueue' tq
   tasksInFailedQueue <- liftIO $ fmap retryTaskPayload <$> readQueue' ftq
   workerTasksMap <- liftIO $ Map.map (map (\(_, task, _) -> task)) <$> toMapTSWorkerTasks wtm
   workerStatusMap <- liftIO $ toMap wsm
   tasksInGarbageBin <- liftIO $ getBuffer' gbb
-  workerLoggingsMap <- liftIO $ mapM getBuffer' si
+  legacyWorkerLoggingsMap <- liftIO $ mapM getBuffer' si
+  reliableRecentLogs <- liftIO $ queryRecentLogs logIngestState
+  let legacyLoggings = Map.map (workerLoggingToTextTuple <$>) legacyWorkerLoggingsMap
+      reliableLoggings = logEventsToLegacyWorkerLoggings $ logQueryEvents reliableRecentLogs
 
   pure
     InfoStorage
@@ -353,5 +357,12 @@ mkInfoStorage (TaskSchedulerData tq ftq wtm wsm _ gbb) si = do
         tasksInGarbageBin = tasksInGarbageBin,
         workerTasksMap = workerTasksMap,
         workerStatusMap = workerStatusMap,
-        workerLoggingsMap = Map.map (workerLoggingToTextTuple <$>) workerLoggingsMap
+        workerLoggingsMap = Map.unionWith (<>) legacyLoggings reliableLoggings
       }
+
+logEventsToLegacyWorkerLoggings :: [LogEvent] -> Map.Map RoutingID [(Text.Text, Text.Text)]
+logEventsToLegacyWorkerLoggings =
+  foldr insertEvent Map.empty
+  where
+    insertEvent LogEvent {..} =
+      Map.insertWith (<>) logEventWorkerId [(UUID.toText logEventTaskId, logEventMessage)]
