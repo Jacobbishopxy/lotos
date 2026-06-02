@@ -24,6 +24,7 @@ import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Internal.Liveness
 import Lotos.Zmq.LBS.InfoStorage
+import Lotos.Zmq.LBS.LogIngest
 import Lotos.Zmq.LBS.SocketLayer
 import Lotos.Zmq.LBS.TaskProcessor
 
@@ -86,8 +87,21 @@ runLBS n BrokerServiceConfig {..} loadBalancer = do
   t2 <- runTaskProcessor taskProcessorConfig taskSchedulerData loadBalancer
   logApp INFO $ "runTaskProcessor threadID: " <> show t2
 
-  -- 4. run info storage
-  (t3, t4) <- runInfoStorage n infoStorageConfig taskSchedulerData
+  -- 4. initialize broker-side LogIngest state and start the ROUTER when it does not
+  -- collide with the legacy InfoStorage PUB/SUB compatibility endpoint.
+  logIngestState <- liftIO $ newLogIngestState logIngest
+  if logIngestRouterEnabled infoStorageConfig logIngest
+    then do
+      tLog <- runLogIngest logIngest logIngestState
+      logApp INFO $ "runLogIngest threadID: " <> show tLog
+    else
+      logApp WARN $
+        "runLogIngest skipped because logIngestAddr equals legacy InfoStorage loggingAddr: "
+          <> show (logIngestAddr logIngest)
+
+  -- 5. run info storage and expose LogIngest query endpoints without embedding
+  -- structured logs into the scheduler snapshot.
+  (t3, t4) <- runInfoStorage n infoStorageConfig logIngestState taskSchedulerData
   logApp INFO $ "runInfoStorage threadID 1: " <> show t3 <> ", threadID 2: " <> show t4
 
   pure ()

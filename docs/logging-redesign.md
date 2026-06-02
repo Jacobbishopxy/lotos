@@ -1,6 +1,6 @@
 # Worker Logging Redesign
 
-**Status:** Planned architecture with the TP-022 protocol/config surface in place. Runtime logging still uses the TP-013 InfoStorage PUB/SUB compatibility path until a later TP switches transport.
+**Status:** Broker LogIngest skeleton implemented in TP-023 with the TP-022 protocol/config surface. Runtime worker logging still uses the TP-013 InfoStorage PUB/SUB compatibility path by default until a later TP switches workers to the reliable DEALER transport.
 
 ## Decision
 
@@ -108,7 +108,20 @@ Planned responsibilities:
 - **Info API compatibility:** expose recent logs through the existing info API shape where practical, but document any response-shape change in the implementation TP.
 - **Recovery:** on broker restart, rebuild the dedup watermark and read cache from the journal or explicitly document which cache data is warm-only.
 
-## API shape
+## Query API shape
+
+TP-023 adds broker-side query routes to the existing InfoStorage HTTP server. The routes read from LogIngest's bounded cache and intentionally keep structured logs out of the main scheduler snapshot:
+
+- `/<service>/logs/recent` — most recent accepted `LogEvent`s across workers/tasks.
+- `/<service>/logs/worker/:workerId` — most recent accepted events for one worker routing id.
+- `/<service>/logs/task/:taskId` — most recent accepted events for one task UUID.
+- `/<service>/logs/stats` — counters for accepted events, duplicates, sequence gaps, visible dropped spans, rejected reasons, worker/task cache cardinality, and accepted-through watermarks by worker.
+
+Each log query response has shape `{ "count": number, "events": LogEvent[] }`. Stats responses use stable counter keys such as `acceptedEvents`, `duplicateEvents`, `sequenceGaps`, `droppedEvents`, `rejectedEvents`, and `acceptedThroughByWorker`.
+
+The legacy `/<service>/info` response still includes `workerLoggingsMap` from the PUB/SUB compatibility path for existing TaskSchedule smoke coverage. New structured LogIngest data is exposed through `/logs/...` rather than embedded into `/info`.
+
+## Worker callback API shape
 
 Keep application worker code using a callback surface instead of opening ZMQ sockets directly. Rename or supplement the current logging callback to describe the reliability semantics:
 
@@ -149,6 +162,18 @@ TP-022 exposes `LogIngestConfig` and `defaultLogIngestConfig` through `Lotos.Zmq
 4. Rewire InfoStorage to read recent logs from LogIngest/cache instead of binding a SUB socket.
 5. Rename public-facing callback/config fields only with a documented compatibility path for adopters.
 
-## Current implementation notes
+## TP-023 implementation notes
 
-As of TP-022, runtime code still uses worker PUB sockets and an InfoStorage SUB socket on the configured logging endpoint. TP-022 added the structured protocol/config surface and public `Lotos.Zmq` exports, but it deliberately did not start the LogIngest service, open the ROUTER/DEALER sockets, persist log journals, or rewire InfoStorage reads. The diagram and this document describe the selected target architecture for follow-up implementation tasks.
+TP-023 introduces `Lotos.Zmq.LBS.LogIngest` with:
+
+- `newLogIngestState` / `ingestLogBatch` for deterministic unit-tested ingestion.
+- `runLogIngest` for a broker ROUTER loop that decodes a DEALER `LogBatch`, persists accepted non-duplicate events, updates bounded caches, and sends a `LogAck` back to the ROUTER envelope identity.
+- Append-only JSONL persistence at `logIngestJournalPath`, one accepted `LogEvent` JSON object per line. Duplicates and rejected invalid events are not rewritten to the journal.
+- Bounded caches for recent global logs, per-worker logs, per-task logs, and `(worker, task)` logs. Per-cache sequence length is `logIngestReadCacheSize`; task-indexed bucket cardinality is capped by `logIngestReadCacheMaxTasks` with corresponding worker/task bucket eviction.
+- Duplicate accounting based on each worker's accepted-through watermark plus bounded covered-ahead ranges. Hidden sequence gaps are counted and keep `LogAck.acceptedThrough` at the highest contiguous covered sequence; explicit gap/drop events with `droppedFrom`/`droppedThrough` count visible dropped spans and can advance the watermark through declared drops.
+
+Conservative runtime integration details and limitations:
+
+- `runLBS` creates LogIngest state for the `/logs/...` routes. It starts the ROUTER only when `logIngestAddr` differs from legacy `InfoStorageConfig.loggingAddr`; old configs default these to the same address, so the ROUTER is skipped to avoid breaking the existing PUB/SUB smoke path.
+- Worker-side reliable logging DEALER, retry/backoff, queue drop policy, journal recovery on broker restart, retention/compaction, and full replacement of `workerLoggingsMap` remain follow-up work.
+- `LogAck.acceptedThrough` is a contiguous durability watermark, not an exactly-once guarantee. Delivery remains at-least-once with idempotent broker ingestion.

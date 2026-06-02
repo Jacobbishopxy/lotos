@@ -46,6 +46,7 @@ library
     Lotos.Zmq
     Lotos.Zmq.Internal.Liveness
     Lotos.Zmq.Internal.Retry
+    Lotos.Zmq.LBS.LogIngest
 
   other-modules:
     Lotos.Proc.ConcExecutor
@@ -130,6 +131,20 @@ test-suite test-zmq-log-protocol-config
     , aeson
     , bytestring
     , time
+
+test-suite test-zmq-log-ingest
+  import:         shared-properties, test
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        ZmqLogIngest.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , aeson
+    , bytestring
+    , directory
+    , text
+    , time
+    , zmqx
 
 ----------------------------------------------------------------------------------------------------
 -- Demos: runnable examples that should not execute under `cabal test all`.

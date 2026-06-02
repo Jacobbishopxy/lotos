@@ -22,6 +22,7 @@ import Data.Map qualified as Map
 import Data.Text qualified as Text
 import Data.Text.Encoding (decodeUtf8)
 import Data.Time (getCurrentTime)
+import Data.UUID qualified as UUID
 import GHC.Base (Symbol)
 import GHC.Generics
 import GHC.TypeLits (AppendSymbol)
@@ -32,6 +33,7 @@ import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
+import Lotos.Zmq.LBS.LogIngest
 import Network.Wai.Handler.Warp qualified as Warp
 import Servant
 import Zmqx
@@ -73,6 +75,7 @@ data InfoStorageServer (name :: Symbol) t w = InfoStorageServer
     trigger :: EventTrigger,
     infoStorage :: MVar (InfoStorage t w),
     loggingBufferSize :: Int,
+    logIngestState :: LogIngestState,
     httpServer :: Server (HttpAPI name t w)
   }
 
@@ -83,9 +86,10 @@ runInfoStorage ::
   (LBConstraint name t w) =>
   Proxy name ->
   InfoStorageConfig ->
+  LogIngestState ->
   TaskSchedulerData t w ->
   LotosApp (ThreadId, ThreadId)
-runInfoStorage httpName InfoStorageConfig {..} tsd = do
+runInfoStorage httpName InfoStorageConfig {..} logIngestState tsd = do
   -- 1. Create a subscriber for worker loggings on the configured external logging endpoint.
   loggingsSubscriber <- zmqUnwrap $ Zmqx.Sub.open $ Zmqx.name "loggingsSubscriber"
   zmqUnwrap $ Zmqx.bind loggingsSubscriber loggingAddr
@@ -105,7 +109,8 @@ runInfoStorage httpName InfoStorageConfig {..} tsd = do
             trigger = trigger,
             infoStorage = infoStorage,
             loggingBufferSize = loggingsBufferSize,
-            httpServer = apiServer httpName infoStorage
+            logIngestState = logIngestState,
+            httpServer = apiServer httpName infoStorage logIngestState
           }
       srv = serve (Proxy @(HttpAPI name t w)) (httpServer infoStorageServer)
 
@@ -206,6 +211,32 @@ type family HttpAPI (name :: Symbol) t w where
         :> "worker_stats"
         :> Summary (name :<>: " worker's status")
         :> Get '[JSON] (InfoOptions t w)
+      -- /<name>/logs/recent
+      :<|> name
+        :> "logs"
+        :> "recent"
+        :> Summary (name :<>: " recent logs")
+        :> Get '[JSON] LogQueryResult
+      -- /<name>/logs/worker/:workerId
+      :<|> name
+        :> "logs"
+        :> "worker"
+        :> Capture "workerId" Text.Text
+        :> Summary (name :<>: " worker logs")
+        :> Get '[JSON] LogQueryResult
+      -- /<name>/logs/task/:taskId
+      :<|> name
+        :> "logs"
+        :> "task"
+        :> Capture "taskId" Text.Text
+        :> Summary (name :<>: " task logs")
+        :> Get '[JSON] LogQueryResult
+      -- /<name>/logs/stats
+      :<|> name
+        :> "logs"
+        :> "stats"
+        :> Summary (name :<>: " log stats")
+        :> Get '[JSON] LogIngestStats
 
 -- | The HTTP API for the info storage server
 apiServer ::
@@ -213,13 +244,18 @@ apiServer ::
   (Aeson.ToJSON t, Aeson.ToJSON w) =>
   Proxy name ->
   MVar (InfoStorage t w) ->
+  LogIngestState ->
   Server (HttpAPI name t w)
-apiServer _ infoStorage =
+apiServer _ infoStorage logIngestState =
   getInfo
     :<|> getTasks
     :<|> getGarbage
     :<|> getWorkerTasks
     :<|> getWorkerStats
+    :<|> getRecentLogs
+    :<|> getWorkerLogs
+    :<|> getTaskLogs
+    :<|> getLogStats
   where
     getInfo :: Handler (InfoStorage t w)
     getInfo = liftIO $ readMVar infoStorage
@@ -234,6 +270,17 @@ apiServer _ infoStorage =
     getWorkerTasks = WorkerTasks . workerTasksMap <$> liftIO (readMVar infoStorage)
     getWorkerStats :: Handler (InfoOptions t w)
     getWorkerStats = WorkerStat . workerStatusMap <$> liftIO (readMVar infoStorage)
+    getRecentLogs :: Handler LogQueryResult
+    getRecentLogs = liftIO $ queryRecentLogs logIngestState
+    getWorkerLogs :: Text.Text -> Handler LogQueryResult
+    getWorkerLogs workerId = liftIO $ queryWorkerLogs logIngestState workerId
+    getTaskLogs :: Text.Text -> Handler LogQueryResult
+    getTaskLogs taskIdText =
+      case UUID.fromString (Text.unpack taskIdText) of
+        Nothing -> throwError err400
+        Just taskId -> liftIO $ queryTaskLogs logIngestState taskId
+    getLogStats :: Handler LogIngestStats
+    getLogStats = liftIO $ readLogIngestStats logIngestState
 
 ----------------------------------------------------------------------------------------------------
 -- Zmq & Event Loop
