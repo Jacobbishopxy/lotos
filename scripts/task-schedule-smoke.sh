@@ -197,9 +197,10 @@ snapshot_endpoint() {
 
 snapshot_all() {
   local label="$1"
-  local endpoint file
-  for endpoint in info tasks worker_tasks worker_stats garbage; do
-    file="$EVIDENCE_DIR/${label}-${endpoint}.json"
+  local endpoint endpoint_label file
+  for endpoint in info tasks worker_tasks worker_stats garbage logs/recent logs/stats; do
+    endpoint_label="${endpoint//\//_}"
+    file="$EVIDENCE_DIR/${label}-${endpoint_label}.json"
     if snapshot_endpoint "$endpoint" "$file"; then
       rm -f "$file.err"
     else
@@ -314,22 +315,42 @@ check_garbage_for_run() {
   return 1
 }
 
+logs_worker_file_has_run() {
+  local file="$1"
+  grep -F "\"workerId\":\"$WORKER_ID\"" "$file" >/dev/null 2>&1 \
+    && grep -F '"stream":"stdout"' "$file" >/dev/null 2>&1 \
+    && grep -F '"stream":"result"' "$file" >/dev/null 2>&1 \
+    && grep -F "$RUN_ID" "$file" >/dev/null 2>&1 \
+    && grep -F "ExitSuccess" "$file" >/dev/null 2>&1
+}
+
+log_stats_are_clean() {
+  local file="$1"
+  grep -F '"droppedEvents":0' "$file" >/dev/null 2>&1 \
+    && grep -F '"rejectedEvents":0' "$file" >/dev/null 2>&1 \
+    && grep -F '"sequenceGaps":0' "$file" >/dev/null 2>&1 \
+    && grep -F '"workers":1' "$file" >/dev/null 2>&1 \
+    && grep -F "\"$WORKER_ID\"" "$file" >/dev/null 2>&1
+}
+
 wait_for_worker_logging() {
   local server_pid="$1"
   local worker_pid="$2"
-  local info_file="$EVIDENCE_DIR/logging-info.json"
+  local worker_logs_file="$EVIDENCE_DIR/logging-worker-${WORKER_ID}.json"
+  local stats_file="$EVIDENCE_DIR/logging-stats.json"
   local deadline=$((SECONDS + LOGGING_TIMEOUT_SEC))
   while [ "$SECONDS" -le "$deadline" ]; do
     ensure_alive "server" "$server_pid" "$SERVER_STDIO_LOG" || return 1
     ensure_alive "worker" "$worker_pid" "$WORKER_STDIO_LOG" || return 1
-    if snapshot_endpoint "info" "$info_file"; then
-      rm -f "$info_file.err"
-      if grep -F '"workerLoggingsMap"' "$info_file" >/dev/null 2>&1 \
-        && grep -F "$WORKER_ID" "$info_file" >/dev/null 2>&1 \
-        && grep -F "$RUN_ID" "$info_file" >/dev/null 2>&1 \
-        && grep -F "ExitSuccess" "$info_file" >/dev/null 2>&1; then
-        log "worker logging evidence found in /info for $WORKER_ID, run $RUN_ID, and ExitSuccess"
-        return 0
+    if snapshot_endpoint "logs/worker/$WORKER_ID" "$worker_logs_file"; then
+      rm -f "$worker_logs_file.err"
+      if logs_worker_file_has_run "$worker_logs_file" \
+        && snapshot_endpoint "logs/stats" "$stats_file"; then
+        rm -f "$stats_file.err"
+        if log_stats_are_clean "$stats_file"; then
+          log "worker logging evidence found in /logs/worker/$WORKER_ID with clean /logs/stats for run $RUN_ID"
+          return 0
+        fi
       fi
     fi
     sleep 1
@@ -374,7 +395,7 @@ main() {
   fi
 
   if [ "$logging_ok" -ne 0 ]; then
-    fail_hard "worker logging evidence missing from /info.workerLoggingsMap for run $RUN_ID"
+    fail_hard "worker logging evidence missing from /logs/worker/$WORKER_ID or /logs/stats for run $RUN_ID"
   fi
 
   if ! check_garbage_for_run; then
@@ -382,8 +403,8 @@ main() {
   fi
 
   if [ "$CLIENT_EXIT" -eq 0 ]; then
-    log "PASS: client received ACK, worker wrote fresh marker, and worker logging reached /info"
-    write_result "PASS" "$CLIENT_EXIT" "client ACK plus fresh marker proof plus worker logging evidence"
+    log "PASS: client received ACK, worker wrote fresh marker, and worker logging reached /logs"
+    write_result "PASS" "$CLIENT_EXIT" "client ACK plus fresh marker proof plus /logs worker/stdout/result evidence"
     return 0
   fi
 

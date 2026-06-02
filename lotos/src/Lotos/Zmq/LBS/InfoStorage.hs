@@ -12,7 +12,7 @@ module Lotos.Zmq.LBS.InfoStorage
   )
 where
 
-import Control.Concurrent (ThreadId, forkIO)
+import Control.Concurrent (ThreadId, forkIO, threadDelay)
 import Control.Concurrent.MVar
 import Control.Monad (when)
 import Control.Monad.RWS
@@ -20,7 +20,6 @@ import Data.Aeson ((.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Map qualified as Map
 import Data.Text qualified as Text
-import Data.Text.Encoding (decodeUtf8)
 import Data.Time (getCurrentTime)
 import Data.UUID qualified as UUID
 import GHC.Base (Symbol)
@@ -32,23 +31,22 @@ import Lotos.TSD.Queue
 import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
-import Lotos.Zmq.Error
 import Lotos.Zmq.LBS.LogIngest
 import Network.Wai.Handler.Warp qualified as Warp
 import Servant
-import Zmqx
-import Zmqx.Sub
 
 ----------------------------------------------------------------------------------------------------
 
--- a snapshot of the task processor
+-- | Lightweight scheduler snapshot exposed by /info.
+--
+-- Worker log payloads are intentionally excluded from this structure. Query
+-- task logs through the dedicated /logs routes instead.
 data InfoStorage t w = InfoStorage
   { tasksInQueue :: [Task t],
     tasksInFailedQueue :: [Task t],
     tasksInGarbageBin :: [Task t],
     workerTasksMap :: Map.Map RoutingID [Task t],
-    workerStatusMap :: Map.Map RoutingID w,
-    workerLoggingsMap :: Map.Map RoutingID [(Text.Text, Text.Text)] -- Value: [(taskID, logging text)]
+    workerStatusMap :: Map.Map RoutingID w
   }
   deriving (Show, Generic)
 
@@ -59,23 +57,16 @@ newInfoStorage =
       tasksInFailedQueue = [],
       tasksInGarbageBin = [],
       workerTasksMap = Map.empty,
-      workerStatusMap = Map.empty,
-      workerLoggingsMap = Map.empty
+      workerStatusMap = Map.empty
     }
 
 instance
   (Aeson.ToJSON t, Aeson.ToJSON w, Aeson.ToJSON (Task t)) =>
   Aeson.ToJSON (InfoStorage t w)
 
-type SubscriberInfo = Map.Map RoutingID (TSRingBuffer WorkerLogging)
-
 data InfoStorageServer (name :: Symbol) t w = InfoStorageServer
-  { loggingsSubscriber :: Zmqx.Sub,
-    subscriberInfo :: SubscriberInfo,
-    trigger :: EventTrigger,
+  { trigger :: EventTrigger,
     infoStorage :: MVar (InfoStorage t w),
-    loggingBufferSize :: Int,
-    logIngestState :: LogIngestState,
     httpServer :: Server (HttpAPI name t w)
   }
 
@@ -90,35 +81,27 @@ runInfoStorage ::
   TaskSchedulerData t w ->
   LotosApp (ThreadId, ThreadId)
 runInfoStorage httpName InfoStorageConfig {..} logIngestState tsd = do
-  -- 1. Create a subscriber for worker loggings on the configured external logging endpoint.
-  loggingsSubscriber <- zmqUnwrap $ Zmqx.Sub.open $ Zmqx.name "loggingsSubscriber"
-  zmqUnwrap $ Zmqx.bind loggingsSubscriber loggingAddr
-  zmqUnwrap $ Zmqx.Sub.subscribe loggingsSubscriber "" -- Subscribe to all worker topics
-
-  -- 2. Create a shared `MVar` for `InfoStorage`
+  -- 1. Create a shared `MVar` for lightweight scheduler info snapshots.
   infoStorage <- liftIO $ newMVar newInfoStorage
 
-  -- 3. Create a trigger
+  -- 2. Create a trigger for periodic scheduler snapshots.
   trigger <- liftIO $ mkTimeTrigger infoFetchIntervalSec
 
-  -- 4. Initialize the `InfoStorageServer`
+  -- 3. Initialize the HTTP and snapshot server. Worker logs are served directly
+  -- from LogIngest query handlers, not copied into /info snapshots.
   let infoStorageServer =
         InfoStorageServer
-          { loggingsSubscriber = loggingsSubscriber,
-            subscriberInfo = Map.empty, -- Initialize with an empty map
-            trigger = trigger,
+          { trigger = trigger,
             infoStorage = infoStorage,
-            loggingBufferSize = loggingsBufferSize,
-            logIngestState = logIngestState,
             httpServer = apiServer httpName infoStorage logIngestState
           }
       srv = serve (Proxy @(HttpAPI name t w)) (httpServer infoStorageServer)
 
-  -- 5. Run the HTTP server in a separate thread
+  -- 4. Run the HTTP server in a separate thread.
   t1 <- liftIO $ forkIO $ Warp.run httpPort srv
   logApp INFO $ "HTTP server started on port " <> show httpPort <> ", thread ID: " <> show t1
 
-  -- 6. Run the main loop
+  -- 5. Run the scheduler snapshot loop.
   t2 <- forkApp $ infoLoop infoStorageServer tsd
   logApp INFO $ "Info storage event loop started, thread ID: " <> show t2
 
@@ -135,7 +118,6 @@ data InfoOptions t w where
   Garbage :: [Task t] -> InfoOptions t w
   WorkerTasks :: Map.Map RoutingID [Task t] -> InfoOptions t w
   WorkerStat :: Map.Map RoutingID w -> InfoOptions t w
-  TaskLogging :: [Text.Text] -> InfoOptions t w -- TODO: need a better way to get logs
 
 instance (Aeson.ToJSON t, Aeson.ToJSON w, Aeson.ToJSON (Task t)) => Aeson.ToJSON (InfoOptions t w) where
   toJSON (TaskQueues queued running) =
@@ -159,11 +141,6 @@ instance (Aeson.ToJSON t, Aeson.ToJSON w, Aeson.ToJSON (Task t)) => Aeson.ToJSON
       [ "type" .= ("WorkerStat" :: Text.Text),
         "stats" .= stats
       ]
-  toJSON (TaskLogging logs) =
-    Aeson.object
-      [ "type" .= ("TaskLogging" :: Text.Text),
-        "logs" .= logs
-      ]
 
 instance
   (Aeson.FromJSON t, Aeson.FromJSON w, Aeson.FromJSON (Task t), Aeson.FromJSONKey RoutingID) =>
@@ -176,7 +153,6 @@ instance
       "Garbage" -> Garbage <$> v .: "tasks"
       "WorkerTasks" -> WorkerTasks <$> v .: "workers"
       "WorkerStat" -> WorkerStat <$> v .: "stats"
-      "TaskLogging" -> TaskLogging <$> v .: "logs"
       _ -> fail $ "Unknown InfoOptions type: " ++ Text.unpack typ
 
 ----------------------------------------------------------------------------------------------------
@@ -283,9 +259,9 @@ apiServer _ infoStorage logIngestState =
     getLogStats = liftIO $ readLogIngestStats logIngestState
 
 ----------------------------------------------------------------------------------------------------
--- Zmq & Event Loop
+-- Event Loop
 
--- | The main loop of the info storage server
+-- | The main loop of the info storage server.
 infoLoop ::
   forall name t w.
   (FromZmq t, ToZmq t, FromZmq w) =>
@@ -297,58 +273,31 @@ infoLoop iss@InfoStorageServer {..} layer = do
   now <- liftIO getCurrentTime
   (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger now
 
-  -- 1. receiving loggings from workers (BLOCKING !!!)
-  si <-
-    zmqUnwrap (Zmqx.receivesFor loggingsSubscriber $ timeoutInterval newTrigger now) >>= \case
-      Just bs -> case bs of
-        (topicBs : logDataBs) -> do
-          let routingID = decodeUtf8 topicBs
-          case fromZmq @WorkerLogging logDataBs of
-            Left e ->
-              logApp INFO ("infoLoop -> loggingsSubscriber: " <> show e) >> return subscriberInfo
-            Right wl ->
-              case Map.lookup routingID subscriberInfo of
-                Just ringBuffer ->
-                  liftIO $ writeBuffer ringBuffer wl >> return subscriberInfo
-                Nothing -> do
-                  logApp DEBUG $ "infoLoop -> loggingsSubscriber: new buffer for " <> show routingID
-                  newBuffer <- liftIO $ mkTSRingBuffer' loggingBufferSize wl
-                  pure $ Map.insert routingID newBuffer subscriberInfo
-        _ ->
-          logApp ERROR "infoLoop -> loggingsSubscriber: error message type" >> return subscriberInfo
-      Nothing ->
-        logApp DEBUG ("infoLoop -> loggingsSubscriber(none): " <> show now) >> return subscriberInfo
+  -- 1. Wait without consuming legacy worker-log traffic. LogIngest owns worker
+  -- logging now; this loop only refreshes scheduler state.
+  when (not shouldProcess) $ do
+    liftIO $ threadDelay $ max 1000 $ timeoutInterval newTrigger now * 1000
+    infoLoop iss {trigger = newTrigger} layer
 
-  -- 2. only when the trigger is activated, we will process the info
-  when (not shouldProcess) $
-    infoLoop iss {subscriberInfo = si, trigger = newTrigger} layer
-
-  -- 3. process the info, `TaskSchedulerData` -> `InfoStorage`; Update the shared `infoStorage` using `MVar`
-  newIS <- mkInfoStorage layer si logIngestState
+  -- 2. process the scheduler info. `TaskSchedulerData` -> `InfoStorage`; update the shared `infoStorage` using `MVar`
+  newIS <- mkInfoStorage layer
   liftIO $ modifyMVar_ infoStorage $ \_ -> pure newIS
 
-  -- 4. loop, preserving accumulated worker logging buffers across snapshots
-  infoLoop iss {subscriberInfo = si, trigger = newTrigger} layer
+  -- 3. loop with the updated trigger.
+  infoLoop iss {trigger = newTrigger} layer
 
 ----------------------------------------------------------------------------------------------------
 
--- | Create a new `InfoStorage` from `TaskSchedulerData` and `SubscriberInfo`
+-- | Create a new lightweight `InfoStorage` from `TaskSchedulerData`.
 mkInfoStorage ::
-  (FromZmq t, ToZmq t, FromZmq w) =>
   TaskSchedulerData t w ->
-  SubscriberInfo ->
-  LogIngestState ->
   LotosApp (InfoStorage t w)
-mkInfoStorage (TaskSchedulerData tq ftq wtm wsm _ gbb) si logIngestState = do
+mkInfoStorage (TaskSchedulerData tq ftq wtm wsm _ gbb) = do
   tasksInQueue <- liftIO $ readQueue' tq
   tasksInFailedQueue <- liftIO $ fmap retryTaskPayload <$> readQueue' ftq
   workerTasksMap <- liftIO $ Map.map (map (\(_, task, _) -> task)) <$> toMapTSWorkerTasks wtm
   workerStatusMap <- liftIO $ toMap wsm
   tasksInGarbageBin <- liftIO $ getBuffer' gbb
-  legacyWorkerLoggingsMap <- liftIO $ mapM getBuffer' si
-  reliableRecentLogs <- liftIO $ queryRecentLogs logIngestState
-  let legacyLoggings = Map.map (workerLoggingToTextTuple <$>) legacyWorkerLoggingsMap
-      reliableLoggings = logEventsToLegacyWorkerLoggings $ logQueryEvents reliableRecentLogs
 
   pure
     InfoStorage
@@ -356,13 +305,5 @@ mkInfoStorage (TaskSchedulerData tq ftq wtm wsm _ gbb) si logIngestState = do
         tasksInFailedQueue = tasksInFailedQueue,
         tasksInGarbageBin = tasksInGarbageBin,
         workerTasksMap = workerTasksMap,
-        workerStatusMap = workerStatusMap,
-        workerLoggingsMap = Map.unionWith (<>) legacyLoggings reliableLoggings
+        workerStatusMap = workerStatusMap
       }
-
-logEventsToLegacyWorkerLoggings :: [LogEvent] -> Map.Map RoutingID [(Text.Text, Text.Text)]
-logEventsToLegacyWorkerLoggings =
-  foldr insertEvent Map.empty
-  where
-    insertEvent LogEvent {..} =
-      Map.insertWith (<>) logEventWorkerId [(UUID.toText logEventTaskId, logEventMessage)]

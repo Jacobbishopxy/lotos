@@ -135,31 +135,31 @@ instance Aeson.FromJSON TaskProcessorConfig where
       <*> v Aeson..: "triggerAlgoMaxWaitSec"
       <*> (maybe defaultWorkerStaleTimeoutSec id <$> v Aeson..:? "workerStaleTimeoutSec")
 
--- | Read-only HTTP snapshot and worker-log collection configuration.
+-- | Read-only HTTP scheduler snapshot configuration.
 --
--- 'loggingAddr' must match worker 'loadBalancerLoggingAddr'. In the demo this
--- is @tcp://127.0.0.1:5557@ and snapshots include logs after the next
--- 'infoFetchIntervalSec' refresh.
+-- The logging fields are retained for legacy JSON compatibility and to derive
+-- reliable LogIngest defaults when newer config files omit the explicit
+-- 'logIngest' block. InfoStorage no longer binds a worker-log SUB socket or
+-- embeds retained log lines in /info snapshots.
 data InfoStorageConfig = InfoStorageConfig
   { httpPort :: Int,
     -- ^ Servant/Warp port for the info API.
     loggingAddr :: Text.Text,
-    -- ^ SUB endpoint that receives worker PUB log frames.
+    -- ^ Deprecated compatibility endpoint used only for default derivation.
     loggingsBufferSize :: Int,
-    -- ^ Per-worker ring-buffer size for retained log lines.
+    -- ^ Deprecated compatibility buffer size; LogIngest owns log retention now.
     infoFetchIntervalSec :: Int
-    -- ^ Seconds between state snapshots served by the info API.
+    -- ^ Seconds between scheduler state snapshots served by the info API.
   }
   deriving (Show, Generic, Aeson.FromJSON)
 
--- | Planned reliable LogIngest transport configuration.
+-- | Reliable LogIngest transport configuration.
 --
--- The current runtime still uses the compatibility PUB/SUB fields above. This
--- config is intentionally optional in broker/worker JSON so existing config
--- files decode unchanged until a later TP switches the transport.
+-- This config is optional in broker/worker JSON so existing files decode
+-- unchanged while current runtimes use ROUTER/DEALER logging by default.
 data LogIngestConfig = LogIngestConfig
   { logIngestAddr :: Text.Text,
-    -- ^ ROUTER/DEALER endpoint for the planned reliable logging channel.
+    -- ^ ROUTER/DEALER endpoint for the reliable logging channel.
     logIngestSocketHWM :: Int,
     -- ^ ZeroMQ high-water mark for logging sockets.
     logIngestBatchMaxRecords :: Int,
@@ -189,7 +189,7 @@ data LogIngestConfig = LogIngestConfig
   }
   deriving (Show, Generic)
 
--- | Backward-compatible defaults for the planned reliable logging channel.
+-- | Backward-compatible defaults for the reliable logging channel.
 --
 -- The address argument lets broker defaults derive from 'loggingAddr' and worker
 -- defaults derive from 'loadBalancerLoggingAddr', preserving old JSON config
@@ -213,9 +213,10 @@ defaultLogIngestConfig addr =
       logIngestDropPolicy = LogDropOldest
     }
 
--- | Derive the reliable LogIngest endpoint from the legacy PUB/SUB endpoint.
+-- | Derive the reliable LogIngest endpoint from the deprecated logging endpoint.
 -- TCP addresses use the next port (5557 -> 5558 in the demo); non-port
--- addresses get a suffix so the ROUTER does not collide with InfoStorage SUB.
+-- addresses get a suffix so old configs keep a separate reliable endpoint by
+-- default while still allowing explicit same-address deployments.
 defaultReliableLogIngestAddr :: Text.Text -> Text.Text
 defaultReliableLogIngestAddr legacyAddr =
   case Text.breakOnEnd ":" legacyAddr of
@@ -270,9 +271,9 @@ data BrokerServiceConfig = BrokerServiceConfig
     taskProcessor :: TaskProcessorConfig,
     -- ^ Scheduler batching and trigger behavior.
     infoStorage :: InfoStorageConfig,
-    -- ^ HTTP info API and worker-log snapshot behavior.
+    -- ^ HTTP info API and legacy config compatibility knobs.
     logIngest :: LogIngestConfig
-    -- ^ Planned reliable logging transport knobs. Optional in JSON for compatibility.
+    -- ^ Reliable logging transport knobs. Optional in JSON for compatibility.
   }
   deriving (Show, Generic)
 
@@ -302,9 +303,10 @@ readBrokerConfig = readJsonConfig
 
 -- | Worker runtime configuration.
 --
--- The worker id is used as both the DEALER routing id and the PUB/SUB logging
--- topic. 'loadBalancerBackendAddr' must match the broker backend, and
--- 'loadBalancerLoggingAddr' must match broker 'loggingAddr'.
+-- The worker id is used as the task/status DEALER routing id and the reliable
+-- logging DEALER routing id. 'loadBalancerBackendAddr' must match the broker
+-- backend; 'loadBalancerLoggingAddr' is retained only to derive legacy JSON
+-- defaults for 'workerLogging'.
 data WorkerServiceConfig = WorkerServiceConfig
   { workerId :: Text.Text,
     -- ^ Stable worker routing id and logging topic.
@@ -313,9 +315,9 @@ data WorkerServiceConfig = WorkerServiceConfig
     loadBalancerBackendAddr :: Text.Text,
     -- ^ DEALER endpoint for scheduled tasks and worker/task status reports.
     loadBalancerLoggingAddr :: Text.Text,
-    -- ^ PUB endpoint for task stdout/stderr and final command-result logs.
+    -- ^ Deprecated compatibility endpoint used only for default derivation.
     workerLogging :: LogIngestConfig,
-    -- ^ Planned reliable logging DEALER config. Optional in JSON for compatibility.
+    -- ^ Reliable logging DEALER config. Optional in JSON for compatibility.
     workerStatusReportIntervalSec :: Int,
     -- ^ Seconds between calls to 'StatusReporter.gatherStatus'.
     parallelTasksNo :: Int

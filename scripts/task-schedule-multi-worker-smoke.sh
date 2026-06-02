@@ -4,6 +4,7 @@
 # Exit codes:
 #   0 - multi-worker pass: all clients ACK, all task markers are fresh,
 #       at least two workers are registered, and each worker has current-run evidence
+#       through stdio plus reliable /logs endpoints
 #   1 - hard smoke failure, including readiness, ACK, scheduling evidence,
 #       marker/logging, garbage, or cleanup-safety failures
 
@@ -227,9 +228,10 @@ snapshot_endpoint() {
 
 snapshot_all() {
   local label="$1"
-  local endpoint file
-  for endpoint in info tasks worker_tasks worker_stats garbage; do
-    file="$EVIDENCE_DIR/${label}-${endpoint}.json"
+  local endpoint endpoint_label file
+  for endpoint in info tasks worker_tasks worker_stats garbage logs/recent logs/stats; do
+    endpoint_label="${endpoint//\//_}"
+    file="$EVIDENCE_DIR/${label}-${endpoint_label}.json"
     if snapshot_endpoint "$endpoint" "$file"; then
       rm -f "$file.err"
     else
@@ -504,27 +506,54 @@ check_garbage_for_run() {
   return 1
 }
 
-wait_for_worker_logging() {
-  local info_file="$EVIDENCE_DIR/logging-info.json"
-  local deadline=$((SECONDS + LOGGING_TIMEOUT_SEC))
+logs_worker_file_has_run() {
+  local file="$1"
+  local wid="$2"
+  grep -F "\"workerId\":\"$wid\"" "$file" >/dev/null 2>&1 \
+    && grep -F '"stream":"stdout"' "$file" >/dev/null 2>&1 \
+    && grep -F '"stream":"result"' "$file" >/dev/null 2>&1 \
+    && grep -F "$RUN_ID" "$file" >/dev/null 2>&1 \
+    && grep -F "ExitSuccess" "$file" >/dev/null 2>&1
+}
+
+log_stats_are_clean() {
+  local file="$1"
   local wid
+  grep -F '"droppedEvents":0' "$file" >/dev/null 2>&1 \
+    && grep -F '"rejectedEvents":0' "$file" >/dev/null 2>&1 \
+    && grep -F '"sequenceGaps":0' "$file" >/dev/null 2>&1 \
+    && grep -F "\"workers\":$WORKER_COUNT" "$file" >/dev/null 2>&1 \
+    && grep -F "\"tasks\":$TASK_COUNT" "$file" >/dev/null 2>&1 || return 1
+  for wid in "${WORKER_IDS[@]}"; do
+    grep -F "\"$wid\"" "$file" >/dev/null 2>&1 || return 1
+  done
+  return 0
+}
+
+wait_for_worker_logging() {
+  local stats_file="$EVIDENCE_DIR/logging-stats.json"
+  local deadline=$((SECONDS + LOGGING_TIMEOUT_SEC))
+  local wid worker_logs_file all_workers_logged
   while [ "$SECONDS" -le "$deadline" ]; do
     all_workers_alive || return 1
-    if snapshot_endpoint "info" "$info_file"; then
-      rm -f "$info_file.err"
-      if grep -F '"workerLoggingsMap"' "$info_file" >/dev/null 2>&1 \
-        && grep -F "$RUN_ID" "$info_file" >/dev/null 2>&1 \
-        && grep -F "ExitSuccess" "$info_file" >/dev/null 2>&1; then
-        local missing_worker=0
-        for wid in "${WORKER_IDS[@]}"; do
-          if ! grep -F "$wid" "$info_file" >/dev/null 2>&1; then
-            missing_worker=1
-          fi
-        done
-        if [ "$missing_worker" -eq 0 ]; then
-          log "worker logging evidence found in /info for all workers, run $RUN_ID, and ExitSuccess"
-          return 0
+    all_workers_logged=1
+    for wid in "${WORKER_IDS[@]}"; do
+      worker_logs_file="$EVIDENCE_DIR/logging-worker-${wid}.json"
+      if snapshot_endpoint "logs/worker/$wid" "$worker_logs_file"; then
+        rm -f "$worker_logs_file.err"
+        if ! logs_worker_file_has_run "$worker_logs_file" "$wid"; then
+          all_workers_logged=0
         fi
+      else
+        all_workers_logged=0
+      fi
+    done
+    if [ "$all_workers_logged" -eq 1 ] \
+      && snapshot_endpoint "logs/stats" "$stats_file"; then
+      rm -f "$stats_file.err"
+      if log_stats_are_clean "$stats_file"; then
+        log "worker logging evidence found in /logs/worker for all workers with clean /logs/stats for run $RUN_ID"
+        return 0
       fi
     fi
     sleep 1
@@ -548,7 +577,7 @@ main() {
 
   wait_for_worker_execution_evidence || fail_hard "not every worker processed current-run work"
   wait_for_markers || fail_hard "one or more task markers are missing or stale for run $RUN_ID"
-  wait_for_worker_logging || fail_hard "worker logging evidence missing from /info.workerLoggingsMap for run $RUN_ID"
+  wait_for_worker_logging || fail_hard "worker logging evidence missing from /logs/worker/<workerId> or /logs/stats for run $RUN_ID"
   snapshot_all "final"
   collect_log_extracts || true
 
@@ -556,8 +585,8 @@ main() {
     fail_hard "current run appeared in garbage or garbage endpoint was unavailable"
   fi
 
-  log "PASS: $TASK_COUNT tasks ACKed, ${#WORKER_IDS[@]} workers registered, each worker processed current-run work, all markers are fresh, and worker logging reached /info"
-  write_result "PASS" "multi-worker ACK plus per-worker execution evidence plus fresh marker proof plus worker logging evidence"
+  log "PASS: $TASK_COUNT tasks ACKed, ${#WORKER_IDS[@]} workers registered, each worker processed current-run work, all markers are fresh, and worker logging reached /logs"
+  write_result "PASS" "multi-worker ACK plus per-worker execution evidence plus fresh marker proof plus /logs worker/stdout/result evidence"
   return 0
 }
 

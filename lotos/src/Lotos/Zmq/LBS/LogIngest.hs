@@ -12,7 +12,6 @@ module Lotos.Zmq.LBS.LogIngest
     newLogIngestState,
     ingestLogBatch,
     runLogIngest,
-    logIngestRouterEnabled,
     queryRecentLogs,
     queryWorkerLogs,
     queryTaskLogs,
@@ -163,11 +162,6 @@ runLogIngest cfg@LogIngestConfig {..} state = do
   zmqUnwrap $ Zmqx.bind router logIngestAddr
   Logger.logApp Logger.INFO $ "LogIngest ROUTER started at " <> Text.unpack logIngestAddr
   Logger.forkApp $ logIngestLoop cfg state router
-
--- | The staged migration keeps legacy PUB/SUB logging alive when old configs
--- default LogIngest to the same address as InfoStorage logging.
-logIngestRouterEnabled :: InfoStorageConfig -> LogIngestConfig -> Bool
-logIngestRouterEnabled infoCfg logCfg = logIngestAddr logCfg /= loggingAddr infoCfg
 
 queryRecentLogs :: LogIngestState -> IO LogQueryResult
 queryRecentLogs LogIngestState {..} = do

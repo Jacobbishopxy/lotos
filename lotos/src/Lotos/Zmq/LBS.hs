@@ -87,17 +87,12 @@ runLBS n BrokerServiceConfig {..} loadBalancer = do
   t2 <- runTaskProcessor taskProcessorConfig taskSchedulerData loadBalancer
   logApp INFO $ "runTaskProcessor threadID: " <> show t2
 
-  -- 4. initialize broker-side LogIngest state and start the ROUTER when it does not
-  -- collide with the legacy InfoStorage PUB/SUB compatibility endpoint.
+  -- 4. initialize broker-side LogIngest state and start the ROUTER. InfoStorage
+  -- no longer binds a worker-log SUB socket, so LogIngest owns logging ingestion
+  -- even when older configs reuse the legacy logging address.
   logIngestState <- liftIO $ newLogIngestState logIngest
-  if logIngestRouterEnabled infoStorageConfig logIngest
-    then do
-      tLog <- runLogIngest logIngest logIngestState
-      logApp INFO $ "runLogIngest threadID: " <> show tLog
-    else
-      logApp WARN $
-        "runLogIngest skipped because logIngestAddr equals legacy InfoStorage loggingAddr: "
-          <> show (logIngestAddr logIngest)
+  tLog <- runLogIngest logIngest logIngestState
+  logApp INFO $ "runLogIngest threadID: " <> show tLog
 
   -- 5. run info storage and expose LogIngest query endpoints without embedding
   -- structured logs into the scheduler snapshot.

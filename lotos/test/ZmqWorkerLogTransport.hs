@@ -95,6 +95,20 @@ rejectedBatchWithoutProgressBecomesGapMarker = withTaskId $ \taskId -> do
       logEventLevel gapEvent @?= LogWarn
     _ -> assertFailure "expected rejected batch to be replaced by one visible gap marker"
 
+wireRoundedAckClearsInflightBatch :: Assertion
+wireRoundedAckClearsInflightBatch = withTaskId $ \taskId -> do
+  transport <- newWorkerLogTransport $ mkWorkerCfg 10 LogDropOldest
+  _ <- enqueueWorkerLog transport LogStdout LogInfo taskId "one"
+  batch <- expectJust "expected a worker log batch" =<< nextWorkerLogBatch transport
+  wireAck <- case fromZmq (toZmq (logBatchAck batch)) of
+    Right ack -> pure ack
+    Left err -> assertFailure $ "batch ACK did not round-trip through wire encoding: " <> show err
+  assertBool "test should exercise wire-rounded ACK equality" (wireAck /= logBatchAck batch)
+  ackWorkerLogBatch transport $ LogAck wireAck testWorkerId 1 []
+
+  pending <- workerLogPendingEvents transport
+  pending @?= []
+
 lowPriorityDropPolicyPreservesResultLogs :: Assertion
 lowPriorityDropPolicyPreservesResultLogs = withTaskId $ \taskId -> do
   transport <- newWorkerLogTransport $ mkWorkerCfg 3 LogDropLowPriority
@@ -113,6 +127,7 @@ tests =
     [ TestLabel "batch ACK removes accepted prefix and retry returns in-flight batch" (TestCase enqueueBatchAckRemovesAcceptedPrefix),
       TestLabel "drop-oldest pressure creates a visible gap marker" (TestCase dropOldestCreatesVisibleGapMarker),
       TestLabel "rejected no-progress ACK becomes a visible gap marker" (TestCase rejectedBatchWithoutProgressBecomesGapMarker),
+      TestLabel "wire-rounded ACK clears in-flight batch" (TestCase wireRoundedAckClearsInflightBatch),
       TestLabel "low-priority drop policy preserves result logs" (TestCase lowPriorityDropPolicyPreservesResultLogs)
     ]
 

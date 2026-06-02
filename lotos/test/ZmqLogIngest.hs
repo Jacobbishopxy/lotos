@@ -9,7 +9,6 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Aeson qualified as Aeson
 import Data.ByteString.Lazy.Char8 qualified as LBS
 import Data.List (isInfixOf)
-import Data.Maybe (isJust)
 import Data.Text qualified as Text
 import Data.Time (UTCTime (..), fromGregorian)
 import Data.Word (Word64)
@@ -266,14 +265,33 @@ routerLoopRejectsMismatchedEnvelopeBeforeMutation = withJournal $ \journalPath -
   lines' <- readJournalLines journalPath
   lines' @?= []
 
-logIngestRouterEnabledDetectsLegacyAddressCollision :: Assertion
-logIngestRouterEnabledDetectsLegacyAddressCollision = do
-  let infoCfg = InfoStorageConfig 8081 "tcp://127.0.0.1:5557" 100 1
-      sameLogCfg = defaultLogIngestConfig "tcp://127.0.0.1:5557"
-      splitLogCfg = defaultLogIngestConfig "tcp://127.0.0.1:5558"
-  logIngestRouterEnabled infoCfg sameLogCfg @?= False
-  logIngestRouterEnabled infoCfg splitLogCfg @?= True
-  assertBool "guard returns a Bool-shaped API" (isJust $ Just $ logIngestRouterEnabled infoCfg splitLogCfg)
+sameAddressLogIngestRouterStartsNormally :: Assertion
+sameAddressLogIngestRouterStartsNormally = withJournal $ \journalPath -> withTaskId $ \taskId -> do
+  let infoCfg = InfoStorageConfig 8081 "inproc://tp025-log-ingest-same-address" 100 1
+      cfg = (testConfig journalPath) {logIngestAddr = loggingAddr infoCfg}
+      batch = mkBatch 1 [mkEvent taskId 1]
+  runZmqContextIO $
+    Logger.withConsoleLogger Logger.ERROR $ \env -> do
+      state <- newLogIngestState cfg
+      Logger.runApp env $ do
+        tid <- runLogIngest cfg state
+        liftIO $ do
+          dealer <- unwrap $ Zmqx.Dealer.open $ Zmqx.name "tp025-same-address-log-dealer"
+          Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
+          unwrap $ Zmqx.connect dealer (loggingAddr infoCfg)
+          threadDelay 100000
+          unwrap $ Zmqx.sends dealer $ toZmq batch
+          frames <- expectJust "same-address LogIngest DEALER did not receive ACK" =<< unwrap (Zmqx.receivesFor dealer 1000)
+          stats <- readLogIngestStats state
+          killThread tid
+          case fromZmq frames of
+            Right ack -> do
+              logAckAcceptedThrough ack @?= 1
+              logAckRejected ack @?= []
+            Left err -> assertFailure $ "LogAck did not decode: " <> show err
+          logStatsAcceptedEvents stats @?= 1
+          logStatsWorkers stats @?= 1
+          logStatsTasks stats @?= 1
 
 tests :: Test
 tests =
@@ -287,7 +305,7 @@ tests =
       TestLabel "query and stats JSON expose stable API shape" (TestCase queryAndStatsJsonExposeStableApiShape),
       TestLabel "ROUTER loop receives LogBatch, persists, and ACKs" (TestCase routerLoopReceivesBatchPersistsAndAcks),
       TestLabel "ROUTER loop rejects mismatched envelope before mutation" (TestCase routerLoopRejectsMismatchedEnvelopeBeforeMutation),
-      TestLabel "legacy address collision disables LogIngest ROUTER" (TestCase logIngestRouterEnabledDetectsLegacyAddressCollision)
+      TestLabel "same legacy/log ingest address still starts LogIngest ROUTER" (TestCase sameAddressLogIngestRouterStartsNormally)
     ]
 
 main :: IO ()

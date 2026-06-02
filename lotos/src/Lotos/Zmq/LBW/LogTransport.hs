@@ -122,7 +122,7 @@ ackWorkerLogBatch WorkerLogTransport {..} ack =
   modifyMVar_ workerLogTransportState $ \state ->
     pure $ case workerLogInFlight state of
       Just batch
-        | logAckBatchAck ack == logBatchAck batch
+        | sameWireAck (logAckBatchAck ack) (logBatchAck batch)
             && logAckWorkerId ack == logBatchWorkerId batch ->
             applyMatchingAck (workerLogging workerLogTransportConfig) ack batch state
       _ -> state
@@ -277,6 +277,9 @@ applyMatchingAck cfg ack batch state =
               remaining = filter ((`notElem` rejectedSeqs) . logEventSeq) pendingEvents
               replacementGap = mkRejectedGapEvent cfg (logBatchEvents batch)
            in state {workerLogPending = Seq.fromList (replacementGap : remaining), workerLogInFlight = Nothing}
+
+sameWireAck :: Ack -> Ack -> Bool
+sameWireAck left right = toZmq left == toZmq right
 
 encodedBatchBytes :: LogBatch -> Int
 encodedBatchBytes = sum . fmap ByteString.length . toZmq

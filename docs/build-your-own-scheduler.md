@@ -46,7 +46,8 @@ Workers implement two extension points:
 instance TaskAcceptor MyWorker MyTask where
   processTasks TaskAcceptorAPI{..} worker tasks = do
     -- call taSendTaskStatus (taskId, TaskProcessing) when work starts
-    -- current runtime: call taPubTaskLogging (WorkerLogging taskId text) for task logs
+    -- call taSendTaskLog stream level taskId text for reliable task logs
+    -- taPubTaskLogging remains as a compatibility wrapper for plain stdout/info text
     -- call taSendTaskStatus (taskId, TaskSucceed/TaskFailed) when work ends
     pure worker
 
@@ -56,7 +57,7 @@ instance StatusReporter MyWorker MyWorkerStatus where
     pure (worker, status)
 ```
 
-TaskSchedule reference: `applications/TaskSchedule/src/Worker.hs` executes shell commands with `Lotos.Proc`, currently publishes stdout/stderr through `taPubTaskLogging`, reports `TaskProcessing`, and maps command results to `TaskSucceed` or `TaskFailed`. The planned reliable logging channel is a separate LogIngest DEALER/ROUTER subsystem described in [`logging-redesign.md`](logging-redesign.md).
+TaskSchedule reference: `applications/TaskSchedule/src/Worker.hs` executes shell commands with `Lotos.Proc`, sends stdout/stderr and final command results through `taSendTaskLog`, reports `TaskProcessing`, and maps command results to `TaskSucceed` or `TaskFailed`. Reliable logging uses a separate LogIngest DEALER/ROUTER subsystem described in [`logging-redesign.md`](logging-redesign.md).
 
 ## 4. Wire server, worker, and client services
 
@@ -86,7 +87,7 @@ Config endpoints must align:
 
 - clients send to the broker `frontendAddr`,
 - workers connect to the broker `backendAddr`,
-- worker logging currently publishes to the broker `infoStorage.loggingAddr` compatibility path; the planned redesign moves reliable log ingest to a separate LogIngest endpoint,
+- reliable worker logging uses broker `logIngest.logIngestAddr` and worker `workerLogging.logIngestAddr` (the TaskSchedule demo uses `tcp://127.0.0.1:5558`), while legacy `infoStorage.loggingAddr` / `loadBalancerLoggingAddr` fields remain for compatibility/default derivation,
 - `taskProcessor.workerStaleTimeoutSec` is higher than the normal worker `workerStatusReportIntervalSec` plus expected jitter.
 
 The TaskSchedule sample configs under `applications/TaskSchedule/config/` show the loopback defaults, including a 60-second stale-worker timeout for 5-second worker status reports. `applications/TaskSchedule/config/task-demo.json` is a copyable client task that writes `.tmp/task-schedule-demo.out`.
