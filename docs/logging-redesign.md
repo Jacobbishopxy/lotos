@@ -1,6 +1,6 @@
 # Worker Logging Redesign
 
-**Status:** The reliable logging migration is hardened through TP-026. Runtime workers enqueue bounded `LogEvent`s, send `LogBatch`es on a dedicated logging DEALER with configured socket HWM, and retry until broker LogIngest persists/rebuilds state and returns `LogAck`s. TaskSchedule smoke tests prove logs through `/logs/*`; `/info` is a lightweight scheduler snapshot and no longer carries worker log payloads.
+**Status:** The reliable logging migration is hardened through TP-029. Runtime workers enqueue bounded `LogEvent`s, send `LogBatch`es through a `Zmqx.EventLoop`-owned logging DEALER with configured socket HWM, and retry until broker LogIngest persists/rebuilds state and returns `LogAck`s. TaskSchedule smoke tests prove logs through `/logs/*`; `/info` is a lightweight scheduler snapshot and no longer carries worker log payloads.
 
 ## Decision
 
@@ -37,10 +37,11 @@ Workers buffer unsent records, transmit them as ordered batches, and retain each
 Use DEALER/ROUTER rather than PUB/SUB:
 
 1. The worker opens a dedicated logging DEALER socket with a stable routing id derived from `workerId`.
-2. The broker opens a dedicated LogIngest ROUTER socket on a new logging endpoint.
-3. Workers send `LogBatch` messages containing one or more ordered `LogEvent`s.
-4. LogIngest writes the records to append-only persistence, updates its bounded read cache, then sends `LogAck` to the worker routing id.
-5. The ACK includes the batch id and the highest contiguous sequence number durably accepted for that worker.
+2. The worker registers that DEALER as a `Zmqx.EventLoop` transceiver under the stable endpoint name `worker-log-dealer`; after registration, the logging loop sends through `Zmqx.EventLoop.sends` and receives ACKs from an EventLoop mailbox rather than touching the raw socket.
+3. The broker opens a dedicated LogIngest ROUTER socket on a new logging endpoint.
+4. Workers send `LogBatch` messages containing one or more ordered `LogEvent`s.
+5. LogIngest writes the records to append-only persistence, updates its bounded read cache, then sends `LogAck` to the worker routing id.
+6. The ACK includes the batch id and the highest contiguous sequence number durably accepted for that worker.
 
 Sketch of the target message shapes, preserving the project's positional multipart style:
 
@@ -161,9 +162,10 @@ TP-022 exposes `LogIngestConfig` and `defaultLogIngestConfig` through `Lotos.Zmq
 3. **Done in TP-024:** add a worker logging service with a bounded pending queue, batch retry, and explicit drop/gap records.
 4. **Done in TP-025:** remove the InfoStorage full-log snapshot coupling, update smoke tests to assert `/logs/worker/<workerId>` and `/logs/stats`, and document `/info` as scheduler-only.
 5. **Done in TP-026:** reload LogIngest state from the JSONL journal/checkpoint on broker startup, tolerate malformed/partial journal lines, compact oversized journals under `logIngestRetentionBytes`, and apply `logIngestSocketHWM` to logging sockets.
-6. Rename public-facing callback/config fields only with a documented compatibility path for adopters.
+6. **Done in TP-029:** move the worker logging DEALER behind a `Zmqx.EventLoop` transceiver so send and ACK receive ownership is centralized while the existing worker queue/retry/drop state machine remains unchanged.
+7. Rename public-facing callback/config fields only with a documented compatibility path for adopters.
 
-## TP-024/TP-025/TP-026 implementation notes
+## TP-024/TP-025/TP-026/TP-029 implementation notes
 
 TP-024 introduces `Lotos.Zmq.LBW.LogTransport` and rewires `TaskAcceptorAPI` with:
 
@@ -176,11 +178,15 @@ TP-024 introduces `Lotos.Zmq.LBW.LogTransport` and rewires `TaskAcceptorAPI` wit
 - TP-025 keeps worker `LogAck` matching at wire precision so whole-second ACK serialization does not strand accepted in-flight batches; this preserves at-least-once retry semantics without changing the global ACK frame shape.
 - TP-026 applies `logIngestSocketHWM` as both `Z_SndHWM` and `Z_RcvHWM` on the broker LogIngest ROUTER before bind and the worker logging DEALER before connect.
 - TP-026 enforces journal retention after accepted appends. If the configured byte cap is smaller than the checkpoint plus required retained suffix, correctness wins and the cap remains approximate; malformed/partial lines are dropped during replay/compaction with `malformedJournalLines` evidence.
+- TP-029 registers the worker logging DEALER with `Zmqx.EventLoop.addTransceiver "worker-log-dealer" dealer (Mailbox hwm)`, where `hwm = max 1 logIngestSocketHWM`. The EventLoop owns the socket inside the forked logging thread's `withEventLoop` bracket; raw DEALER send/receive calls must not be added inside that bracket.
+- TP-029 maps `logIngestAckTimeoutMicros` to EventLoop `recv` mailbox timeouts and keeps `logIngestRetryBackoffMicros` for retry sleeps. The loop drains already-delivered mailbox ACKs before retrying an in-flight batch so ACKs that arrive during retry backoff can clear pending events without an unnecessary duplicate send.
+- TP-029 keeps ACK decoding and `WorkerLogTransport` state mutation on the logging loop thread rather than using EventLoop callbacks; callbacks would run on the EventLoop worker thread and could block all socket progress if they performed application work.
 
 Runtime caveats:
 
 - `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` remain in config for compatibility/default derivation, but InfoStorage no longer binds a worker-log socket or retains full worker logs.
 - Delivery remains at-least-once. Workers retry unacked batches, and LogIngest deduplicates accepted sequence coverage across restart/compaction; exactly-once delivery is not claimed.
+- TaskSchedule smoke scripts reuse stable worker IDs. If a generated `logs/worker-logs.journal` from an earlier run is intentionally preserved, LogIngest may classify restarted worker sequences as duplicates; use an isolated journal path or remove stale generated smoke state when proving current-run `/logs/*` evidence.
 
 ## TP-023 implementation notes
 

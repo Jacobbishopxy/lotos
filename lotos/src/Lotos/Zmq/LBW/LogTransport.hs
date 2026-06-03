@@ -22,8 +22,10 @@ where
 
 import Control.Concurrent (ThreadId, threadDelay)
 import Control.Concurrent.MVar
+import Control.Exception (SomeException, try)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Reader (ask)
 import Data.ByteString qualified as ByteString
 import Data.Foldable qualified as Foldable
 import Data.List (minimumBy)
@@ -41,6 +43,7 @@ import Lotos.Zmq.Error (ZmqError, zmqUnwrap)
 import Lotos.Zmq.Util (textToBS)
 import Zmqx qualified
 import Zmqx.Dealer qualified
+import Zmqx.EventLoop qualified as Zmqx.EventLoop
 
 -- | Result returned by the non-blocking worker log enqueue callback.
 data LogEnqueueResult
@@ -141,33 +144,85 @@ runWorkerLogTransport transport@WorkerLogTransport {workerLogTransportConfig = W
   liftIO $ applySocketHWM dealer (logIngestSocketHWM workerLogging)
   zmqUnwrap $ Zmqx.connect dealer (logIngestAddr workerLogging)
   Logger.logApp Logger.INFO $ "worker LogIngest DEALER connected to " <> Text.unpack (logIngestAddr workerLogging)
-  Logger.forkApp $ workerLogLoop transport dealer
+  Logger.forkApp $ runWorkerLogEventLoop transport dealer
 
-workerLogLoop :: WorkerLogTransport -> Zmqx.Dealer -> Logger.LotosApp ()
-workerLogLoop transport@WorkerLogTransport {workerLogTransportConfig = WorkerServiceConfig {..}} dealer = do
+workerLogEventLoopEndpoint :: Text.Text
+workerLogEventLoopEndpoint = "worker-log-dealer"
+
+runWorkerLogEventLoop :: WorkerLogTransport -> Zmqx.Dealer -> Logger.LotosApp ()
+runWorkerLogEventLoop transport@WorkerLogTransport {workerLogTransportConfig = WorkerServiceConfig {..}} dealer = do
+  loggerEnv <- ask
+  let ackMailboxCapacity = max 1 $ logIngestSocketHWM workerLogging
+      spec =
+        Zmqx.EventLoop.addTransceiver
+          workerLogEventLoopEndpoint
+          dealer
+          (Zmqx.EventLoop.Mailbox ackMailboxCapacity)
+          Zmqx.EventLoop.emptySpec
+  result <-
+    liftIO $
+      try $
+        Zmqx.EventLoop.withEventLoop spec $ \loop ->
+          Logger.runApp loggerEnv $ workerLogLoop transport loop
+  case (result :: Either SomeException ()) of
+    Left exception ->
+      Logger.logApp Logger.WARN $ "worker LogIngest EventLoop stopped: " <> show exception
+    Right () -> pure ()
+
+workerLogLoop :: WorkerLogTransport -> Zmqx.EventLoop.EventLoop -> Logger.LotosApp ()
+workerLogLoop transport@WorkerLogTransport {workerLogTransportConfig = WorkerServiceConfig {..}} loop = do
+  drainWorkerLogAcks transport loop
   maybeBatch <- liftIO $ nextWorkerLogBatch transport
   case maybeBatch of
     Nothing -> liftIO $ threadDelay $ positiveMicros $ logIngestFlushIntervalMicros workerLogging
     Just batch -> do
-      zmqUnwrap $ Zmqx.sends dealer $ toZmq batch
-      maybeAckFrames <- zmqUnwrap $ Zmqx.receivesFor dealer $ microsToMillis $ logIngestAckTimeoutMicros workerLogging
-      case maybeAckFrames of
-        Nothing -> do
-          Logger.logApp Logger.DEBUG $ "worker LogIngest ACK timeout for batch " <> show (logBatchAck batch)
+      sendResult <- liftIO $ Zmqx.EventLoop.sends loop workerLogEventLoopEndpoint $ toZmq batch
+      case sendResult of
+        Left err -> do
+          Logger.logApp Logger.ERROR $ "worker LogIngest EventLoop send failed: " <> show err
           liftIO $ threadDelay $ positiveMicros $ logIngestRetryBackoffMicros workerLogging
-        Just ackFrames ->
-          case (fromZmq ackFrames :: Either ZmqError LogAck) of
-            Right ack -> do
-              liftIO $ ackWorkerLogBatch transport ack
-              when (not $ null $ logAckRejected ack) $
-                Logger.logApp Logger.WARN $
-                  "worker LogIngest ACK rejected entries for batch "
-                    <> show (logAckBatchAck ack)
-                    <> ": "
-                    <> show (logAckRejected ack)
-            Left err ->
-              Logger.logApp Logger.ERROR $ "worker LogIngest ACK decode failed: " <> show err
-  workerLogLoop transport dealer
+        Right () -> do
+          maybeAckFrames <- recvWorkerLogAck loop $ microsToMillis $ logIngestAckTimeoutMicros workerLogging
+          case maybeAckFrames of
+            Nothing -> do
+              Logger.logApp Logger.DEBUG $ "worker LogIngest ACK timeout for batch " <> show (logBatchAck batch)
+              liftIO $ threadDelay $ positiveMicros $ logIngestRetryBackoffMicros workerLogging
+            Just ackFrames -> handleWorkerLogAckFrames transport ackFrames
+  workerLogLoop transport loop
+
+-- | Consume ACKs already delivered to the EventLoop mailbox before sending a
+-- retry. This lets broker replies that arrive during retry backoff clear the
+-- in-flight batch without touching the DEALER from the logging loop thread.
+drainWorkerLogAcks :: WorkerLogTransport -> Zmqx.EventLoop.EventLoop -> Logger.LotosApp ()
+drainWorkerLogAcks transport loop = do
+  recvWorkerLogAck loop 0 >>= \case
+    Just ackFrames -> do
+      handleWorkerLogAckFrames transport ackFrames
+      drainWorkerLogAcks transport loop
+    Nothing -> pure ()
+
+recvWorkerLogAck :: Zmqx.EventLoop.EventLoop -> Int -> Logger.LotosApp (Maybe [ByteString.ByteString])
+recvWorkerLogAck loop timeoutMs = do
+  recvResult <- liftIO $ Zmqx.EventLoop.recv loop workerLogEventLoopEndpoint timeoutMs
+  case recvResult of
+    Left err -> do
+      Logger.logApp Logger.ERROR $ "worker LogIngest EventLoop recv failed: " <> show err
+      pure Nothing
+    Right maybeFrames -> pure maybeFrames
+
+handleWorkerLogAckFrames :: WorkerLogTransport -> [ByteString.ByteString] -> Logger.LotosApp ()
+handleWorkerLogAckFrames transport ackFrames =
+  case (fromZmq ackFrames :: Either ZmqError LogAck) of
+    Right ack -> do
+      liftIO $ ackWorkerLogBatch transport ack
+      when (not $ null $ logAckRejected ack) $
+        Logger.logApp Logger.WARN $
+          "worker LogIngest ACK rejected entries for batch "
+            <> show (logAckBatchAck ack)
+            <> ": "
+            <> show (logAckRejected ack)
+    Left err ->
+      Logger.logApp Logger.ERROR $ "worker LogIngest ACK decode failed: " <> show err
 
 appendWithDrop :: LogIngestConfig -> WorkerLogState -> LogEvent -> (WorkerLogState, Maybe (Word64, Word64))
 appendWithDrop cfg state event =

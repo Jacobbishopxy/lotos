@@ -2,11 +2,20 @@
 
 module Main where
 
+import Control.Concurrent (forkIO, killThread, threadDelay)
+import Control.Concurrent.MVar
+import Control.Exception (SomeException, finally, try)
+import Control.Monad.IO.Class (liftIO)
+import Data.ByteString qualified as ByteString
 import Data.Time (UTCTime (..), fromGregorian)
+import Lotos.Logger qualified as Logger
 import Lotos.Zmq
 import Lotos.Zmq.LBW.LogTransport
 import System.Exit (exitFailure)
+import System.Timeout (timeout)
 import Test.HUnit
+import Zmqx qualified
+import Zmqx.Router qualified
 
 fixedNow :: UTCTime
 fixedNow = UTCTime (fromGregorian 2026 1 1) 0
@@ -43,6 +52,26 @@ withTaskId action = do
 
 expectJust :: String -> Maybe a -> IO a
 expectJust message = maybe (assertFailure message) pure
+
+unwrap :: (Show e) => IO (Either e a) -> IO a
+unwrap action = action >>= either (ioError . userError . show) pure
+
+waitForMVar :: String -> MVar a -> IO a
+waitForMVar message var = do
+  result <- timeout 2000000 $ takeMVar var
+  expectJust message result
+
+waitUntil :: String -> Int -> Int -> IO Bool -> IO ()
+waitUntil message attempts delayMicros action = go attempts
+  where
+    go remaining = do
+      done <- action
+      if done
+        then pure ()
+        else
+          if remaining <= 0
+            then assertFailure message
+            else threadDelay delayMicros >> go (remaining - 1)
 
 enqueueBatchAckRemovesAcceptedPrefix :: Assertion
 enqueueBatchAckRemovesAcceptedPrefix = withTaskId $ \taskId -> do
@@ -121,6 +150,65 @@ lowPriorityDropPolicyPreservesResultLogs = withTaskId $ \taskId -> do
   assertBool "result event should survive low-priority pressure" $ any ((== LogResult) . logEventStream) pending
   assertBool "overflow should be visible as a gap marker" $ any ((== Just 1) . logEventDroppedFrom) pending
 
+eventLoopDelayedAckClearsBeforeRetry :: Assertion
+eventLoopDelayedAckClearsBeforeRetry = withTaskId $ \taskId ->
+  runZmqContextIO $
+    Logger.withConsoleLogger Logger.ERROR $ \env -> do
+      let endpoint = "inproc://tp029-worker-log-eventloop-delayed-ack"
+          baseWorkerCfg = mkWorkerCfg 10 LogDropOldest
+          logCfg =
+            (workerLogging baseWorkerCfg)
+              { logIngestAddr = endpoint,
+                logIngestSocketHWM = 10,
+                logIngestFlushIntervalMicros = 1000,
+                logIngestAckTimeoutMicros = 10000,
+                logIngestRetryBackoffMicros = 200000
+              }
+          workerCfg = baseWorkerCfg {workerLogging = logCfg}
+      router <- unwrap $ Zmqx.Router.open $ Zmqx.name "tp029-worker-log-router"
+      unwrap $ Zmqx.bind router endpoint
+      ackResult <- newEmptyMVar
+      ackTid <- forkIO $ do
+        result <- try (delayedAckRouter logCfg router) :: IO (Either SomeException (LogBatch, Maybe [ByteString.ByteString]))
+        putMVar ackResult result
+      Logger.runApp env $ do
+        transport <- liftIO $ newWorkerLogTransport workerCfg
+        logTid <- runWorkerLogTransport transport
+        liftIO $
+          ( do
+              threadDelay 100000
+              LogEnqueued 1 <- enqueueWorkerLogAt transport fixedNow LogStdout LogInfo taskId "event-loop-delayed-ack"
+              (batch, duplicateFrames) <- either (assertFailure . show) pure =<< waitForMVar "delayed ACK router did not observe a worker LogBatch" ackResult
+              (logEventMessage <$> logBatchEvents batch) @?= ["event-loop-delayed-ack"]
+              duplicateFrames @?= Nothing
+              waitUntil "delayed EventLoop ACK did not clear pending worker logs" 20 50000 $ do
+                pending <- workerLogPendingEvents transport
+                pure $ null pending
+          )
+            `finally` do
+              killThread logTid
+              killThread ackTid
+
+-- | Delay the ACK until after the worker's recv timeout but before its retry
+-- backoff elapses. If the EventLoop receiver is not polling independently and
+-- the logging loop resends before draining the mailbox, this router observes a
+-- duplicate batch.
+delayedAckRouter :: LogIngestConfig -> Zmqx.Router -> IO (LogBatch, Maybe [ByteString.ByteString])
+delayedAckRouter logCfg router = do
+  frames <- unwrap $ Zmqx.receives router
+  (routingFrame, batch) <- case frames of
+    routingFrame : batchFrames ->
+      case fromZmq batchFrames of
+        Right batch -> pure (routingFrame, batch)
+        Left err -> ioError $ userError $ "worker LogBatch did not decode: " <> show err
+    [] -> ioError $ userError "worker LogBatch ROUTER frames were empty"
+  threadDelay $ logIngestAckTimeoutMicros logCfg + 40000
+  let acceptedThrough = maximum $ logEventSeq <$> logBatchEvents batch
+      ack = LogAck (logBatchAck batch) (logBatchWorkerId batch) acceptedThrough []
+  unwrap $ Zmqx.sends router $ routingFrame : toZmq ack
+  duplicateFrames <- unwrap $ Zmqx.receivesFor router 300
+  pure (batch, duplicateFrames)
+
 tests :: Test
 tests =
   TestList
@@ -128,7 +216,8 @@ tests =
       TestLabel "drop-oldest pressure creates a visible gap marker" (TestCase dropOldestCreatesVisibleGapMarker),
       TestLabel "rejected no-progress ACK becomes a visible gap marker" (TestCase rejectedBatchWithoutProgressBecomesGapMarker),
       TestLabel "wire-rounded ACK clears in-flight batch" (TestCase wireRoundedAckClearsInflightBatch),
-      TestLabel "low-priority drop policy preserves result logs" (TestCase lowPriorityDropPolicyPreservesResultLogs)
+      TestLabel "low-priority drop policy preserves result logs" (TestCase lowPriorityDropPolicyPreservesResultLogs),
+      TestLabel "EventLoop delayed ACK clears in-flight batch before retry" (TestCase eventLoopDelayedAckClearsBeforeRetry)
     ]
 
 main :: IO ()

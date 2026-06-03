@@ -163,7 +163,9 @@ test-suite test-zmq-worker-log-transport
   main-is:        ZmqWorkerLogTransport.hs
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
+    , bytestring
     , time
+    , zmqx
 
 ----------------------------------------------------------------------------------------------------
 -- Demos: runnable examples that should not execute under `cabal test all`.
