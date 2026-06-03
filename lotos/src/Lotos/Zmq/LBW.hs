@@ -213,8 +213,10 @@ runWorkerService ws WorkerServiceConfig {..} = do
   tLog <- runWorkerLogTransport (workerLogTransport ws)
   logApp INFO $ "workerLogTransport threadID: " <> show tLog
 
+  let pollItems = Zmqx.pollIn wDealer & Zmqx.pollInAlso wDealerPair'
+
   -- start the socket loop
-  socketLoop ws wDealer wDealerPair'
+  socketLoop pollItems ws wDealer wDealerPair'
 
 -- | Main communication loop for the worker service
 --
@@ -224,55 +226,56 @@ runWorkerService ws WorkerServiceConfig {..} = do
 socketLoop ::
   forall ta sr t w.
   (FromZmq t, ToZmq w, StatusReporter sr w) =>
+  Zmqx.Sockets ->
   WorkerService ta sr t w ->
   Zmqx.Dealer ->
   Zmqx.Pair ->
   LotosApp ()
 socketLoop
+  pollItems
   ws@WorkerService {..}
   workerDealer
   workerDealerPair' =
-    do
-      -- 0. according to the trigger, deciding enter into a new loop or continue
-      now <- liftIO getCurrentTime
-      (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger now
-      logApp DEBUG $ "socketLoop -> start, now: " <> show now <> ", shouldProcess: " <> show shouldProcess
+  do
+    -- 0. according to the trigger, deciding enter into a new loop or continue
+    now <- liftIO getCurrentTime
+    (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger now
+    logApp DEBUG $ "socketLoop -> start, now: " <> show now <> ", shouldProcess: " <> show shouldProcess
 
-      let pollItems = Zmqx.pollIn workerDealer & Zmqx.pollInAlso workerDealerPair'
-      rdy <- zmqUnwrap (Zmqx.pollFor pollItems $ timeoutInterval newTrigger now)
+    rdy <- zmqUnwrap (Zmqx.pollFor pollItems $ timeoutInterval newTrigger now)
 
-      case rdy of
-        Just (Zmqx.Ready ready) -> do
-          -- receive message from external
-          when (ready workerDealer) do
-            logApp DEBUG $ "socketLoop -> workerDealer: " <> show now
-            fromZmq @(Task t) <$> zmqUnwrap (Zmqx.receives workerDealer) >>= \case
+    case rdy of
+      Just (Zmqx.Ready ready) -> do
+        -- receive message from external
+        when (ready workerDealer) do
+          logApp DEBUG $ "socketLoop -> workerDealer: " <> show now
+          fromZmq @(Task t) <$> zmqUnwrap (Zmqx.receives workerDealer) >>= \case
+            Left e -> logApp ERROR $ show e
+            Right task -> liftIO $ do
+              enqueueTS task taskQueue
+              notifyTaskWakeSignal taskWakeSignal
+        -- receive message from internal
+        when (ready workerDealerPair') do
+          logApp DEBUG $ "socketLoop -> workerDealerPair: " <> show now
+          zmqUnwrap (Zmqx.receives workerDealerPair') >>= \msg ->
+            case (fromZmq msg :: Either ZmqError WorkerReportTaskStatus) of
               Left e -> logApp ERROR $ show e
-              Right task -> liftIO $ do
-                enqueueTS task taskQueue
-                notifyTaskWakeSignal taskWakeSignal
-          -- receive message from internal
-          when (ready workerDealerPair') do
-            logApp DEBUG $ "socketLoop -> workerDealerPair: " <> show now
-            zmqUnwrap (Zmqx.receives workerDealerPair') >>= \msg ->
-              case (fromZmq msg :: Either ZmqError WorkerReportTaskStatus) of
-                Left e -> logApp ERROR $ show e
-                Right _ -> zmqUnwrap $ Zmqx.sends workerDealer msg
-        Nothing -> logApp DEBUG $ "socketLoop -> none: " <> show now
+              Right _ -> zmqUnwrap $ Zmqx.sends workerDealer msg
+      Nothing -> logApp DEBUG $ "socketLoop -> none: " <> show now
 
-      -- 2. when the trigger is inactivated, enter into a new loop
-      unless shouldProcess $ socketLoop (ws {trigger = newTrigger} :: WorkerService ta sr t w) workerDealer workerDealerPair'
+    -- 2. when the trigger is inactivated, enter into a new loop
+    unless shouldProcess $ socketLoop pollItems (ws {trigger = newTrigger} :: WorkerService ta sr t w) workerDealer workerDealerPair'
 
-      -- 3. gather & send worker status (due to EventTrigger, it sends worker status periodically
-      wInfo <- liftIO $ readWorkerInfoVar workerInfo
-      let statusReporterAPI = StatusReporterAPI {srReportInfo = wInfo}
-      (newReporter, workerStatus :: w) <- gatherStatus statusReporterAPI reporter
-      -- construct `WorkerReportStatus`
-      ack <- liftIO newAck
-      zmqUnwrap $ Zmqx.sends workerDealer $ toZmq $ WorkerReportStatus ack workerStatus
+    -- 3. gather & send worker status (due to EventTrigger, it sends worker status periodically
+    wInfo <- liftIO $ readWorkerInfoVar workerInfo
+    let statusReporterAPI = StatusReporterAPI {srReportInfo = wInfo}
+    (newReporter, workerStatus :: w) <- gatherStatus statusReporterAPI reporter
+    -- construct `WorkerReportStatus`
+    ack <- liftIO newAck
+    zmqUnwrap $ Zmqx.sends workerDealer $ toZmq $ WorkerReportStatus ack workerStatus
 
-      -- loop
-      socketLoop (ws {trigger = newTrigger, reporter = newReporter} :: WorkerService ta sr t w) workerDealer workerDealerPair'
+    -- loop
+    socketLoop pollItems (ws {trigger = newTrigger, reporter = newReporter} :: WorkerService ta sr t w) workerDealer workerDealerPair'
 
 -- used for worker executing tasks
 
