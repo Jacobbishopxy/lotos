@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-06-02
 **Status:** Active
-**Next Task ID:** TP-027
+**Next Task ID:** TP-032
 
 ---
 
@@ -29,6 +29,7 @@ parallel batch execution or `/orch <path/to/PROMPT.md>` for a single task.
 
 _Items discovered during task execution are logged here by agents._
 
+- [ ] **Stage zmqx EventLoop and worker-responsiveness follow-ups** — TP-027 pinned `zmqx` to `v0.1.1.1` and established a green direct-API baseline (`cabal build all --enable-tests` and `cabal test all` passed) with no immediate lotos/TaskSchedule source changes required. Keep TP-028+ focused on evaluating optional `Zmqx.EventLoop` socket ownership/polling, worker responsiveness, and runtime-loop hot paths without changing established multipart frame ordering unless covered by a dedicated follow-up test plan.
 - [x] **Complete reliable worker logging hardening** — TP-021 selected the DEALER/ROUTER architecture, TP-022 added the `LogEvent`/`LogBatch`/`LogAck` protocol plus `LogIngestConfig`, TP-023 added broker LogIngest state/query routes, TP-024 switched workers to a bounded reliable logging DEALER with ACK retry/drop markers, TP-025 removed the InfoStorage full-log snapshot coupling while proving TaskSchedule logs through `/logs/*`, and TP-026 added broker journal restart recovery, retention/checkpoint compaction, malformed journal accounting, and socket-level logging HWM.
 - [ ] **Rename legacy logging compatibility fields/callbacks** — `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, `loadBalancerLoggingAddr`, and `taPubTaskLogging` still exist for compatibility/default derivation even though runtime ingestion uses LogIngest. Decide whether/when to rename or remove these public names with a documented compatibility path (carried forward after TP-026).
 - [ ] **Set package dependency upper bounds** — `cabal check` still warns that `lotos` and TaskSchedule dependency lists omit upper bounds; adding a PVP policy is package-release polish beyond TP-018's docs/examples pass (discovered during TP-018).

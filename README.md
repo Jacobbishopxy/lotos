@@ -137,7 +137,7 @@ Concrete examples live in the TaskSchedule demo: `applications/TaskSchedule/src/
 
 ## Prerequisites
 
-- GHC 9.14.1 and cabal-install 3.14.2.0 were used for the latest verified build; package files declare `cabal-version: 3.14` and `tested-with: GHC == 9.14.1`.
+- GHC 9.14.1 and cabal-install 3.16.1.0 were used for the latest verified build; package files declare `cabal-version: 3.14` and `tested-with: GHC == 9.14.1`.
 - ZeroMQ native libraries for the pinned `zmqx` dependency.
 - Access to the pinned git dependency in `cabal.project`:
 
@@ -145,7 +145,7 @@ Concrete examples live in the TaskSchedule demo: `applications/TaskSchedule/src/
 source-repository-package
   type: git
   location: git@github.com:Jacobbishopxy/zmqx.git
-  tag: d476d1c6c4713b192626ea1c7e6b830c4860ed8c
+  tag: v0.1.1.1
 ```
 
 Fresh environments need GitHub SSH access or a local/alternate source override for `zmqx`.
