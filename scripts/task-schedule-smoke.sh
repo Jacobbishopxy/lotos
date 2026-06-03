@@ -21,11 +21,19 @@ WORKER_STDIO_LOG="$EVIDENCE_DIR/worker-stdio.log"
 CLIENT_STDIO_LOG="$EVIDENCE_DIR/client-stdio.log"
 RESULT_FILE="$EVIDENCE_DIR/result.env"
 
-BROKER_CONFIG="${SMOKE_BROKER_CONFIG:-applications/TaskSchedule/config/broker.json}"
+if [ -n "${SMOKE_BROKER_CONFIG:-}" ]; then
+  BROKER_CONFIG="$SMOKE_BROKER_CONFIG"
+  GENERATE_BROKER_CONFIG=0
+else
+  BROKER_CONFIG="$EVIDENCE_DIR/broker.json"
+  GENERATE_BROKER_CONFIG=1
+fi
 WORKER_CONFIG="${SMOKE_WORKER_CONFIG:-applications/TaskSchedule/config/worker.json}"
 CLIENT_CONFIG="${SMOKE_CLIENT_CONFIG:-applications/TaskSchedule/config/client.json}"
 INFO_BASE="${SMOKE_INFO_BASE:-http://127.0.0.1:8081/SimpleServer}"
 WORKER_ID="${SMOKE_WORKER_ID:-simpleWorker_1}"
+LOG_INGEST_ADDR="${SMOKE_LOG_INGEST_ADDR:-tcp://127.0.0.1:5558}"
+LOG_INGEST_JOURNAL_PATH="${SMOKE_LOG_INGEST_JOURNAL_PATH:-$EVIDENCE_DIR/worker-logs.journal}"
 SERVER_READY_TIMEOUT_SEC="${SMOKE_SERVER_READY_TIMEOUT_SEC:-60}"
 WORKER_READY_TIMEOUT_SEC="${SMOKE_WORKER_READY_TIMEOUT_SEC:-90}"
 CLIENT_TIMEOUT_SEC="${SMOKE_CLIENT_TIMEOUT_SEC:-60}"
@@ -245,6 +253,57 @@ wait_for_worker() {
   return 1
 }
 
+write_broker_config() {
+  if [ "$GENERATE_BROKER_CONFIG" -eq 0 ]; then
+    log "using caller-provided broker config $BROKER_CONFIG"
+    return 0
+  fi
+
+  cat >"$BROKER_CONFIG" <<JSON
+{
+  "taskScheduler": {
+    "taskQueueHWM": 1000,
+    "failedTaskQueueHWM": 1000,
+    "garbageBinSize": 100
+  },
+  "socketLayer": {
+    "frontendAddr": "tcp://127.0.0.1:5555",
+    "backendAddr": "tcp://127.0.0.1:5556"
+  },
+  "taskProcessor": {
+    "taskQueuePullNo": 10,
+    "failedTaskQueuePullNo": 10,
+    "triggerAlgoMaxNotifyCount": 10,
+    "triggerAlgoMaxWaitSec": 10,
+    "workerStaleTimeoutSec": 60
+  },
+  "infoStorage": {
+    "httpPort": 8081,
+    "loggingAddr": "tcp://127.0.0.1:5557",
+    "loggingsBufferSize": 1000,
+    "infoFetchIntervalSec": 10
+  },
+  "logIngest": {
+    "logIngestAddr": "$LOG_INGEST_ADDR",
+    "logIngestSocketHWM": 1000,
+    "logIngestBatchMaxRecords": 100,
+    "logIngestBatchMaxBytes": 1048576,
+    "logIngestLineMaxBytes": 65536,
+    "logIngestWorkerQueueHWM": 10000,
+    "logIngestFlushIntervalMicros": 100000,
+    "logIngestAckTimeoutMicros": 1000000,
+    "logIngestRetryBackoffMicros": 250000,
+    "logIngestReadCacheSize": 1000,
+    "logIngestReadCacheMaxTasks": 1000,
+    "logIngestJournalPath": "$LOG_INGEST_JOURNAL_PATH",
+    "logIngestRetentionBytes": 104857600,
+    "logIngestDropPolicy": "drop-oldest"
+  }
+}
+JSON
+  log "wrote broker config to $BROKER_CONFIG with LogIngest journal $LOG_INGEST_JOURNAL_PATH"
+}
+
 write_task_json() {
   rm -f "$MARKER_FILE"
   cat >"$TASK_JSON" <<JSON
@@ -363,6 +422,7 @@ main() {
   log "TaskSchedule smoke run_id=$RUN_ID"
   log "evidence_dir=$EVIDENCE_DIR"
   require_prerequisites
+  write_broker_config
   ensure_config_exists "$BROKER_CONFIG" "broker"
   ensure_config_exists "$WORKER_CONFIG" "worker"
   ensure_config_exists "$CLIENT_CONFIG" "client"

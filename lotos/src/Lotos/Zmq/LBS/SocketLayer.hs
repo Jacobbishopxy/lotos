@@ -12,8 +12,7 @@ where
 
 import Control.Concurrent
 import Control.Monad (when)
-import Control.Monad.RWS
-import Control.Monad.Reader (ReaderT, runReaderT)
+import Control.Monad.IO.Class (liftIO)
 import Data.Function ((&))
 import Data.Time (getCurrentTime)
 import Lotos.Logger
@@ -41,13 +40,21 @@ data SocketLayer t w = SocketLayer
     workerStatusMap :: TSWorkerStatusMap w, -- backend modifies map
     workerAliveMap :: TSWorkerAliveMap, -- backend records worker status heartbeat times
     garbageBin :: TSRingBuffer (Task t), -- backend discards tasks
-    workerStaleTimeoutSec :: Int,
-    ver :: Int
+    workerStaleTimeoutSec :: Int
   }
 
 ----------------------------------------------------------------------------------------------------
 
 -- main function of the socket layer
+--
+-- TP-031 intentionally keeps the broker on the direct ZMQ poll path instead of
+-- wrapping the frontend ROUTER, backend ROUTER, and TaskProcessor PAIR sockets
+-- in Zmqx.EventLoop.  These sockets are already opened and touched only by the
+-- SocketLayer thread below; an EventLoop migration would add a second owner
+-- thread plus bounded mailbox/drop semantics around client ACKs, worker task
+-- dispatch, retry/garbage handling, and scheduler notifications without a
+-- measured fairness benefit.  If this is revisited, use mailbox dispatch rather
+-- than heavy EventLoop callbacks for the queue/map mutations in this module.
 runSocketLayer ::
   forall t w.
   (FromZmq t, ToZmq t, FromZmq w) =>
@@ -73,12 +80,12 @@ runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq 
 
   -- pollItems & socketLayer cst
   let pollItems = Zmqx.pollIn frontend & Zmqx.pollInAlso backend & Zmqx.pollInAlso receiverPair
-      socketLayer = SocketLayer frontend backend receiverPair senderPair tq ftq wtm wsm wam gbb staleTimeoutSec 0
+      socketLayer = SocketLayer frontend backend receiverPair senderPair tq ftq wtm wsm wam gbb staleTimeoutSec
 
-  -- Start the event loop in a separate thread
+  -- Start the direct socket poll loop in a separate thread
   forkApp $ layerLoop pollItems socketLayer
 
--- event loop
+-- direct socket poll loop
 layerLoop ::
   (FromZmq t, ToZmq t, FromZmq w) =>
   Zmqx.Sockets ->
@@ -88,7 +95,7 @@ layerLoop pollItems layer =
   zmqUnwrap (Zmqx.poll pollItems) >>= \ready -> do
     handleFrontend layer ready
     handleBackend layer ready
-    layerLoop pollItems layer -- Recursive call within ReaderT context
+    layerLoop pollItems layer -- Recursive direct poll loop
 
 -- ⭐⭐ handle message from clients
 handleFrontend ::
@@ -173,10 +180,9 @@ data TaskContext t w = TaskContext
     tcBackendSender :: Zmqx.Pair
   }
 
--- Define a Reader monad for task handling operations
-type TaskHandlerM t w a = ReaderT (TaskContext t w) LotosApp a
-
--- Extract TaskContext from SocketLayer
+-- Extract the narrow task-status context from SocketLayer so retry/garbage and
+-- notify handling stays explicit in the direct poll loop without layering an
+-- extra ReaderT allocation on every worker task-status frame.
 getTaskContext :: SocketLayer t w -> TaskContext t w
 getTaskContext SocketLayer {..} =
   TaskContext
@@ -220,69 +226,69 @@ handleWorkerTaskStatus ::
 handleWorkerTaskStatus socketLayer wID mt a uuid tst = do
   logApp DEBUG $ "handleBackend -> WorkerTaskStatus: " <> show wID <> " " <> show mt <> " " <> show a
   when (mt == WorkerTaskStatusT) $
-    runReaderT (handleTaskStatus wID uuid tst) (getTaskContext socketLayer)
+    handleTaskStatus (getTaskContext socketLayer) wID uuid tst
 
 -- Handle task status in Reader monad context
 handleTaskStatus ::
   (FromZmq t, ToZmq t) =>
+  TaskContext t w ->
   RoutingID ->
   TaskID ->
   TaskStatus ->
-  TaskHandlerM t w ()
-handleTaskStatus wID uuid tst = case tst of
+  LotosApp ()
+handleTaskStatus taskContext wID uuid tst = case tst of
   -- this case shall never happen
   TaskInit -> pure ()
   -- handle failed status
-  TaskFailed -> handleFailedTask wID uuid
+  TaskFailed -> handleFailedTask taskContext wID uuid
   -- handle other status
-  status -> handleOtherTaskStatus wID uuid status
+  status -> handleOtherTaskStatus taskContext wID uuid status
 
--- Handle failed tasks using Reader monad
+-- Handle failed tasks using the explicit direct-poll task context
 handleFailedTask ::
   (FromZmq t, ToZmq t) =>
+  TaskContext t w ->
   RoutingID ->
   TaskID ->
-  TaskHandlerM t w ()
-handleFailedTask wID uuid = do
-  TaskContext {..} <- ask
+  LotosApp ()
+handleFailedTask TaskContext {..} wID uuid = do
   -- delete the task
   v <- liftIO $ deleteTSWorkerTasks' wID (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
   case v of
-    Nothing -> lift $ logApp ERROR $ "handleBackend -> TaskFailed: uuid not found: " <> show uuid
+    Nothing -> logApp ERROR $ "handleBackend -> TaskFailed: uuid not found: " <> show uuid
     Just (tID, task, _) -> do
       let retry = taskRetry task
-      lift $ logApp DEBUG $ "handleBackend -> retry: taskID [" <> show tID <> "], retry [" <> show retry <> "]"
+      logApp DEBUG $ "handleBackend -> retry: taskID [" <> show tID <> "], retry [" <> show retry <> "]"
       case failedTaskDisposition task of
         RetryFailedTask retryTask -> do
           failedAt <- liftIO getCurrentTime
           liftIO $ enqueueTS (mkRetryTask failedAt retryTask) tcFailedTaskQueue
         GarbageFailedTask garbageTask -> liftIO $ writeBuffer tcGarbageBin garbageTask
   -- notify load-balancer
-  notifyLoadBalancer
+  notifyLoadBalancer tcBackendSender
 
--- Handle other task statuses using Reader monad
+-- Handle other task statuses using the explicit direct-poll task context
 handleOtherTaskStatus ::
   (FromZmq t, ToZmq t) =>
+  TaskContext t w ->
   RoutingID ->
   TaskID ->
   TaskStatus ->
-  TaskHandlerM t w ()
-handleOtherTaskStatus wID uuid status = do
-  TaskContext {..} <- ask
+  LotosApp ()
+handleOtherTaskStatus TaskContext {..} wID uuid status = do
   -- check if task exists
   v <- liftIO $ lookupTSWorkerTasks' wID (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
   case v of
     Nothing ->
-      lift $ logApp ERROR $ "handleBackend -> " <> show status <> ": uuid not found: " <> show uuid
+      logApp ERROR $ "handleBackend -> " <> show status <> ": uuid not found: " <> show uuid
     -- modify task status
     Just (_, task, _) ->
       liftIO $ modifyTSWorkerTasks' wID (uuid, task, status) (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
   -- notify load-balancer
-  notifyLoadBalancer
+  notifyLoadBalancer tcBackendSender
 
--- Helper function to notify the load balancer using Reader monad
-notifyLoadBalancer :: (ToZmq t) => TaskHandlerM t w ()
-notifyLoadBalancer = do
-  TaskContext {..} <- ask
+-- Helper function to notify the load balancer from the direct poll loop
+notifyLoadBalancer :: Zmqx.Pair -> LotosApp ()
+notifyLoadBalancer backendSender = do
   ack <- liftIO $ newAck
-  lift $ zmqUnwrap $ Zmqx.sends tcBackendSender $ toZmq (Notify ack)
+  zmqUnwrap $ Zmqx.sends backendSender $ toZmq (Notify ack)
