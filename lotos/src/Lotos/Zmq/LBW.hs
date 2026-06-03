@@ -24,8 +24,7 @@ module Lotos.Zmq.LBW
   )
 where
 
-import Control.Concurrent (myThreadId, threadDelay)
-import Control.Concurrent.STM
+import Control.Concurrent (myThreadId)
 import Control.Monad (unless, void, when)
 import Control.Monad.RWS
 import Data.Function
@@ -36,6 +35,7 @@ import Lotos.TSD.Queue
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error (ZmqError, zmqThrow, zmqUnwrap)
+import Lotos.Zmq.Internal.WorkerRuntime
 import Lotos.Zmq.LBW.LogTransport
 import Lotos.Zmq.Util (textToBS)
 import Zmqx
@@ -91,14 +91,6 @@ class StatusReporter sr w where
     sr ->
     LotosApp (sr, w)
 
--- | Queue/processing counters maintained by the worker service.
-data WorkerInfo = WorkerInfo
-  { wiProcessingTaskNum :: Int,
-    -- ^ Number of tasks currently handed to 'processTasks'.
-    wiWaitingTaskNum :: Int
-    -- ^ Number of tasks still waiting in the local worker queue.
-  }
-
 -- | Worker service implementation combining task processing and status reporting
 --
 -- The worker service manages:
@@ -106,6 +98,7 @@ data WorkerInfo = WorkerInfo
 -- * Task acceptor (acceptor)
 -- * Status reporter (reporter)
 -- * Task queue (taskQueue)
+-- * Wake signal for executor dispatch when tasks arrive (taskWakeSignal)
 -- * Event trigger for periodic status updates (trigger)
 -- * ZMQ dealer socket for task/status communication (workerDealer)
 -- * Dedicated reliable log transport buffer/DEALER (workerLogTransport)
@@ -118,6 +111,7 @@ data WorkerService ta sr t w
     acceptor :: ta,
     reporter :: sr,
     taskQueue :: TSQueue (Task t),
+    taskWakeSignal :: TaskWakeSignal,
     trigger :: EventTrigger,
     -- receives message (tasks) from LBS (load balancer server);
     -- sends message (worker status) to LBS.
@@ -126,7 +120,7 @@ data WorkerService ta sr t w
     workerLogTransport :: WorkerLogTransport,
     -- a wrapper for log enqueueing & `sendTaskStatus`
     taskAcceptorAPI :: TaskAcceptorAPI,
-    workerInfo :: TVar WorkerInfo,
+    workerInfo :: WorkerInfoVar,
     ver :: Int
   }
 
@@ -149,8 +143,9 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
   tid1 <- liftIO myThreadId
   logApp INFO $ "mkWorkerService on thread: " <> show tid1
 
-  -- task queue & trigger
+  -- task queue, wake signal & trigger
   taskQueue <- liftIO $ mkTSQueue
+  taskWakeSignal <- liftIO newTaskWakeSignal
   trigger <- liftIO $ mkTimeTrigger workerStatusReportIntervalSec
 
   -- worker Dealer Pair init
@@ -171,7 +166,7 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
               zmqThrow $ Zmqx.sends wDealerPair $ toZmq $ WorkerReportTaskStatus ack tid ts
           }
   -- init workerInfo
-  workerInfo <- liftIO $ newTVarIO WorkerInfo {wiProcessingTaskNum = 0, wiWaitingTaskNum = 0}
+  workerInfo <- liftIO newWorkerInfoVar
 
   return $
     WorkerService
@@ -179,6 +174,7 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
       ta
       sr
       taskQueue
+      taskWakeSignal
       trigger
       wDealerPair
       workerLogTransport
@@ -252,7 +248,9 @@ socketLoop
             logApp DEBUG $ "socketLoop -> workerDealer: " <> show now
             fromZmq @(Task t) <$> zmqUnwrap (Zmqx.receives workerDealer) >>= \case
               Left e -> logApp ERROR $ show e
-              Right task -> liftIO $ enqueueTS task taskQueue
+              Right task -> liftIO $ do
+                enqueueTS task taskQueue
+                notifyTaskWakeSignal taskWakeSignal
           -- receive message from internal
           when (ready workerDealerPair') do
             logApp DEBUG $ "socketLoop -> workerDealerPair: " <> show now
@@ -266,7 +264,7 @@ socketLoop
       unless shouldProcess $ socketLoop (ws {trigger = newTrigger} :: WorkerService ta sr t w) workerDealer workerDealerPair'
 
       -- 3. gather & send worker status (due to EventTrigger, it sends worker status periodically
-      wInfo <- liftIO $ readTVarIO workerInfo
+      wInfo <- liftIO $ readWorkerInfoVar workerInfo
       let statusReporterAPI = StatusReporterAPI {srReportInfo = wInfo}
       (newReporter, workerStatus :: w) <- gatherStatus statusReporterAPI reporter
       -- construct `WorkerReportStatus`
@@ -290,12 +288,7 @@ tasksExecLoop ::
   LotosApp ()
 tasksExecLoop ws@WorkerService {..} = do
   logApp DEBUG "tasksExecLoop -> start dequeuing tasks..."
-  tasksInQueue <- liftIO $ getQueueSize taskQueue
-  when (tasksInQueue == 0) do
-    logApp DEBUG "tasksExecLoop -> no tasks in queue, sleep for a while..."
-    liftIO $ threadDelay $ 10 * 1_000_000 -- sleep for 10 seconds
-    tasksExecLoop ws
-  tasks <- liftIO $ dequeueN' (parallelTasksNo conf) taskQueue
+  tasks <- liftIO $ dequeueOrWaitForTasks (parallelTasksNo conf) taskQueue taskWakeSignal
   -- number of tasks to be processed & number of tasks is waiting
   let tasksTodo = length tasks
   tasksRemain <- liftIO $ getQueueSize taskQueue
@@ -305,16 +298,12 @@ tasksExecLoop ws@WorkerService {..} = do
       <> ", remain: "
       <> show tasksRemain
   -- update workerInfo
-  liftIO $ atomically $ do
-    modifyTVar workerInfo $
-      \wi -> wi {wiProcessingTaskNum = tasksTodo, wiWaitingTaskNum = tasksRemain}
+  liftIO $ recordWorkerBatchStart workerInfo tasksTodo tasksRemain
 
   -- Note: blocking should be controlled by the acceptor
   newAcceptor <- processTasks taskAcceptorAPI acceptor tasks
   tasksRemainAfter <- liftIO $ getQueueSize taskQueue
-  liftIO $ atomically $ do
-    modifyTVar workerInfo $
-      \wi -> wi {wiProcessingTaskNum = 0, wiWaitingTaskNum = tasksRemainAfter}
+  liftIO $ recordWorkerBatchFinish workerInfo tasksRemainAfter
 
   tasksExecLoop (ws {acceptor = newAcceptor} :: WorkerService ta sr t w)
 

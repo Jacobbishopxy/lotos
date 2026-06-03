@@ -86,7 +86,6 @@ layerLoop ::
   LotosApp ()
 layerLoop pollItems layer =
   zmqUnwrap (Zmqx.poll pollItems) >>= \ready -> do
-    liftIO $ putStrLn "> poll"
     handleFrontend layer ready
     handleBackend layer ready
     layerLoop pollItems layer -- Recursive call within ReaderT context

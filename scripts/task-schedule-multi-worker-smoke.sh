@@ -38,6 +38,8 @@ BATCH_WINDOW_SEC="${SMOKE_BATCH_WINDOW_SEC:-45}"
 TASK_PROCESSOR_NOTIFY_THRESHOLD="${SMOKE_TASK_PROCESSOR_NOTIFY_THRESHOLD:-100}"
 INFO_FETCH_INTERVAL_SEC="${SMOKE_INFO_FETCH_INTERVAL_SEC:-5}"
 WORKER_STATUS_INTERVAL_SEC="${SMOKE_WORKER_STATUS_INTERVAL_SEC:-2}"
+LOG_INGEST_ADDR="${SMOKE_LOG_INGEST_ADDR:-tcp://127.0.0.1:5558}"
+LOG_INGEST_JOURNAL_PATH="${SMOKE_LOG_INGEST_JOURNAL_PATH:-$EVIDENCE_DIR/worker-logs.journal}"
 
 PROCESS_NAMES=()
 PROCESS_PIDS=()
@@ -321,10 +323,26 @@ write_broker_config() {
     "loggingAddr": "tcp://127.0.0.1:5557",
     "loggingsBufferSize": 1000,
     "infoFetchIntervalSec": $INFO_FETCH_INTERVAL_SEC
+  },
+  "logIngest": {
+    "logIngestAddr": "$LOG_INGEST_ADDR",
+    "logIngestSocketHWM": 1000,
+    "logIngestBatchMaxRecords": 100,
+    "logIngestBatchMaxBytes": 1048576,
+    "logIngestLineMaxBytes": 65536,
+    "logIngestWorkerQueueHWM": 10000,
+    "logIngestFlushIntervalMicros": 100000,
+    "logIngestAckTimeoutMicros": 1000000,
+    "logIngestRetryBackoffMicros": 250000,
+    "logIngestReadCacheSize": 1000,
+    "logIngestReadCacheMaxTasks": 1000,
+    "logIngestJournalPath": "$LOG_INGEST_JOURNAL_PATH",
+    "logIngestRetentionBytes": 104857600,
+    "logIngestDropPolicy": "drop-oldest"
   }
 }
 JSON
-  log "wrote broker config to $BROKER_CONFIG with batch window ${BATCH_WINDOW_SEC}s"
+  log "wrote broker config to $BROKER_CONFIG with batch window ${BATCH_WINDOW_SEC}s and LogIngest journal $LOG_INGEST_JOURNAL_PATH"
 }
 
 write_worker_configs() {
@@ -338,6 +356,22 @@ write_worker_configs() {
   "workerDealerPairAddr": "inproc://TaskScheduleWorker-$idx",
   "loadBalancerBackendAddr": "tcp://127.0.0.1:5556",
   "loadBalancerLoggingAddr": "tcp://127.0.0.1:5557",
+  "workerLogging": {
+    "logIngestAddr": "$LOG_INGEST_ADDR",
+    "logIngestSocketHWM": 1000,
+    "logIngestBatchMaxRecords": 100,
+    "logIngestBatchMaxBytes": 1048576,
+    "logIngestLineMaxBytes": 65536,
+    "logIngestWorkerQueueHWM": 10000,
+    "logIngestFlushIntervalMicros": 100000,
+    "logIngestAckTimeoutMicros": 1000000,
+    "logIngestRetryBackoffMicros": 250000,
+    "logIngestReadCacheSize": 1000,
+    "logIngestReadCacheMaxTasks": 1000,
+    "logIngestJournalPath": "$LOG_INGEST_JOURNAL_PATH",
+    "logIngestRetentionBytes": 104857600,
+    "logIngestDropPolicy": "drop-oldest"
+  },
   "workerStatusReportIntervalSec": $WORKER_STATUS_INTERVAL_SEC,
   "parallelTasksNo": 1
 }
