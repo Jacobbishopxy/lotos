@@ -526,7 +526,10 @@ listTasksInQueue WorkerService {taskQueue} =
 
 ----------------------------------------------------------------------------------------------------
 
--- | Publish a task log frame using the worker id as the PUB/SUB topic.
+-- | Compatibility helper for task-scoped log text.
+--
+-- The old name is retained for internal callers/tests, but it now enqueues a
+-- reliable stdout/info 'LogEvent' through the worker LogIngest transport.
 pubTaskLogging :: WorkerService ta sr t w -> WorkerLogging -> LotosApp ()
 pubTaskLogging WorkerService {..} wl =
   liftIO $ void $ enqueueWorkerLogging workerLogTransport wl

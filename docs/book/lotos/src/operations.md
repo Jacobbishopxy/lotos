@@ -56,6 +56,33 @@ These metrics are observability only: task/status handoff queues stay intentiona
 
 Reliable logs are persisted through the broker LogIngest journal and exposed through `/logs/*`. Generated smoke runs should use isolated journal paths or remove stale generated state when proving current-run evidence, because stable worker ids can otherwise make old accepted sequences appear as duplicates.
 
+For new configs, keep the runtime endpoint in the LogIngest blocks and use the legacy/default fields only as migration hints:
+
+```json
+{
+  "infoStorage": {
+    "httpPort": 8081,
+    "logIngestDefaultAddr": "tcp://127.0.0.1:5557",
+    "logIngestDefaultBufferSize": 1000,
+    "infoFetchIntervalSec": 10
+  },
+  "logIngest": {
+    "logIngestAddr": "tcp://127.0.0.1:5558"
+  }
+}
+```
+
+```json
+{
+  "loadBalancerBackendAddr": "tcp://127.0.0.1:5556",
+  "workerLogging": {
+    "logIngestAddr": "tcp://127.0.0.1:5558"
+  }
+}
+```
+
+Old `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` JSON remains accepted for compatibility; explicit `logIngest` / `workerLogging` blocks always define the runtime transport.
+
 ## mdBook operations
 
 The documentation book is intentionally optional tooling. Use the Makefile targets from the repository root:

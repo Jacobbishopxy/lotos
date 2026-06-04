@@ -34,6 +34,8 @@ where
 
 import GHC.Generics (Generic)
 import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as AesonKey
+import Data.Aeson.Types qualified as AesonTypes
 import GHC.TypeLits (KnownSymbol)
 import Data.Text qualified as Text
 import Lotos.TSD.Queue
@@ -151,12 +153,42 @@ data InfoStorageConfig = InfoStorageConfig
     -- ^ Servant/Warp port for the info API.
     loggingAddr :: Text.Text,
     -- ^ Deprecated compatibility endpoint used only for default derivation.
+    -- Prefer JSON key @logIngestDefaultAddr@ for this fallback and
+    -- @logIngest.logIngestAddr@ for the runtime logging transport.
     loggingsBufferSize :: Int,
     -- ^ Deprecated compatibility buffer size; LogIngest owns log retention now.
+    -- Prefer JSON key @logIngestDefaultBufferSize@ for this retained value.
     infoFetchIntervalSec :: Int
     -- ^ Seconds between scheduler state snapshots served by the info API.
   }
-  deriving (Show, Generic, Aeson.FromJSON)
+  deriving (Show, Generic)
+
+-- | Legacy broker JSON used @infoStorage.loggingAddr@ for the old PUB/SUB
+-- logging endpoint. New JSON should configure the runtime endpoint under the
+-- top-level @logIngest@ block and, only when a default-derivation hint is still
+-- useful, use @infoStorage.logIngestDefaultAddr@. The Haskell record fields stay
+-- unchanged so existing record construction/imports continue to compile.
+instance Aeson.FromJSON InfoStorageConfig where
+  parseJSON = Aeson.withObject "InfoStorageConfig" $ \v -> do
+    parsedHttpPort <- v Aeson..: "httpPort"
+    parsedLoggingAddr <- maybe defaultLegacyLoggingAddr id <$> optionalPreferredKey v "logIngestDefaultAddr" "loggingAddr"
+    parsedLoggingsBufferSize <- maybe defaultLegacyLoggingsBufferSize id <$> optionalPreferredKey v "logIngestDefaultBufferSize" "loggingsBufferSize"
+    parsedInfoFetchIntervalSec <- v Aeson..: "infoFetchIntervalSec"
+    pure $
+      InfoStorageConfig
+        { httpPort = parsedHttpPort,
+          loggingAddr = parsedLoggingAddr,
+          loggingsBufferSize = parsedLoggingsBufferSize,
+          infoFetchIntervalSec = parsedInfoFetchIntervalSec
+        }
+
+-- | Default retained for JSON that omits the deprecated logging/default address.
+defaultLegacyLoggingAddr :: Text.Text
+defaultLegacyLoggingAddr = "tcp://127.0.0.1:5557"
+
+-- | Default retained for JSON that omits the deprecated info log buffer size.
+defaultLegacyLoggingsBufferSize :: Int
+defaultLegacyLoggingsBufferSize = 1000
 
 -- | Reliable LogIngest transport configuration.
 --
@@ -186,7 +218,7 @@ data LogIngestConfig = LogIngestConfig
     logIngestReadCacheMaxTasks :: Int,
     -- ^ Maximum task buckets retained by the broker read cache.
     logIngestJournalPath :: FilePath,
-    -- ^ Append-only persistence path owned by the future LogIngest service.
+    -- ^ Append-only persistence path owned by the LogIngest service.
     logIngestRetentionBytes :: Int,
     -- ^ Approximate journal retention cap in bytes before compaction/rotation.
     logIngestDropPolicy :: LogDropPolicy
@@ -233,39 +265,51 @@ defaultReliableLogIngestAddr legacyAddr =
     _ -> legacyAddr <> "-log-ingest"
 
 instance Aeson.FromJSON LogIngestConfig where
-  parseJSON = Aeson.withObject "LogIngestConfig" $ \v -> do
-    let defaults = defaultLogIngestConfig "tcp://127.0.0.1:5558"
-    addr <- maybe (logIngestAddr defaults) id <$> v Aeson..:? "logIngestAddr"
-    socketHWM <- maybe (logIngestSocketHWM defaults) id <$> v Aeson..:? "logIngestSocketHWM"
-    batchMaxRecords <- maybe (logIngestBatchMaxRecords defaults) id <$> v Aeson..:? "logIngestBatchMaxRecords"
-    batchMaxBytes <- maybe (logIngestBatchMaxBytes defaults) id <$> v Aeson..:? "logIngestBatchMaxBytes"
-    lineMaxBytes <- maybe (logIngestLineMaxBytes defaults) id <$> v Aeson..:? "logIngestLineMaxBytes"
-    workerQueueHWM <- maybe (logIngestWorkerQueueHWM defaults) id <$> v Aeson..:? "logIngestWorkerQueueHWM"
-    flushIntervalMicros <- maybe (logIngestFlushIntervalMicros defaults) id <$> v Aeson..:? "logIngestFlushIntervalMicros"
-    ackTimeoutMicros <- maybe (logIngestAckTimeoutMicros defaults) id <$> v Aeson..:? "logIngestAckTimeoutMicros"
-    retryBackoffMicros <- maybe (logIngestRetryBackoffMicros defaults) id <$> v Aeson..:? "logIngestRetryBackoffMicros"
-    readCacheSize <- maybe (logIngestReadCacheSize defaults) id <$> v Aeson..:? "logIngestReadCacheSize"
-    readCacheMaxTasks <- maybe (logIngestReadCacheMaxTasks defaults) id <$> v Aeson..:? "logIngestReadCacheMaxTasks"
-    journalPath <- maybe (logIngestJournalPath defaults) id <$> v Aeson..:? "logIngestJournalPath"
-    retentionBytes <- maybe (logIngestRetentionBytes defaults) id <$> v Aeson..:? "logIngestRetentionBytes"
-    dropPolicy <- maybe (logIngestDropPolicy defaults) id <$> v Aeson..:? "logIngestDropPolicy"
-    pure $
-      LogIngestConfig
-        { logIngestAddr = addr,
-          logIngestSocketHWM = socketHWM,
-          logIngestBatchMaxRecords = batchMaxRecords,
-          logIngestBatchMaxBytes = batchMaxBytes,
-          logIngestLineMaxBytes = lineMaxBytes,
-          logIngestWorkerQueueHWM = workerQueueHWM,
-          logIngestFlushIntervalMicros = flushIntervalMicros,
-          logIngestAckTimeoutMicros = ackTimeoutMicros,
-          logIngestRetryBackoffMicros = retryBackoffMicros,
-          logIngestReadCacheSize = readCacheSize,
-          logIngestReadCacheMaxTasks = readCacheMaxTasks,
-          logIngestJournalPath = journalPath,
-          logIngestRetentionBytes = retentionBytes,
-          logIngestDropPolicy = dropPolicy
-        }
+  parseJSON = parseLogIngestConfigWithDefaults (defaultLogIngestConfig "tcp://127.0.0.1:5558")
+
+parseLogIngestConfigWithDefaults :: LogIngestConfig -> Aeson.Value -> AesonTypes.Parser LogIngestConfig
+parseLogIngestConfigWithDefaults defaults = Aeson.withObject "LogIngestConfig" $ parseLogIngestObject defaults
+
+parseLogIngestObject :: LogIngestConfig -> Aeson.Object -> AesonTypes.Parser LogIngestConfig
+parseLogIngestObject defaults v = do
+  addr <- maybe (logIngestAddr defaults) id <$> v Aeson..:? "logIngestAddr"
+  socketHWM <- maybe (logIngestSocketHWM defaults) id <$> v Aeson..:? "logIngestSocketHWM"
+  batchMaxRecords <- maybe (logIngestBatchMaxRecords defaults) id <$> v Aeson..:? "logIngestBatchMaxRecords"
+  batchMaxBytes <- maybe (logIngestBatchMaxBytes defaults) id <$> v Aeson..:? "logIngestBatchMaxBytes"
+  lineMaxBytes <- maybe (logIngestLineMaxBytes defaults) id <$> v Aeson..:? "logIngestLineMaxBytes"
+  workerQueueHWM <- maybe (logIngestWorkerQueueHWM defaults) id <$> v Aeson..:? "logIngestWorkerQueueHWM"
+  flushIntervalMicros <- maybe (logIngestFlushIntervalMicros defaults) id <$> v Aeson..:? "logIngestFlushIntervalMicros"
+  ackTimeoutMicros <- maybe (logIngestAckTimeoutMicros defaults) id <$> v Aeson..:? "logIngestAckTimeoutMicros"
+  retryBackoffMicros <- maybe (logIngestRetryBackoffMicros defaults) id <$> v Aeson..:? "logIngestRetryBackoffMicros"
+  readCacheSize <- maybe (logIngestReadCacheSize defaults) id <$> v Aeson..:? "logIngestReadCacheSize"
+  readCacheMaxTasks <- maybe (logIngestReadCacheMaxTasks defaults) id <$> v Aeson..:? "logIngestReadCacheMaxTasks"
+  journalPath <- maybe (logIngestJournalPath defaults) id <$> v Aeson..:? "logIngestJournalPath"
+  retentionBytes <- maybe (logIngestRetentionBytes defaults) id <$> v Aeson..:? "logIngestRetentionBytes"
+  dropPolicy <- maybe (logIngestDropPolicy defaults) id <$> v Aeson..:? "logIngestDropPolicy"
+  pure $
+    LogIngestConfig
+      { logIngestAddr = addr,
+        logIngestSocketHWM = socketHWM,
+        logIngestBatchMaxRecords = batchMaxRecords,
+        logIngestBatchMaxBytes = batchMaxBytes,
+        logIngestLineMaxBytes = lineMaxBytes,
+        logIngestWorkerQueueHWM = workerQueueHWM,
+        logIngestFlushIntervalMicros = flushIntervalMicros,
+        logIngestAckTimeoutMicros = ackTimeoutMicros,
+        logIngestRetryBackoffMicros = retryBackoffMicros,
+        logIngestReadCacheSize = readCacheSize,
+        logIngestReadCacheMaxTasks = readCacheMaxTasks,
+        logIngestJournalPath = journalPath,
+        logIngestRetentionBytes = retentionBytes,
+        logIngestDropPolicy = dropPolicy
+      }
+
+optionalPreferredKey :: (Aeson.FromJSON a) => Aeson.Object -> Text.Text -> Text.Text -> AesonTypes.Parser (Maybe a)
+optionalPreferredKey v preferred legacy = do
+  preferredValue <- v Aeson..:? AesonKey.fromText preferred
+  case preferredValue of
+    Just value -> pure (Just value)
+    Nothing -> v Aeson..:? AesonKey.fromText legacy
 
 -- | Complete server configuration consumed by 'runLBS'.
 data BrokerServiceConfig = BrokerServiceConfig
@@ -288,7 +332,12 @@ instance Aeson.FromJSON BrokerServiceConfig where
     parsedSocketLayer <- v Aeson..: "socketLayer"
     parsedTaskProcessor <- v Aeson..: "taskProcessor"
     parsedInfoStorage <- v Aeson..: "infoStorage"
-    parsedLogIngest <- maybe (defaultLogIngestConfig (defaultReliableLogIngestAddr (loggingAddr parsedInfoStorage))) id <$> v Aeson..:? "logIngest"
+    maybeLogIngestValue <- (v Aeson..:? "logIngest" :: AesonTypes.Parser (Maybe Aeson.Value))
+    let logIngestDefaults = defaultLogIngestConfig (defaultReliableLogIngestAddr (loggingAddr parsedInfoStorage))
+    parsedLogIngest <-
+      case maybeLogIngestValue of
+        Nothing -> pure logIngestDefaults
+        Just logIngestValue -> parseLogIngestConfigWithDefaults logIngestDefaults logIngestValue
     pure $
       BrokerServiceConfig
         { taskScheduler = parsedTaskScheduler,
@@ -311,10 +360,12 @@ readBrokerConfig = readJsonConfig
 -- The worker id is used as the task/status DEALER routing id and the reliable
 -- logging DEALER routing id. 'loadBalancerBackendAddr' must match the broker
 -- backend; 'loadBalancerLoggingAddr' is retained only to derive legacy JSON
--- defaults for 'workerLogging'.
+-- defaults for 'workerLogging'. New JSON should prefer the explicit
+-- 'workerLogging' block, with optional top-level @logIngestDefaultAddr@ only
+-- when a derivation hint is needed.
 data WorkerServiceConfig = WorkerServiceConfig
   { workerId :: Text.Text,
-    -- ^ Stable worker routing id and logging topic.
+    -- ^ Stable worker routing id used by task/status and log DEALER sockets.
     workerDealerPairAddr :: Text.Text,
     -- ^ In-process PAIR endpoint between the worker socket loop and task callbacks.
     loadBalancerBackendAddr :: Text.Text,
@@ -335,8 +386,21 @@ instance Aeson.FromJSON WorkerServiceConfig where
     parsedWorkerId <- v Aeson..: "workerId"
     parsedWorkerDealerPairAddr <- v Aeson..: "workerDealerPairAddr"
     parsedLoadBalancerBackendAddr <- v Aeson..: "loadBalancerBackendAddr"
-    parsedLoadBalancerLoggingAddr <- v Aeson..: "loadBalancerLoggingAddr"
-    parsedWorkerLogging <- maybe (defaultLogIngestConfig (defaultReliableLogIngestAddr parsedLoadBalancerLoggingAddr)) id <$> v Aeson..:? "workerLogging"
+    maybeDefaultLoggingAddr <- optionalPreferredKey v "logIngestDefaultAddr" "loadBalancerLoggingAddr"
+    maybeWorkerLoggingValue <- (v Aeson..:? "workerLogging" :: AesonTypes.Parser (Maybe Aeson.Value))
+    let selectedDefaultLoggingAddr = maybe defaultLegacyLoggingAddr id maybeDefaultLoggingAddr
+        workerLoggingDefaults = defaultLogIngestConfig (defaultReliableLogIngestAddr selectedDefaultLoggingAddr)
+    parsedWorkerLogging <-
+      case maybeWorkerLoggingValue of
+        Nothing -> pure workerLoggingDefaults
+        Just workerLoggingValue -> parseLogIngestConfigWithDefaults workerLoggingDefaults workerLoggingValue
+    let parsedLoadBalancerLoggingAddr =
+          case maybeDefaultLoggingAddr of
+            Just addr -> addr
+            Nothing ->
+              case maybeWorkerLoggingValue of
+                Just _ -> logIngestAddr parsedWorkerLogging
+                Nothing -> defaultLegacyLoggingAddr
     parsedWorkerStatusReportIntervalSec <- v Aeson..: "workerStatusReportIntervalSec"
     parsedParallelTasksNo <- v Aeson..: "parallelTasksNo"
     pure $

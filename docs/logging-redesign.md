@@ -128,7 +128,8 @@ Keep application worker code using a callback surface instead of opening ZMQ soc
 
 ```haskell
 data TaskAcceptorAPI = TaskAcceptorAPI
-  { taSendTaskLog :: LogEvent -> IO LogEnqueueResult
+  { taSendTaskLog :: LogStream -> LogLevel -> TaskID -> Text -> IO LogEnqueueResult
+  , taPubTaskLogging :: WorkerLogging -> IO () -- compatibility wrapper
   , taSendTaskStatus :: (TaskID, TaskStatus) -> IO ()
   }
 ```
@@ -153,7 +154,7 @@ data LogIngestConfig = LogIngestConfig
   }
 ```
 
-TP-022 exposes `LogIngestConfig` and `defaultLogIngestConfig` through `Lotos.Zmq`. `BrokerServiceConfig.logIngest` is optional in broker JSON and defaults from the legacy `InfoStorageConfig.loggingAddr`; `WorkerServiceConfig.workerLogging` is optional in worker JSON and defaults from `WorkerServiceConfig.loadBalancerLoggingAddr`. Those legacy address fields plus `taPubTaskLogging` remain compatibility names; runtime ingestion uses LogIngest.
+TP-022 exposes `LogIngestConfig` and `defaultLogIngestConfig` through `Lotos.Zmq`. TP-045 adds clearer JSON migration names while keeping public Haskell record fields/callbacks compatible: broker JSON may use `infoStorage.logIngestDefaultAddr` / `infoStorage.logIngestDefaultBufferSize` instead of `infoStorage.loggingAddr` / `infoStorage.loggingsBufferSize`, and worker JSON may omit `loadBalancerLoggingAddr` when it supplies `workerLogging.logIngestAddr` (or use top-level `logIngestDefaultAddr` only as a derivation hint). Explicit `logIngest` / `workerLogging` blocks are authoritative for runtime transport; legacy/default fields only derive missing LogIngest config.
 
 ## Migration outline
 
@@ -163,7 +164,7 @@ TP-022 exposes `LogIngestConfig` and `defaultLogIngestConfig` through `Lotos.Zmq
 4. **Done in TP-025:** remove the InfoStorage full-log snapshot coupling, update smoke tests to assert `/logs/worker/<workerId>` and `/logs/stats`, and document `/info` as scheduler-only.
 5. **Done in TP-026:** reload LogIngest state from the JSONL journal/checkpoint on broker startup, tolerate malformed/partial journal lines, compact oversized journals under `logIngestRetentionBytes`, and apply `logIngestSocketHWM` to logging sockets.
 6. **Done in TP-029:** move the worker logging DEALER behind a `Zmqx.EventLoop` transceiver so send and ACK receive ownership is centralized while the existing worker queue/retry/drop state machine remains unchanged.
-7. Rename public-facing callback/config fields only with a documented compatibility path for adopters.
+7. **Done in TP-045:** document and test the compatibility path for legacy logging/default names. New JSON should prefer explicit `logIngest` / `workerLogging` runtime blocks and the `logIngestDefault*` aliases only when a derivation hint is still needed; old JSON remains accepted.
 
 ## TP-024/TP-025/TP-026/TP-029 implementation notes
 
@@ -174,7 +175,7 @@ TP-024 introduces `Lotos.Zmq.LBW.LogTransport` and rewires `TaskAcceptorAPI` wit
 - Partial-batch flushing and retry behavior controlled by `logIngestFlushIntervalMicros`, `logIngestAckTimeoutMicros`, and `logIngestRetryBackoffMicros`.
 - Worker-wide monotonic sequence numbers aligned with broker `acceptedThroughByWorker`. Overflow replaces contiguous low-priority spans with warn-level synthetic gap `LogEvent`s containing `droppedFrom`/`droppedThrough` so `/logs/stats.droppedEvents`, `/logs/stats.sequenceGaps`, and query endpoints expose loss.
 - TaskSchedule command output mapping: `STDOUT:` lines become `LogStdout`/`LogInfo`, `STDERR:` lines become `LogStderr`/`LogError`, and final command results become `LogResult` with success/failure severity.
-- Config compatibility: old broker/worker JSON that omits `logIngest`/`workerLogging` derives a split reliable endpoint from the legacy logging endpoint (demo `tcp://127.0.0.1:5557` -> `tcp://127.0.0.1:5558`). The sample TaskSchedule configs now set the reliable endpoint explicitly.
+- Config compatibility: old broker/worker JSON that omits `logIngest`/`workerLogging` derives a split reliable endpoint from the legacy logging endpoint (demo `tcp://127.0.0.1:5557` -> `tcp://127.0.0.1:5558`). New broker JSON may spell the default-derivation fields as `infoStorage.logIngestDefaultAddr` and `infoStorage.logIngestDefaultBufferSize`; new worker JSON should set `workerLogging.logIngestAddr` and can omit `loadBalancerLoggingAddr`. The sample TaskSchedule configs now set the reliable endpoint explicitly.
 - TP-025 keeps worker `LogAck` matching at wire precision so whole-second ACK serialization does not strand accepted in-flight batches; this preserves at-least-once retry semantics without changing the global ACK frame shape.
 - TP-026 applies `logIngestSocketHWM` as both `Z_SndHWM` and `Z_RcvHWM` on the broker LogIngest ROUTER before bind and the worker logging DEALER before connect.
 - TP-026 enforces journal retention after accepted appends. If the configured byte cap is smaller than the checkpoint plus required retained suffix, correctness wins and the cap remains approximate; malformed/partial lines are dropped during replay/compaction with `malformedJournalLines` evidence.
@@ -184,7 +185,7 @@ TP-024 introduces `Lotos.Zmq.LBW.LogTransport` and rewires `TaskAcceptorAPI` wit
 
 Runtime caveats:
 
-- `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` remain in config for compatibility/default derivation, but InfoStorage no longer binds a worker-log socket or retains full worker logs.
+- `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` remain accepted in JSON and exported as Haskell record fields for compatibility/default derivation, but InfoStorage no longer binds a worker-log socket or retains full worker logs. Prefer `infoStorage.logIngestDefaultAddr`, `infoStorage.logIngestDefaultBufferSize`, and explicit `workerLogging.logIngestAddr` in new JSON.
 - Delivery remains at-least-once. Workers retry unacked batches, and LogIngest deduplicates accepted sequence coverage across restart/compaction; exactly-once delivery is not claimed. EventLoop ownership does not change this contract: ACKs are still sent only after accepted records reach the journal/cache state, and un-enqueued broker dispatch frames receive no ACK.
 - TaskSchedule smoke scripts reuse stable worker IDs. If a generated `logs/worker-logs.journal` from an earlier run is intentionally preserved, LogIngest may classify restarted worker sequences as duplicates; use an isolated journal path or remove stale generated smoke state when proving current-run `/logs/*` evidence.
 
@@ -201,5 +202,5 @@ TP-023 introduces `Lotos.Zmq.LBS.LogIngest` with:
 Conservative runtime integration details and limitations:
 
 - `runLBS` creates LogIngest state for the `/logs/...` routes and starts the ROUTER on `logIngestAddr` even when explicit configs reuse the legacy logging address; there is no active InfoStorage logging socket to collide with.
-- Public compatibility-name cleanup remains follow-up work; the legacy logging address/callback names still derive defaults while runtime ingestion uses LogIngest.
+- TP-045 completed the public compatibility-name cleanup by adding preferred JSON aliases and tests while keeping the exported Haskell compatibility fields/callbacks stable. Legacy logging address/callback names still derive defaults or wrap LogIngest enqueueing; runtime ingestion uses LogIngest.
 - `LogAck.acceptedThrough` is a contiguous durability watermark, not an exactly-once guarantee. Delivery remains at-least-once with idempotent broker ingestion.

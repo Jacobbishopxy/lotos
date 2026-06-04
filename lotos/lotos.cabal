@@ -152,6 +152,7 @@ test-suite test-zmq-log-protocol-config
   build-depends:
     , aeson
     , bytestring
+    , directory
     , time
 
 test-suite test-zmq-log-ingest

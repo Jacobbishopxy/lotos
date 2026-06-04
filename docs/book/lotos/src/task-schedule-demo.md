@@ -18,7 +18,7 @@ Default loopback endpoints:
 | --- | --- |
 | Client frontend | `tcp://127.0.0.1:5555` |
 | Worker backend | `tcp://127.0.0.1:5556` |
-| Legacy logging/default derivation | `tcp://127.0.0.1:5557` |
+| LogIngest default-derivation hint (`infoStorage.logIngestDefaultAddr`; legacy keys accepted) | `tcp://127.0.0.1:5557` |
 | Reliable LogIngest | `tcp://127.0.0.1:5558` |
 | Info HTTP | `http://127.0.0.1:8081/SimpleServer/...` |
 

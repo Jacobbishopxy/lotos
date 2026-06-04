@@ -6,6 +6,7 @@ import Data.Aeson qualified as Aeson
 import Data.ByteString.Lazy.Char8 qualified as LBS
 import Data.Time (UTCTime (..), fromGregorian)
 import Lotos.Zmq
+import System.Directory (doesFileExist)
 import System.Exit (exitFailure)
 import Test.HUnit
 
@@ -57,6 +58,71 @@ oldWorkerConfigJson =
   \  \"loadBalancerLoggingAddr\": \"tcp://127.0.0.1:5557\",\
   \  \"workerStatusReportIntervalSec\": 5,\
   \  \"parallelTasksNo\": 4\
+  \}"
+
+newBrokerConfigJson :: LBS.ByteString
+newBrokerConfigJson =
+  "{\
+  \  \"taskScheduler\": {\
+  \    \"taskQueueHWM\": 1000,\
+  \    \"failedTaskQueueHWM\": 1000,\
+  \    \"garbageBinSize\": 100\
+  \  },\
+  \  \"socketLayer\": {\
+  \    \"frontendAddr\": \"tcp://127.0.0.1:5555\",\
+  \    \"backendAddr\": \"tcp://127.0.0.1:5556\"\
+  \  },\
+  \  \"taskProcessor\": {\
+  \    \"taskQueuePullNo\": 10,\
+  \    \"failedTaskQueuePullNo\": 10,\
+  \    \"triggerAlgoMaxNotifyCount\": 10,\
+  \    \"triggerAlgoMaxWaitSec\": 10\
+  \  },\
+  \  \"infoStorage\": {\
+  \    \"httpPort\": 8081,\
+  \    \"logIngestDefaultAddr\": \"tcp://127.0.0.1:6007\",\
+  \    \"logIngestDefaultBufferSize\": 42,\
+  \    \"infoFetchIntervalSec\": 10\
+  \  },\
+  \  \"logIngest\": {\
+  \    \"logIngestAddr\": \"tcp://127.0.0.1:6008\"\
+  \  }\
+  \}"
+
+newWorkerConfigJson :: LBS.ByteString
+newWorkerConfigJson =
+  "{\
+  \  \"workerId\": \"simpleWorker_1\",\
+  \  \"workerDealerPairAddr\": \"inproc://TaskScheduleWorker\",\
+  \  \"loadBalancerBackendAddr\": \"tcp://127.0.0.1:5556\",\
+  \  \"workerStatusReportIntervalSec\": 5,\
+  \  \"parallelTasksNo\": 4,\
+  \  \"workerLogging\": {\
+  \    \"logIngestAddr\": \"tcp://127.0.0.1:6008\"\
+  \  }\
+  \}"
+
+mixedBrokerConfigJson :: LBS.ByteString
+mixedBrokerConfigJson =
+  "{\
+  \  \"taskScheduler\": {\"taskQueueHWM\": 1000, \"failedTaskQueueHWM\": 1000, \"garbageBinSize\": 100},\
+  \  \"socketLayer\": {\"frontendAddr\": \"tcp://127.0.0.1:5555\", \"backendAddr\": \"tcp://127.0.0.1:5556\"},\
+  \  \"taskProcessor\": {\"taskQueuePullNo\": 10, \"failedTaskQueuePullNo\": 10, \"triggerAlgoMaxNotifyCount\": 10, \"triggerAlgoMaxWaitSec\": 10},\
+  \  \"infoStorage\": {\"httpPort\": 8081, \"loggingAddr\": \"tcp://127.0.0.1:5557\", \"logIngestDefaultAddr\": \"tcp://127.0.0.1:6007\", \"loggingsBufferSize\": 1000, \"logIngestDefaultBufferSize\": 42, \"infoFetchIntervalSec\": 10},\
+  \  \"logIngest\": {\"logIngestSocketHWM\": 17}\
+  \}"
+
+mixedWorkerConfigJson :: LBS.ByteString
+mixedWorkerConfigJson =
+  "{\
+  \  \"workerId\": \"simpleWorker_1\",\
+  \  \"workerDealerPairAddr\": \"inproc://TaskScheduleWorker\",\
+  \  \"loadBalancerBackendAddr\": \"tcp://127.0.0.1:5556\",\
+  \  \"loadBalancerLoggingAddr\": \"tcp://127.0.0.1:5557\",\
+  \  \"logIngestDefaultAddr\": \"tcp://127.0.0.1:6007\",\
+  \  \"workerStatusReportIntervalSec\": 5,\
+  \  \"parallelTasksNo\": 4,\
+  \  \"workerLogging\": {\"logIngestSocketHWM\": 17}\
   \}"
 
 workerLoggingFramesRemainCompatible :: Assertion
@@ -132,6 +198,50 @@ oldBrokerAndWorkerConfigsGetLoggingDefaults = do
   logIngestSocketHWM (workerLogging workerCfg) @?= logIngestSocketHWM (defaultLogIngestConfig (defaultReliableLogIngestAddr (loadBalancerLoggingAddr workerCfg)))
   logIngestWorkerQueueHWM (workerLogging workerCfg) @?= logIngestWorkerQueueHWM (defaultLogIngestConfig (defaultReliableLogIngestAddr (loadBalancerLoggingAddr workerCfg)))
 
+newBrokerAndWorkerConfigsUsePreferredLoggingNames :: Assertion
+newBrokerAndWorkerConfigsUsePreferredLoggingNames = do
+  brokerCfg <- unwrapEither (Aeson.eitherDecode newBrokerConfigJson)
+  loggingAddr (infoStorage brokerCfg) @?= "tcp://127.0.0.1:6007"
+  loggingsBufferSize (infoStorage brokerCfg) @?= 42
+  logIngestAddr (logIngest brokerCfg) @?= "tcp://127.0.0.1:6008"
+  logIngestSocketHWM (logIngest brokerCfg) @?= logIngestSocketHWM (defaultLogIngestConfig "tcp://127.0.0.1:6008")
+  workerCfg <- unwrapEither (Aeson.eitherDecode newWorkerConfigJson)
+  loadBalancerLoggingAddr workerCfg @?= logIngestAddr (workerLogging workerCfg)
+  logIngestAddr (workerLogging workerCfg) @?= "tcp://127.0.0.1:6008"
+  logIngestWorkerQueueHWM (workerLogging workerCfg) @?= logIngestWorkerQueueHWM (defaultLogIngestConfig "tcp://127.0.0.1:6008")
+
+mixedLoggingNamesPreferNewAliasesAndExplicitBlocks :: Assertion
+mixedLoggingNamesPreferNewAliasesAndExplicitBlocks = do
+  brokerCfg <- unwrapEither (Aeson.eitherDecode mixedBrokerConfigJson)
+  loggingAddr (infoStorage brokerCfg) @?= "tcp://127.0.0.1:6007"
+  loggingsBufferSize (infoStorage brokerCfg) @?= 42
+  logIngestAddr (logIngest brokerCfg) @?= "tcp://127.0.0.1:6008"
+  logIngestSocketHWM (logIngest brokerCfg) @?= 17
+  workerCfg <- unwrapEither (Aeson.eitherDecode mixedWorkerConfigJson)
+  loadBalancerLoggingAddr workerCfg @?= "tcp://127.0.0.1:6007"
+  logIngestAddr (workerLogging workerCfg) @?= "tcp://127.0.0.1:6008"
+  logIngestSocketHWM (workerLogging workerCfg) @?= 17
+
+checkedInTaskScheduleConfigsParse :: Assertion
+checkedInTaskScheduleConfigsParse = do
+  brokerPath <- firstExisting ["applications/TaskSchedule/config/broker.json", "../applications/TaskSchedule/config/broker.json"]
+  workerPath <- firstExisting ["applications/TaskSchedule/config/worker.json", "../applications/TaskSchedule/config/worker.json"]
+  clientPath <- firstExisting ["applications/TaskSchedule/config/client.json", "../applications/TaskSchedule/config/client.json"]
+  brokerCfg <- readBrokerConfig brokerPath
+  workerCfg <- readWorkerConfig workerPath
+  clientCfg <- readClientConfig clientPath
+  loggingAddr (infoStorage brokerCfg) @?= "tcp://127.0.0.1:5557"
+  logIngestAddr (logIngest brokerCfg) @?= "tcp://127.0.0.1:5558"
+  loadBalancerLoggingAddr workerCfg @?= logIngestAddr (workerLogging workerCfg)
+  logIngestAddr (workerLogging workerCfg) @?= "tcp://127.0.0.1:5558"
+  loadBalancerFrontendAddr clientCfg @?= "tcp://127.0.0.1:5555"
+
+firstExisting :: [FilePath] -> IO FilePath
+firstExisting [] = assertFailure "expected a checked-in config path to exist"
+firstExisting (path : rest) = do
+  exists <- doesFileExist path
+  if exists then pure path else firstExisting rest
+
 partialLogIngestConfigUsesDefaults :: Assertion
 partialLogIngestConfigUsesDefaults = do
   cfg <- unwrapEither (Aeson.eitherDecode "{\"logIngestAddr\":\"tcp://127.0.0.1:6000\",\"logIngestDropPolicy\":\"drop-low-priority\"}")
@@ -154,6 +264,9 @@ tests =
       TestLabel "LogBatch rejects mismatched event count" (TestCase logBatchRejectsMismatchedEventCount),
       TestLabel "sequence frames reject negative and overflow Word64 values" (TestCase logSequenceFramesRejectNegativeAndOverflow),
       TestLabel "old broker and worker configs get LogIngest defaults" (TestCase oldBrokerAndWorkerConfigsGetLoggingDefaults),
+      TestLabel "new broker and worker configs use preferred logging names" (TestCase newBrokerAndWorkerConfigsUsePreferredLoggingNames),
+      TestLabel "mixed logging names prefer new aliases and explicit blocks" (TestCase mixedLoggingNamesPreferNewAliasesAndExplicitBlocks),
+      TestLabel "checked-in TaskSchedule configs parse" (TestCase checkedInTaskScheduleConfigsParse),
       TestLabel "partial LogIngest config uses defaults" (TestCase partialLogIngestConfigUsesDefaults)
     ]
 

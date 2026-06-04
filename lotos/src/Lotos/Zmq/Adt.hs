@@ -555,9 +555,9 @@ instance FromZmq Notify where
 
 -- | Task-scoped worker log payload.
 --
--- Workers publish their worker id as the PUB/SUB topic, followed by this payload
--- as @[taskUuid, loggingText]@. Info storage groups retained log lines by
--- worker id and task id.
+-- Legacy task-scoped log payload retained for compatibility with older
+-- TaskAcceptor code. Runtime workers now convert it into a reliable stdout/info
+-- 'LogEvent' for LogIngest instead of publishing a PUB/SUB topic frame.
 data WorkerLogging = WorkerLogging TaskID Text.Text
   deriving (Show, Eq)
 

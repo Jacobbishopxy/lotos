@@ -33,7 +33,7 @@ Server defaults:
 | `socketLayer.frontendAddr` | `tcp://127.0.0.1:5555` |
 | `socketLayer.backendAddr` | `tcp://127.0.0.1:5556` |
 | `infoStorage.httpPort` | `8081` |
-| `infoStorage.loggingAddr` | `tcp://127.0.0.1:5557` (legacy/default derivation only) |
+| `infoStorage.logIngestDefaultAddr` | `tcp://127.0.0.1:5557` (default derivation only; legacy `infoStorage.loggingAddr` accepted) |
 | `logIngest.logIngestAddr` | `tcp://127.0.0.1:5558` |
 | `logIngest.logIngestWorkerQueueHWM` | `10000` |
 | `logIngest.logIngestReadCacheSize` | `1000` |
@@ -46,7 +46,7 @@ Server defaults:
 | `taskProcessor.triggerAlgoMaxNotifyCount` | `10` |
 | `taskProcessor.triggerAlgoMaxWaitSec` | `10` |
 | `taskProcessor.workerStaleTimeoutSec` | `60` |
-| `infoStorage.loggingsBufferSize` | `1000` |
+| `infoStorage.logIngestDefaultBufferSize` | `1000` (compatibility value; legacy `infoStorage.loggingsBufferSize` accepted) |
 | `infoStorage.infoFetchIntervalSec` | `10` |
 | Log file | `./logs/taskScheduleServer.log` |
 
@@ -69,8 +69,8 @@ Worker defaults:
 | `workerId` | `simpleWorker_1` |
 | `workerDealerPairAddr` | `inproc://TaskScheduleWorker` |
 | `loadBalancerBackendAddr` | `tcp://127.0.0.1:5556` |
-| `loadBalancerLoggingAddr` | `tcp://127.0.0.1:5557` (legacy/default derivation only) |
 | `workerLogging.logIngestAddr` | `tcp://127.0.0.1:5558` |
+| `logIngestDefaultAddr` | optional derivation hint; legacy `loadBalancerLoggingAddr` accepted |
 | `workerLogging.logIngestWorkerQueueHWM` | `10000` |
 | `workerStatusReportIntervalSec` | `5` |
 | `parallelTasksNo` | `4` |
@@ -80,7 +80,7 @@ Worker defaults:
 
 Once the broker assigns a task to a worker, the worker executor wakes immediately from a bounded STM enqueue signal instead of waiting for the former fixed 10-second empty-queue sleep. Scheduler batching before assignment is still controlled by the broker `taskProcessor` trigger knobs above; the wake signal only removes worker-local dispatch latency after the task has reached the worker process.
 
-`loadBalancerLoggingAddr` is retained for legacy JSON/default derivation and should stay aligned with the server `infoStorage.loggingAddr` (`5557` in the checked-in demo). Runtime task logs use the reliable `workerLogging.logIngestAddr` / broker `logIngest.logIngestAddr` endpoint (`5558` in the checked-in demo): each worker opens a dedicated logging DEALER with `workerId` as its routing id, sends bounded `LogBatch`es, and retries until the broker LogIngest ROUTER returns `LogAck`s. Broker JSON files written before TP-013 must still include `infoStorage.loggingAddr`; files written before the LogIngest migration may omit `logIngest`/`workerLogging`, in which case defaults derive a split reliable endpoint from the legacy logging endpoint.
+New configs should set the reliable `workerLogging.logIngestAddr` / broker `logIngest.logIngestAddr` endpoint explicitly (`5558` in the checked-in demo). `infoStorage.logIngestDefaultAddr` is only a broker default-derivation hint (`5557` in the checked-in demo), and old `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` JSON remain accepted for migration. Each worker opens a dedicated logging DEALER with `workerId` as its routing id, sends bounded `LogBatch`es, and retries until the broker LogIngest ROUTER returns `LogAck`s. Files written before the LogIngest migration may omit `logIngest`/`workerLogging`, in which case defaults derive a split reliable endpoint from the legacy logging endpoint.
 
 TaskSchedule's `SimpleServer` now reports configured worker capacity through `WorkerState.taskCapacity`. In each scheduler pass it subtracts reported `processingTaskNum` and `waitingTaskNum` from that capacity, sorts workers by combined CPU/memory load, assigns fresh tasks across remaining slots in stable rounds, and returns any overflow to the broker queue for a later pass. The broker also overlays dispatch reservations onto `waitingTaskNum` between heartbeats, so back-to-back scheduler passes cannot over-assign a worker while its status payload is still catching up. Older eight-frame worker-status payloads still decode as conservative single-slot workers.
 
@@ -138,8 +138,8 @@ The MVP config files use existing record field names. The checked-in samples und
   },
   "infoStorage": {
     "httpPort": 8081,
-    "loggingAddr": "tcp://127.0.0.1:5557",
-    "loggingsBufferSize": 1000,
+    "logIngestDefaultAddr": "tcp://127.0.0.1:5557",
+    "logIngestDefaultBufferSize": 1000,
     "infoFetchIntervalSec": 10
   },
   "logIngest": {
@@ -168,7 +168,6 @@ The MVP config files use existing record field names. The checked-in samples und
   "workerId": "simpleWorker_1",
   "workerDealerPairAddr": "inproc://TaskScheduleWorker",
   "loadBalancerBackendAddr": "tcp://127.0.0.1:5556",
-  "loadBalancerLoggingAddr": "tcp://127.0.0.1:5557",
   "workerStatusReportIntervalSec": 5,
   "parallelTasksNo": 4,
   "workerLogging": {
@@ -355,7 +354,7 @@ Non-goals for the MVP:
 Known risks/gaps for downstream work:
 
 - The client ACK path depends on preserving ZeroMQ ROUTER/REQ frame ordering, including the binary REQ request-id frame; changing this shape can reintroduce ACK timeouts.
-- Worker log transport is wired for the single-machine sample configs; custom topologies must keep broker `logIngest.logIngestAddr` and worker `workerLogging.logIngestAddr` aligned. Legacy `infoStorage.loggingAddr` / `loadBalancerLoggingAddr` fields are retained for compatibility/default derivation, not active log ingestion.
+- Worker log transport is wired for the single-machine sample configs; custom topologies must keep broker `logIngest.logIngestAddr` and worker `workerLogging.logIngestAddr` aligned. Preferred new JSON uses `infoStorage.logIngestDefaultAddr` / `logIngestDefaultBufferSize` only as broker derivation hints; legacy `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` fields are retained for compatibility/default derivation, not active log ingestion.
 - The info API currently exposes worker task membership but not a dedicated task-status history or failure-reason field; the file side effect is the required completion proof for the MVP happy path.
 - `taskTimeout` and `taskProp.executeTimeoutSec` duplicate timeout data; the MVP resolves ambiguity by making `taskTimeout` authoritative and requiring equality.
 - Positive `taskRetryInterval` values defer retry scheduling, but the retry is checked by the task processor's normal wake-up/trigger loop rather than an exact per-task timer; availability is therefore not-before the requested delay, not a precise dispatch deadline.

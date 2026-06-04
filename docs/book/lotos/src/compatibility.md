@@ -10,14 +10,16 @@ TaskSchedule's `WorkerState` now appends `taskCapacity` to the status payload. T
 
 ## Logging names
 
-Several legacy names remain for configuration compatibility:
+Several legacy names remain for configuration/source compatibility, but new JSON should use the clearer LogIngest-oriented migration names:
 
-- `infoStorage.loggingAddr`
-- `infoStorage.loggingsBufferSize`
-- `loadBalancerLoggingAddr`
-- `taPubTaskLogging`
+| Legacy name | Preferred new surface | Compatibility rule |
+|---|---|---|
+| `infoStorage.loggingAddr` | `infoStorage.logIngestDefaultAddr` plus explicit `logIngest.logIngestAddr` | Old key remains accepted; new alias wins if both are present. Explicit `logIngest` defines the runtime endpoint. |
+| `infoStorage.loggingsBufferSize` | `infoStorage.logIngestDefaultBufferSize` | Old key remains accepted; this is no longer `/info` log retention. |
+| `loadBalancerLoggingAddr` | `workerLogging.logIngestAddr` or top-level `logIngestDefaultAddr` for derivation-only configs | Old key remains accepted; explicit `workerLogging` defines the runtime endpoint. |
+| `taPubTaskLogging` | `taSendTaskLog` | Old callback remains a wrapper for stdout/info `LogEvent` enqueueing. |
 
-Runtime ingestion uses `logIngest.logIngestAddr`, `workerLogging.logIngestAddr`, and `taSendTaskLog`. Keep legacy fields aligned in older JSON files because defaults may derive the reliable logging endpoint from them.
+Runtime ingestion uses `logIngest.logIngestAddr`, `workerLogging.logIngestAddr`, and `taSendTaskLog`. Partial explicit LogIngest blocks inherit defaults from the selected derivation address; old-only JSON keeps deriving the demo split endpoint from `5557` to `5558`.
 
 ## Client ACK semantics
 

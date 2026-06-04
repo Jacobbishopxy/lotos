@@ -87,7 +87,7 @@ Config endpoints must align:
 
 - clients send to the broker `frontendAddr`,
 - workers connect to the broker `backendAddr`,
-- reliable worker logging uses broker `logIngest.logIngestAddr` and worker `workerLogging.logIngestAddr` (the TaskSchedule demo uses `tcp://127.0.0.1:5558`), while legacy `infoStorage.loggingAddr` / `loadBalancerLoggingAddr` fields remain for compatibility/default derivation,
+- reliable worker logging uses broker `logIngest.logIngestAddr` and worker `workerLogging.logIngestAddr` (the TaskSchedule demo uses `tcp://127.0.0.1:5558`), while new default-derivation hints (`infoStorage.logIngestDefaultAddr`, `infoStorage.logIngestDefaultBufferSize`, optional top-level `logIngestDefaultAddr`) replace legacy logging names in fresh JSON; old `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` remain accepted for compatibility,
 - `taskProcessor.workerStaleTimeoutSec` is higher than the normal worker `workerStatusReportIntervalSec` plus expected jitter.
 
 The TaskSchedule sample configs under `applications/TaskSchedule/config/` show the loopback defaults, including a 60-second stale-worker timeout for 5-second worker status reports. `applications/TaskSchedule/config/task-demo.json` is a copyable client task that writes `.tmp/task-schedule-demo.out`.

@@ -145,7 +145,7 @@ For a new application, import `Lotos.Zmq` and provide application payloads plus 
 3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current non-stale worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass. The TaskSchedule demo reports configured worker capacity in `WorkerState.taskCapacity`, subtracts reported processing/waiting work, assigns fresh tasks across remaining slots in load-sorted rounds, and leaves overflow queued.
 4. Implement `TaskAcceptor` for workers. Process each task batch, enqueue structured task logs with `taSendTaskLog` (or the compatibility `taPubTaskLogging` wrapper), and report `TaskProcessing`, `TaskSucceed`, or `TaskFailed` with `taSendTaskStatus`.
 5. Implement `StatusReporter` for workers. Combine `StatusReporterAPI.srReportInfo` queue/processing counts with app-specific metrics such as CPU or memory load.
-6. Keep config endpoints aligned: clients use the broker `frontendAddr`, workers use the broker `backendAddr`, and worker log DEALER sockets connect to the broker `logIngest.logIngestAddr` / worker `workerLogging.logIngestAddr`. Legacy `infoStorage.loggingAddr` and `loadBalancerLoggingAddr` fields remain only for old JSON/default derivation. The current reliable logging design is documented in [`docs/logging-redesign.md`](docs/logging-redesign.md).
+6. Keep config endpoints aligned: clients use the broker `frontendAddr`, workers use the broker `backendAddr`, and worker log DEALER sockets connect to the broker `logIngest.logIngestAddr` / worker `workerLogging.logIngestAddr`. New JSON should prefer `infoStorage.logIngestDefaultAddr` / `logIngestDefaultBufferSize` only as broker derivation hints and explicit `workerLogging.logIngestAddr` for workers; legacy `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` remain accepted for old JSON/default derivation. The current reliable logging design is documented in [`docs/logging-redesign.md`](docs/logging-redesign.md).
 
 Concrete examples live in the TaskSchedule demo: `applications/TaskSchedule/src/Adt.hs` defines task/status payload frames, `applications/TaskSchedule/src/Server.hs` implements `LoadBalancerAlgo`, and `applications/TaskSchedule/src/Worker.hs` implements both worker typeclasses. The concise adopter checklist is [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md); the full demo runtime contract and smoke path remain in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
 
@@ -199,7 +199,7 @@ Current bounded regression test suites:
 - `lotos:test:test-conc-executor` is the concurrent process executor regression suite.
 - `lotos:test:test-zmq-worker-frames` checks bounded worker status, worker task-status, retry/failure status payload, retry-delay eligibility, stale-worker recovery, and scheduled task ROUTER/DEALER frame contracts.
 - `lotos:test:test-zmq-client-ack-frames` checks bounded frontend REQ/ROUTER client ACK frames and the client-service ACK timeout path.
-- `lotos:test:test-zmq-log-protocol-config` checks reliable log protocol frames plus JSON/config compatibility defaults.
+- `lotos:test:test-zmq-log-protocol-config` checks reliable log protocol frames plus old/new/mixed JSON config compatibility defaults and checked-in TaskSchedule config parsing.
 - `lotos:test:test-zmq-log-ingest` checks broker LogIngest cache, journal, query/stats, ACK, rejection, and same-address startup behavior.
 - `lotos:test:test-zmq-worker-log-transport` checks worker-side bounded buffering, drop markers, ACK retry clearing, and wire-rounded ACK matching.
 - `TaskSchedule:test:test-worker-lifecycle` checks TaskSchedule command-result status/log mapping and worker lifecycle callbacks.
@@ -225,7 +225,7 @@ Default addresses:
 
 - server frontend / client frontend: `tcp://127.0.0.1:5555`
 - server backend / worker task-status backend: `tcp://127.0.0.1:5556`
-- legacy logging compatibility/default-derivation endpoint (`infoStorage.loggingAddr` / `loadBalancerLoggingAddr`): `tcp://127.0.0.1:5557`
+- logging compatibility/default-derivation endpoint (`infoStorage.logIngestDefaultAddr`; legacy `infoStorage.loggingAddr` / `loadBalancerLoggingAddr` still accepted): `tcp://127.0.0.1:5557`
 - reliable worker log ingest endpoint (broker LogIngest ROUTER / worker Log DEALER): `tcp://127.0.0.1:5558`
 - info HTTP port: `8081`
 - logs: `./logs/taskScheduleServer.log`, `./logs/taskScheduleWorker.log`, and `./logs/taskScheduleClient.log`
