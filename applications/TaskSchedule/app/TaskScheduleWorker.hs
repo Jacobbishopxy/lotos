@@ -63,4 +63,4 @@ main = do
   args <- getArgs
   wsConfig <- loadWorkerConfig args
   logConfig <- initLocalTimeLogger "./logs/taskScheduleWorker.log" DEBUG True
-  runZmqContextIO $ runApp logConfig $ run wsConfig
+  runZmqApp logConfig $ run wsConfig

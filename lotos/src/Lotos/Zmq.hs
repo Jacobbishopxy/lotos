@@ -21,6 +21,14 @@ module Lotos.Zmq
     TaskID,
     TSWorkerStatusMap,
 
+    -- * application runners
+    LotosEnv (..),
+    LotosApp,
+    runApp,
+    runZmqApp,
+    runZmqAppWithThread,
+    runAppWithContext,
+
     -- * serialization classes
     ToZmq (..),
     FromZmq (..),
@@ -123,6 +131,7 @@ module Lotos.Zmq
   )
 where
 
+import Lotos.Logger (LotosApp, LotosEnv (..), runApp, runAppWithContext, runZmqApp, runZmqAppWithThread)
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error

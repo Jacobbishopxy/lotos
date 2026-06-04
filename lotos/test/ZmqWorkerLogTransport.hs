@@ -15,7 +15,7 @@ import System.Exit (exitFailure)
 import System.Timeout (timeout)
 import Test.HUnit
 import Zmqx qualified
-import Zmqx.Router qualified
+import Zmqx.Monad qualified as ZmqxM
 
 fixedNow :: UTCTime
 fixedNow = UTCTime (fromGregorian 2026 1 1) 0
@@ -55,6 +55,9 @@ expectJust message = maybe (assertFailure message) pure
 
 unwrap :: (Show e) => IO (Either e a) -> IO a
 unwrap action = action >>= either (ioError . userError . show) pure
+
+unwrapApp :: (Show e) => Logger.LotosApp (Either e a) -> Logger.LotosApp a
+unwrapApp action = action >>= either (liftIO . ioError . userError . show) pure
 
 waitForMVar :: String -> MVar a -> IO a
 waitForMVar message var = do
@@ -152,42 +155,41 @@ lowPriorityDropPolicyPreservesResultLogs = withTaskId $ \taskId -> do
 
 eventLoopDelayedAckClearsBeforeRetry :: Assertion
 eventLoopDelayedAckClearsBeforeRetry = withTaskId $ \taskId ->
-  runZmqContextIO $
-    Logger.withConsoleLogger Logger.ERROR $ \env -> do
-      let endpoint = "inproc://tp029-worker-log-eventloop-delayed-ack"
-          baseWorkerCfg = mkWorkerCfg 10 LogDropOldest
-          logCfg =
-            (workerLogging baseWorkerCfg)
-              { logIngestAddr = endpoint,
-                logIngestSocketHWM = 10,
-                logIngestFlushIntervalMicros = 1000,
-                logIngestAckTimeoutMicros = 10000,
-                logIngestRetryBackoffMicros = 200000
-              }
-          workerCfg = baseWorkerCfg {workerLogging = logCfg}
-      router <- unwrap $ Zmqx.Router.open $ Zmqx.name "tp029-worker-log-router"
-      unwrap $ Zmqx.bind router endpoint
-      ackResult <- newEmptyMVar
-      ackTid <- forkIO $ do
+  Logger.withConsoleLogger Logger.ERROR $ \env -> do
+    let endpoint = "inproc://tp029-worker-log-eventloop-delayed-ack"
+        baseWorkerCfg = mkWorkerCfg 10 LogDropOldest
+        logCfg =
+          (workerLogging baseWorkerCfg)
+            { logIngestAddr = endpoint,
+              logIngestSocketHWM = 10,
+              logIngestFlushIntervalMicros = 1000,
+              logIngestAckTimeoutMicros = 10000,
+              logIngestRetryBackoffMicros = 200000
+            }
+        workerCfg = baseWorkerCfg {workerLogging = logCfg}
+    ackResult <- newEmptyMVar
+    Logger.runZmqApp env $ do
+      router <- (unwrapApp $ ZmqxM.open $ Zmqx.name "tp029-worker-log-router") :: Logger.LotosApp Zmqx.Router
+      liftIO $ unwrap $ Zmqx.bind router endpoint
+      ackTid <- liftIO $ forkIO $ do
         result <- try (delayedAckRouter logCfg router) :: IO (Either SomeException (LogBatch, Maybe [ByteString.ByteString]))
         putMVar ackResult result
-      Logger.runApp env $ do
-        transport <- liftIO $ newWorkerLogTransport workerCfg
-        logTid <- runWorkerLogTransport transport
-        liftIO $
-          ( do
-              threadDelay 100000
-              LogEnqueued 1 <- enqueueWorkerLogAt transport fixedNow LogStdout LogInfo taskId "event-loop-delayed-ack"
-              (batch, duplicateFrames) <- either (assertFailure . show) pure =<< waitForMVar "delayed ACK router did not observe a worker LogBatch" ackResult
-              (logEventMessage <$> logBatchEvents batch) @?= ["event-loop-delayed-ack"]
-              duplicateFrames @?= Nothing
-              waitUntil "delayed EventLoop ACK did not clear pending worker logs" 20 50000 $ do
-                pending <- workerLogPendingEvents transport
-                pure $ null pending
-          )
-            `finally` do
-              killThread logTid
-              killThread ackTid
+      transport <- liftIO $ newWorkerLogTransport workerCfg
+      logTid <- runWorkerLogTransport transport
+      liftIO $
+        ( do
+            threadDelay 100000
+            LogEnqueued 1 <- enqueueWorkerLogAt transport fixedNow LogStdout LogInfo taskId "event-loop-delayed-ack"
+            (batch, duplicateFrames) <- either (assertFailure . show) pure =<< waitForMVar "delayed ACK router did not observe a worker LogBatch" ackResult
+            (logEventMessage <$> logBatchEvents batch) @?= ["event-loop-delayed-ack"]
+            duplicateFrames @?= Nothing
+            waitUntil "delayed EventLoop ACK did not clear pending worker logs" 20 50000 $ do
+              pending <- workerLogPendingEvents transport
+              pure $ null pending
+        )
+          `finally` do
+            killThread logTid
+            killThread ackTid
 
 -- | Delay the ACK until after the worker's recv timeout but before its retry
 -- backoff elapses. If the EventLoop receiver is not polling independently and

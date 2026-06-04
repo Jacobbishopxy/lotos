@@ -28,7 +28,7 @@ import Lotos.Zmq.Config
 import Lotos.Zmq.Error
 import Lotos.Zmq.Internal.Liveness
 import Zmqx
-import Zmqx.Pair
+import Zmqx.Monad qualified as ZmqxM
 
 ----------------------------------------------------------------------------------------------------
 -- Types
@@ -96,10 +96,10 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
   logApp INFO "runTaskProcessor"
 
   -- Init receiver Pair
-  receiverPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "tpReceiver"
+  receiverPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "tpReceiver"
   zmqUnwrap $ Zmqx.connect receiverPair socketLayerSenderAddr
   -- Init sender Pair
-  senderPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "tpSender"
+  senderPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "tpSender"
   zmqUnwrap $ Zmqx.connect senderPair taskProcessorSenderAddr
 
   -- task processor cst

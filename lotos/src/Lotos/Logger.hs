@@ -6,8 +6,15 @@
 module Lotos.Logger
   ( LogLevel (..),
     LoggerEnv,
+    LotosEnv (..),
     LotosApp,
+    askLoggerEnv,
+    askZmqContext,
     runApp,
+    runZmqApp,
+    runZmqAppWithThread,
+    runAppWithContext,
+    runAppWithEnv,
     forkApp,
     logApp,
     initLocalTimeLogger,
@@ -26,9 +33,12 @@ import Control.Exception (SomeException, bracket, handle)
 import Control.Monad (forever, when)
 import Control.Monad.Reader
 import Data.Time
+import GHC.Natural (Natural)
 import System.Directory (createDirectoryIfMissing, doesFileExist, getModificationTime, renameFile)
 import System.FilePath (takeDirectory)
 import System.Log.FastLogger
+import Zmqx qualified
+import Zmqx.Monad qualified as ZmqxM
 
 -- Log level definitions
 data LogLevel = DEBUG | INFO | WARN | ERROR deriving (Show, Eq, Ord)
@@ -42,24 +52,58 @@ data LoggerEnv = LoggerEnv
     rotationThread :: Maybe (Async ())
   }
 
-newtype LotosApp a = LotosApp
-  { unApp :: ReaderT LoggerEnv IO a
+data LotosEnv = LotosEnv
+  { lotosLoggerEnv :: LoggerEnv,
+    lotosZmqContext :: Zmqx.Context
   }
-  deriving (Functor, Applicative, Monad, MonadIO, MonadReader LoggerEnv)
 
+newtype LotosApp a = LotosApp
+  { unApp :: ReaderT LotosEnv IO a
+  }
+  deriving (Functor, Applicative, Monad, MonadIO, MonadReader LotosEnv)
+
+instance ZmqxM.MonadZmqx LotosApp where
+  askContext = asks lotosZmqContext
+
+askLoggerEnv :: LotosApp LoggerEnv
+askLoggerEnv = asks lotosLoggerEnv
+
+askZmqContext :: LotosApp Zmqx.Context
+askZmqContext = asks lotosZmqContext
+
+runAppWithEnv :: LotosEnv -> LotosApp a -> IO a
+runAppWithEnv env app = runReaderT (unApp app) env
+
+runAppWithContext :: Zmqx.Context -> LoggerEnv -> LotosApp a -> IO a
+runAppWithContext context loggerEnv = runAppWithEnv (LotosEnv loggerEnv context)
+
+runZmqApp :: LoggerEnv -> LotosApp a -> IO a
+runZmqApp loggerEnv action =
+  Zmqx.withContext Zmqx.defaultOptions $ \context ->
+    runAppWithContext context loggerEnv action
+
+runZmqAppWithThread :: Natural -> LoggerEnv -> LotosApp a -> IO a
+runZmqAppWithThread threadNum loggerEnv action =
+  Zmqx.withContext (Zmqx.ioThreads threadNum) $ \context ->
+    runAppWithContext context loggerEnv action
+
+-- | Compatibility runner for existing logger-only call sites.
+--
+-- Prefer 'runZmqApp' at ZMQ application entry points so the context lifetime is
+-- explicit at the call site.
 runApp :: LoggerEnv -> LotosApp a -> IO a
-runApp env app = runReaderT (unApp app) env
+runApp = runZmqApp
 
 -- Fork an App action as a new thread
 forkApp :: LotosApp () -> LotosApp ThreadId
 forkApp action = do
-  env <- ask -- Capture the current environment
-  liftIO $ forkIO (runApp env action) -- Run the action in the new thread
+  env <- ask -- Capture the current logger and ZMQ context
+  liftIO $ forkIO (runAppWithEnv env action) -- Run the action in the new thread
 
 -- Helper function for logging
 logApp :: LogLevel -> String -> LotosApp ()
 logApp level msg = do
-  logger <- ask
+  logger <- askLoggerEnv
   liftIO $ logMessage logger level msg
 
 ----------------------------------------------------------------------------------------------------

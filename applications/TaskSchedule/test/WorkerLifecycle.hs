@@ -49,7 +49,7 @@ runSimpleWorkerTask command timeoutSec = do
                 else assertFailure $ "unexpected task id reported: " <> show reportedTaskId
           }
   Logger.withConsoleLogger Logger.ERROR $ \env -> do
-    _ <- Logger.runApp env $ processTasks api SimpleWorker [task]
+    _ <- Logger.runZmqApp env $ processTasks api SimpleWorker [task]
     (,) <$> readMVar statuses <*> readMVar logs
 
 simpleWorkerReportsProcessingThenSuccess :: Assertion

@@ -5,7 +5,7 @@ module Main where
 import Adt (ClientTask (..), WorkerState (..))
 import Control.Monad (when)
 import qualified Data.Text as Text
-import Lotos.Logger (LogLevel (ERROR), runApp, withConsoleLogger)
+import Lotos.Logger (LogLevel (ERROR), withConsoleLogger)
 import Lotos.Zmq
 import Server (SimpleServer (..))
 import System.Exit (exitFailure)
@@ -36,7 +36,7 @@ mkTask n =
 runSchedule :: [(RoutingID, WorkerState)] -> [Task ClientTask] -> IO (ScheduledResult ClientTask WorkerState)
 runSchedule workers tasks =
   withConsoleLogger ERROR $ \env -> do
-    (_, result) <- runApp env (scheduleTasks SimpleServer workers tasks)
+    (_, result) <- runZmqApp env (scheduleTasks SimpleServer workers tasks)
     pure result
 
 assignmentSummary :: ScheduledResult ClientTask WorkerState -> [(RoutingID, Text.Text)]

@@ -20,7 +20,7 @@ import System.Exit (exitFailure)
 import System.IO (hClose, openTempFile)
 import Test.HUnit
 import Zmqx qualified
-import Zmqx.Dealer qualified
+import Zmqx.Monad qualified as ZmqxM
 
 fixedNow :: UTCTime
 fixedNow = UTCTime (fromGregorian 2026 1 1) 0
@@ -30,6 +30,9 @@ testWorkerId = "simpleWorker_1"
 
 unwrap :: (Show e) => IO (Either e a) -> IO a
 unwrap action = action >>= either (ioError . userError . show) pure
+
+unwrapApp :: (Show e) => Logger.LotosApp (Either e a) -> Logger.LotosApp a
+unwrapApp action = action >>= either (liftIO . ioError . userError . show) pure
 
 expectJust :: String -> Maybe a -> IO a
 expectJust message = maybe (ioError $ userError message) pure
@@ -299,24 +302,23 @@ routerLoopReceivesBatchPersistsAndAcks = withJournal $ \journalPath -> withTaskI
   let endpoint = "inproc://tp023-log-ingest-router-loop"
       cfg = (testConfig journalPath) {logIngestAddr = endpoint}
       batch = mkBatch 1 [mkEvent taskId 1]
-  runZmqContextIO $
-    Logger.withConsoleLogger Logger.ERROR $ \env -> do
-      state <- newLogIngestState cfg
-      Logger.runApp env $ do
-        tid <- runLogIngest cfg state
-        liftIO $ do
-          dealer <- unwrap $ Zmqx.Dealer.open $ Zmqx.name "tp023-log-ingest-dealer"
-          Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
-          unwrap $ Zmqx.connect dealer endpoint
-          threadDelay 100000
-          unwrap $ Zmqx.sends dealer $ toZmq batch
-          frames <- expectJust "LogIngest DEALER did not receive ACK" =<< unwrap (Zmqx.receivesFor dealer 1000)
-          killThread tid
-          case fromZmq frames of
-            Right ack -> do
-              logAckAcceptedThrough ack @?= 1
-              logAckRejected ack @?= []
-            Left err -> assertFailure $ "LogAck did not decode: " <> show err
+  Logger.withConsoleLogger Logger.ERROR $ \env -> do
+    state <- newLogIngestState cfg
+    Logger.runZmqApp env $ do
+      tid <- runLogIngest cfg state
+      dealer <- (unwrapApp $ ZmqxM.open $ Zmqx.name "tp023-log-ingest-dealer") :: Logger.LotosApp Zmqx.Dealer
+      liftIO $ do
+        Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
+        unwrap $ Zmqx.connect dealer endpoint
+        threadDelay 100000
+        unwrap $ Zmqx.sends dealer $ toZmq batch
+        frames <- expectJust "LogIngest DEALER did not receive ACK" =<< unwrap (Zmqx.receivesFor dealer 1000)
+        killThread tid
+        case fromZmq frames of
+          Right ack -> do
+            logAckAcceptedThrough ack @?= 1
+            logAckRejected ack @?= []
+          Left err -> assertFailure $ "LogAck did not decode: " <> show err
   journalEvents <- decodeJournalEvents journalPath
   (logEventSeq <$> journalEvents) @?= [1]
 
@@ -328,23 +330,22 @@ routerLoopRejectsMismatchedEnvelopeBeforeMutation = withJournal $ \journalPath -
       cfg = (testConfig journalPath) {logIngestAddr = endpoint}
       batch = LogBatch (ackFromUTC fixedNow) claimedWorkerId 1 [mkEventFor claimedWorkerId taskId 1]
   state <- newLogIngestState cfg
-  runZmqContextIO $
-    Logger.withConsoleLogger Logger.ERROR $ \env ->
-      Logger.runApp env $ do
-        tid <- runLogIngest cfg state
-        liftIO $ do
-          dealer <- unwrap $ Zmqx.Dealer.open $ Zmqx.name "tp023-log-ingest-mismatch-dealer"
-          Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS envelopeWorkerId)
-          unwrap $ Zmqx.connect dealer endpoint
-          threadDelay 100000
-          unwrap $ Zmqx.sends dealer $ toZmq batch
-          frames <- expectJust "LogIngest DEALER did not receive rejected identity ACK" =<< unwrap (Zmqx.receivesFor dealer 1000)
-          killThread tid
-          case fromZmq frames of
-            Right ack -> do
-              logAckAcceptedThrough ack @?= 0
-              assertBool "identity mismatch ACK should include a rejection reason" (not $ null $ logAckRejected ack)
-            Left err -> assertFailure $ "LogAck did not decode: " <> show err
+  Logger.withConsoleLogger Logger.ERROR $ \env ->
+    Logger.runZmqApp env $ do
+      tid <- runLogIngest cfg state
+      dealer <- (unwrapApp $ ZmqxM.open $ Zmqx.name "tp023-log-ingest-mismatch-dealer") :: Logger.LotosApp Zmqx.Dealer
+      liftIO $ do
+        Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS envelopeWorkerId)
+        unwrap $ Zmqx.connect dealer endpoint
+        threadDelay 100000
+        unwrap $ Zmqx.sends dealer $ toZmq batch
+        frames <- expectJust "LogIngest DEALER did not receive rejected identity ACK" =<< unwrap (Zmqx.receivesFor dealer 1000)
+        killThread tid
+        case fromZmq frames of
+          Right ack -> do
+            logAckAcceptedThrough ack @?= 0
+            assertBool "identity mismatch ACK should include a rejection reason" (not $ null $ logAckRejected ack)
+          Left err -> assertFailure $ "LogAck did not decode: " <> show err
 
   claimedLogs <- queryWorkerLogs state claimedWorkerId
   logQueryEvents claimedLogs @?= []
@@ -356,28 +357,27 @@ sameAddressLogIngestRouterStartsNormally = withJournal $ \journalPath -> withTas
   let infoCfg = InfoStorageConfig 8081 "inproc://tp025-log-ingest-same-address" 100 1
       cfg = (testConfig journalPath) {logIngestAddr = loggingAddr infoCfg}
       batch = mkBatch 1 [mkEvent taskId 1]
-  runZmqContextIO $
-    Logger.withConsoleLogger Logger.ERROR $ \env -> do
-      state <- newLogIngestState cfg
-      Logger.runApp env $ do
-        tid <- runLogIngest cfg state
-        liftIO $ do
-          dealer <- unwrap $ Zmqx.Dealer.open $ Zmqx.name "tp025-same-address-log-dealer"
-          Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
-          unwrap $ Zmqx.connect dealer (loggingAddr infoCfg)
-          threadDelay 100000
-          unwrap $ Zmqx.sends dealer $ toZmq batch
-          frames <- expectJust "same-address LogIngest DEALER did not receive ACK" =<< unwrap (Zmqx.receivesFor dealer 1000)
-          stats <- readLogIngestStats state
-          killThread tid
-          case fromZmq frames of
-            Right ack -> do
-              logAckAcceptedThrough ack @?= 1
-              logAckRejected ack @?= []
-            Left err -> assertFailure $ "LogAck did not decode: " <> show err
-          logStatsAcceptedEvents stats @?= 1
-          logStatsWorkers stats @?= 1
-          logStatsTasks stats @?= 1
+  Logger.withConsoleLogger Logger.ERROR $ \env -> do
+    state <- newLogIngestState cfg
+    Logger.runZmqApp env $ do
+      tid <- runLogIngest cfg state
+      dealer <- (unwrapApp $ ZmqxM.open $ Zmqx.name "tp025-same-address-log-dealer") :: Logger.LotosApp Zmqx.Dealer
+      liftIO $ do
+        Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
+        unwrap $ Zmqx.connect dealer (loggingAddr infoCfg)
+        threadDelay 100000
+        unwrap $ Zmqx.sends dealer $ toZmq batch
+        frames <- expectJust "same-address LogIngest DEALER did not receive ACK" =<< unwrap (Zmqx.receivesFor dealer 1000)
+        stats <- readLogIngestStats state
+        killThread tid
+        case fromZmq frames of
+          Right ack -> do
+            logAckAcceptedThrough ack @?= 1
+            logAckRejected ack @?= []
+          Left err -> assertFailure $ "LogAck did not decode: " <> show err
+        logStatsAcceptedEvents stats @?= 1
+        logStatsWorkers stats @?= 1
+        logStatsTasks stats @?= 1
 
 tests :: Test
 tests =

@@ -9,8 +9,8 @@ import Adt (ClientTask)
 import Client (readTaskFromFile)
 import Control.Exception (SomeException, try)
 import Control.Monad (join)
-import Lotos.Logger (LogLevel (DEBUG), runApp, withLocalTimeLogger)
-import Lotos.Zmq (Ack, ClientServiceConfig (..), Task, mkClientService, readClientConfig, runZmqContextIO, sendTaskRequest)
+import Lotos.Logger (LogLevel (DEBUG), runZmqApp, withLocalTimeLogger)
+import Lotos.Zmq (Ack, ClientServiceConfig (..), Task, mkClientService, readClientConfig, sendTaskRequest)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
@@ -61,7 +61,7 @@ submitClientTask clientConfig task = do
 submitClientTaskOnce :: ClientServiceConfig -> Task ClientTask -> IO (Maybe Ack)
 submitClientTaskOnce clientConfig task =
   withLocalTimeLogger "./logs/taskScheduleClient.log" DEBUG False $ \logConfig ->
-    runZmqContextIO $ runApp logConfig $ do
+    runZmqApp logConfig $ do
       service <- mkClientService clientConfig
       sendTaskRequest service task
 

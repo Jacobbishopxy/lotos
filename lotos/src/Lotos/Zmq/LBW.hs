@@ -34,13 +34,12 @@ import Lotos.Logger hiding (LogLevel)
 import Lotos.TSD.Queue
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
-import Lotos.Zmq.Error (ZmqError, zmqThrow, zmqUnwrap)
+import Lotos.Zmq.Error (ZmqError, zmqAppUnwrap, zmqThrow, zmqUnwrap)
 import Lotos.Zmq.Internal.WorkerRuntime
 import Lotos.Zmq.LBW.LogTransport
 import Lotos.Zmq.Util (textToBS)
 import Zmqx
-import Zmqx.Dealer
-import Zmqx.Pair
+import Zmqx.Monad qualified as ZmqxM
 
 ----------------------------------------------------------------------------------------------------
 
@@ -149,7 +148,7 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
   trigger <- liftIO $ mkTimeTrigger workerStatusReportIntervalSec
 
   -- worker Dealer Pair init
-  wDealerPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "workerDealerPair"
+  wDealerPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "workerDealerPair"
   zmqUnwrap $ Zmqx.bind wDealerPair workerDealerPairAddr
 
   -- worker reliable log transport init. The ZMQ DEALER itself is opened by the
@@ -202,11 +201,11 @@ runWorkerService ws WorkerServiceConfig {..} = do
   logApp INFO $ "tasksExecLoop on thread: " <> show tid2
 
   -- worker Dealer init in a separate thread
-  wDealer <- zmqUnwrap $ Zmqx.Dealer.open $ Zmqx.name "workerDealer"
+  wDealer <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "workerDealer"
   liftIO $ Zmqx.setSocketOpt wDealer (Zmqx.Z_RoutingId $ textToBS workerId)
   zmqUnwrap $ Zmqx.connect wDealer loadBalancerBackendAddr
   -- worker Dealer Pair init in a separate thread
-  wDealerPair' <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "workerDealerPair'"
+  wDealerPair' <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "workerDealerPair'"
   zmqUnwrap $ Zmqx.connect wDealerPair' workerDealerPairAddr
 
   -- start the reliable logging loop on its own DEALER channel.

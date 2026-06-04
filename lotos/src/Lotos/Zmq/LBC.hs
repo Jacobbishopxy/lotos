@@ -19,7 +19,7 @@ import Lotos.Zmq.Config
 import Lotos.Zmq.Error
 import Lotos.Zmq.Util (textToBS)
 import Zmqx
-import Zmqx.Req
+import Zmqx.Monad qualified as ZmqxM
 
 ----------------------------------------------------------------------------------------------------
 
@@ -33,7 +33,7 @@ data ClientService = ClientService
 
 mkClientService :: ClientServiceConfig -> LotosApp ClientService
 mkClientService cs@ClientServiceConfig {..} = do
-  cReq <- zmqUnwrap $ Zmqx.Req.open $ Zmqx.name "clientReq"
+  cReq <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "clientReq"
   liftIO $ Zmqx.setSocketOpt cReq (Zmqx.Z_RoutingId $ textToBS clientId)
   liftIO $ Zmqx.setSocketOpt cReq (Zmqx.Z_RcvTimeO $ fromIntegral $ secondsToMilliseconds reqTimeoutSec)
   zmqUnwrap $ Zmqx.connect cReq loadBalancerFrontendAddr

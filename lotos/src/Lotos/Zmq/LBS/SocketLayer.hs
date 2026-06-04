@@ -24,8 +24,7 @@ import Lotos.Zmq.Config
 import Lotos.Zmq.Error
 import Lotos.Zmq.Internal.Liveness
 import Zmqx
-import Zmqx.Pair
-import Zmqx.Router
+import Zmqx.Monad qualified as ZmqxM
 
 ----------------------------------------------------------------------------------------------------
 
@@ -66,16 +65,16 @@ runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq 
   logApp INFO "runSocketLayer start!"
 
   -- Init frontend Router
-  frontend <- zmqUnwrap $ Zmqx.Router.open $ Zmqx.name "frontend"
+  frontend <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "frontend"
   zmqUnwrap $ Zmqx.bind frontend frontendAddr
   -- Init backend Router
-  backend <- zmqUnwrap $ Zmqx.Router.open $ Zmqx.name "backend"
+  backend <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "backend"
   zmqUnwrap $ Zmqx.bind backend backendAddr
   -- Init receiver Pair
-  receiverPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "slReceiver"
+  receiverPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "slReceiver"
   zmqUnwrap $ Zmqx.bind receiverPair taskProcessorSenderAddr
   -- Init sender Pair
-  senderPair <- zmqUnwrap $ Zmqx.Pair.open $ Zmqx.name "slSender"
+  senderPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "slSender"
   zmqUnwrap $ Zmqx.bind senderPair socketLayerSenderAddr -- Fixed to use connect
 
   -- pollItems & socketLayer cst

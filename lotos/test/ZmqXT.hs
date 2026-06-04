@@ -13,10 +13,8 @@ import Control.Monad
 import Control.Monad.RWS
 import Data.ByteString.Char8 qualified as C
 import Lotos.Logger
-import Lotos.Zmq
 import Zmqx
-import Zmqx.Pair
-import Zmqx.Pub
+import Zmqx.Monad qualified as ZmqxM
 import Zmqx.Sub
 
 unwrap :: IO (Either Zmqx.Error a) -> IO a
@@ -25,16 +23,22 @@ unwrap action =
     Left err -> throwIO err
     Right value -> pure value
 
+unwrapApp :: LotosApp (Either Zmqx.Error a) -> LotosApp a
+unwrapApp action =
+  action >>= \case
+    Left err -> liftIO $ throwIO err
+    Right value -> pure value
+
 setupSubAndPair :: LotosApp (Zmqx.Sub, Zmqx.Pair)
 setupSubAndPair = do
     tid' <- liftIO myThreadId
     logApp INFO $ "$$$ 2 > " <> show tid'
     -- declare in a separate thread
-    sub <- liftIO $ unwrap $ Zmqx.Sub.open (Zmqx.name "sub")
+    sub <- unwrapApp $ ZmqxM.open (Zmqx.name "sub")
     liftIO $ unwrap $ Zmqx.Sub.subscribe sub (C.pack "")
     liftIO $ unwrap $ Zmqx.connect sub "tcp://127.0.0.1:5555"
 
-    pair2 <- liftIO $ unwrap $ Zmqx.Pair.open $ Zmqx.name "pair2"
+    pair2 <- unwrapApp $ ZmqxM.open $ Zmqx.name "pair2"
     liftIO $ unwrap $ Zmqx.connect pair2 "inproc://pair-test"
 
     return (sub, pair2)
@@ -71,13 +75,13 @@ receivePairMessages pair1 = void $ forever do
         Left err -> logApp INFO $ "Error: " ++ show err
 
 main :: IO ()
-main = runZmqContextIO do
+main = do
   logConfig <- initConsoleLogger DEBUG
 
-  _ <- runApp logConfig do
+  _ <- runZmqApp logConfig do
     tid <- liftIO myThreadId
     logApp INFO $ "$$$ 1 > " <> show tid
-    pair1 <- liftIO $ unwrap $ Zmqx.Pair.open $ Zmqx.name "pair1"
+    pair1 <- unwrapApp $ ZmqxM.open $ Zmqx.name "pair1"
     liftIO $ unwrap $ Zmqx.bind pair1 "inproc://pair-test"
 
     t1 <- forkApp do
@@ -87,7 +91,7 @@ main = runZmqContextIO do
     logApp INFO $ "t1: " <> show t1
 
     t2 <- forkApp do
-      pub <- liftIO $ unwrap $ Zmqx.Pub.open $ Zmqx.name "pub"
+      pub <- unwrapApp $ ZmqxM.open $ Zmqx.name "pub"
       liftIO $ unwrap $ Zmqx.bind pub "tcp://127.0.0.1:5555"
       publisherLoop pub
     logApp INFO $ "t2: " <> show t2

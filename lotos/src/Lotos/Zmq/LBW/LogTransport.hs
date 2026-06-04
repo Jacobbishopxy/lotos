@@ -39,11 +39,11 @@ import Data.Word (Word64)
 import Lotos.Logger qualified as Logger
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
-import Lotos.Zmq.Error (ZmqError, zmqUnwrap)
+import Lotos.Zmq.Error (ZmqError, zmqAppUnwrap, zmqUnwrap)
 import Lotos.Zmq.Util (textToBS)
 import Zmqx qualified
-import Zmqx.Dealer qualified
 import Zmqx.EventLoop qualified as Zmqx.EventLoop
+import Zmqx.Monad qualified as ZmqxM
 
 -- | Result returned by the non-blocking worker log enqueue callback.
 data LogEnqueueResult
@@ -139,7 +139,7 @@ workerLogPendingEvents WorkerLogTransport {..} =
 -- execution or status reports.
 runWorkerLogTransport :: WorkerLogTransport -> Logger.LotosApp ThreadId
 runWorkerLogTransport transport@WorkerLogTransport {workerLogTransportConfig = WorkerServiceConfig {..}} = do
-  dealer <- zmqUnwrap $ Zmqx.Dealer.open $ Zmqx.name "workerLogDealer"
+  dealer <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "workerLogDealer"
   liftIO $ Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS workerId)
   liftIO $ applySocketHWM dealer (logIngestSocketHWM workerLogging)
   zmqUnwrap $ Zmqx.connect dealer (logIngestAddr workerLogging)
@@ -151,8 +151,9 @@ workerLogEventLoopEndpoint = "worker-log-dealer"
 
 runWorkerLogEventLoop :: WorkerLogTransport -> Zmqx.Dealer -> Logger.LotosApp ()
 runWorkerLogEventLoop transport@WorkerLogTransport {workerLogTransportConfig = WorkerServiceConfig {..}} dealer = do
-  loggerEnv <- ask
-  let ackMailboxCapacity = max 1 $ logIngestSocketHWM workerLogging
+  appEnv <- ask
+  let context = Logger.lotosZmqContext appEnv
+      ackMailboxCapacity = max 1 $ logIngestSocketHWM workerLogging
       spec =
         Zmqx.EventLoop.addTransceiver
           workerLogEventLoopEndpoint
@@ -162,8 +163,8 @@ runWorkerLogEventLoop transport@WorkerLogTransport {workerLogTransportConfig = W
   result <-
     liftIO $
       try $
-        Zmqx.EventLoop.withEventLoop spec $ \loop ->
-          Logger.runApp loggerEnv $ workerLogLoop transport loop
+        Zmqx.EventLoop.withEventLoopIn context spec $ \loop ->
+          Logger.runAppWithEnv appEnv $ workerLogLoop transport loop
   case (result :: Either SomeException ()) of
     Left exception ->
       Logger.logApp Logger.WARN $ "worker LogIngest EventLoop stopped: " <> show exception

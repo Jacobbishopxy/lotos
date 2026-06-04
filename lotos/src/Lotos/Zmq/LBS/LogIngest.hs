@@ -47,7 +47,7 @@ import Lotos.Zmq.Util
 import System.Directory (createDirectoryIfMissing, doesFileExist, renameFile)
 import System.FilePath (takeDirectory)
 import Zmqx
-import Zmqx.Router qualified
+import Zmqx.Monad qualified as ZmqxM
 
 -- | Mutable LogIngest state shared by the ROUTER loop and HTTP query handlers.
 data LogIngestState = LogIngestState
@@ -246,7 +246,7 @@ ingestLogBatch LogIngestState {..} batch = do
 -- | Start the LogIngest ROUTER loop on the configured endpoint.
 runLogIngest :: LogIngestConfig -> LogIngestState -> Logger.LotosApp ThreadId
 runLogIngest cfg@LogIngestConfig {..} state = do
-  router <- zmqUnwrap $ Zmqx.Router.open $ Zmqx.name "logIngestRouter"
+  router <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "logIngestRouter"
   liftIO $ applySocketHWM router logIngestSocketHWM
   zmqUnwrap $ Zmqx.bind router logIngestAddr
   Logger.logApp Logger.INFO $ "LogIngest ROUTER started at " <> Text.unpack logIngestAddr

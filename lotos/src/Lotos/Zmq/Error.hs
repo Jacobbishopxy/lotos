@@ -6,6 +6,7 @@
 module Lotos.Zmq.Error
   ( ZmqError (..),
     zmqUnwrap,
+    zmqAppUnwrap,
     zmqThrow,
     maybeToEither,
     unwrapEither,
@@ -30,13 +31,18 @@ zmqErrWrap :: Either Zmqx.Error a -> Either ZmqError a
 zmqErrWrap (Left e) = Left $ ZmqErr e
 zmqErrWrap (Right a) = Right a
 
+unwrapZmqResult :: Either Zmqx.Error a -> LotosApp a
+unwrapZmqResult = \case
+  Left err -> do
+    logApp ERROR $ "ZMQ error: " <> show err
+    error $ show err
+  Right a -> return a
+
 zmqUnwrap :: IO (Either Zmqx.Error a) -> LotosApp a
-zmqUnwrap action = do
-  liftIO action >>= \case
-    Left err -> do
-      logApp ERROR $ "ZMQ error: " <> show err
-      error $ show err
-    Right a -> return a
+zmqUnwrap action = liftIO action >>= unwrapZmqResult
+
+zmqAppUnwrap :: LotosApp (Either Zmqx.Error a) -> LotosApp a
+zmqAppUnwrap action = action >>= unwrapZmqResult
 
 zmqThrow :: IO (Either Zmqx.Error a) -> IO a
 zmqThrow action = do

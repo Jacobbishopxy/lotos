@@ -85,8 +85,7 @@ main :: IO ()
 main = do
   args <- getArgs
   lbsConfig <- loadBrokerConfig args
-  runZmqContextIO $ do
-    logConfig <- initLocalTimeLogger "./logs/taskScheduleServer.log" DEBUG True
-    runApp logConfig $ run lbsConfig
-
-    forever $ threadDelay 60_000_000
+  logConfig <- initLocalTimeLogger "./logs/taskScheduleServer.log" DEBUG True
+  runZmqApp logConfig $ do
+    run lbsConfig
+    liftIO $ forever $ threadDelay 60_000_000
