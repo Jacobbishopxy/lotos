@@ -34,11 +34,12 @@ INFO_BASE="${SMOKE_INFO_BASE:-http://127.0.0.1:8081/SimpleServer}"
 WORKER_ID="${SMOKE_WORKER_ID:-simpleWorker_1}"
 LOG_INGEST_ADDR="${SMOKE_LOG_INGEST_ADDR:-tcp://127.0.0.1:5558}"
 LOG_INGEST_JOURNAL_PATH="${SMOKE_LOG_INGEST_JOURNAL_PATH:-$EVIDENCE_DIR/worker-logs.journal}"
-SERVER_READY_TIMEOUT_SEC="${SMOKE_SERVER_READY_TIMEOUT_SEC:-60}"
-WORKER_READY_TIMEOUT_SEC="${SMOKE_WORKER_READY_TIMEOUT_SEC:-90}"
+SERVER_READY_TIMEOUT_SEC="${SMOKE_SERVER_READY_TIMEOUT_SEC:-120}"
+WORKER_READY_TIMEOUT_SEC="${SMOKE_WORKER_READY_TIMEOUT_SEC:-120}"
 CLIENT_TIMEOUT_SEC="${SMOKE_CLIENT_TIMEOUT_SEC:-60}"
 MARKER_TIMEOUT_SEC="${SMOKE_MARKER_TIMEOUT_SEC:-30}"
 LOGGING_TIMEOUT_SEC="${SMOKE_LOGGING_TIMEOUT_SEC:-45}"
+RUNTIME_STATS_TIMEOUT_SEC="${SMOKE_RUNTIME_STATS_TIMEOUT_SEC:-45}"
 TASK_TIMEOUT_SEC="${SMOKE_TASK_TIMEOUT_SEC:-5}"
 
 mkdir -p "$EVIDENCE_DIR" logs
@@ -217,6 +218,40 @@ snapshot_all() {
   done
 }
 
+info_has_runtime_queue_stats() {
+  local file="$1"
+  local field queue_name
+  grep -F '"runtimeQueueStats":[' "$file" >/dev/null 2>&1 || return 1
+  for field in name currentDepth highWaterDepth totalEnqueued totalDrained warningThreshold; do
+    grep -F "\"$field\"" "$file" >/dev/null 2>&1 || return 1
+  done
+  for queue_name in broker.task.queue broker.failed-task.queue broker.socketlayer.frontend-frames broker.socketlayer.backend-frames broker.socketlayer.taskprocessor-frames; do
+    grep -F "\"name\":\"$queue_name\"" "$file" >/dev/null 2>&1 || return 1
+  done
+  return 0
+}
+
+wait_for_runtime_queue_stats() {
+  local server_pid="$1"
+  local worker_pid="$2"
+  local info_file="$EVIDENCE_DIR/runtime-queue-stats-info.json"
+  local deadline=$((SECONDS + RUNTIME_STATS_TIMEOUT_SEC))
+  while [ "$SECONDS" -le "$deadline" ]; do
+    ensure_alive "server" "$server_pid" "$SERVER_STDIO_LOG" || return 1
+    ensure_alive "worker" "$worker_pid" "$WORKER_STDIO_LOG" || return 1
+    if snapshot_endpoint "info" "$info_file"; then
+      rm -f "$info_file.err"
+      if info_has_runtime_queue_stats "$info_file"; then
+        log "runtime queue stats found in /info without requiring nonzero backlog"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  log "runtime queue stats timed out after ${RUNTIME_STATS_TIMEOUT_SEC}s"
+  return 1
+}
+
 wait_for_server() {
   local server_pid="$1"
   local deadline=$((SECONDS + SERVER_READY_TIMEOUT_SEC))
@@ -389,7 +424,10 @@ log_stats_are_clean() {
     && grep -F '"rejectedEvents":0' "$file" >/dev/null 2>&1 \
     && grep -F '"sequenceGaps":0' "$file" >/dev/null 2>&1 \
     && grep -F '"workers":1' "$file" >/dev/null 2>&1 \
-    && grep -F "\"$WORKER_ID\"" "$file" >/dev/null 2>&1
+    && grep -F "\"$WORKER_ID\"" "$file" >/dev/null 2>&1 \
+    && ! grep -F '"runtimeQueueStats"' "$file" >/dev/null 2>&1 \
+    && ! grep -F '"currentDepth"' "$file" >/dev/null 2>&1 \
+    && ! grep -F 'broker.task.queue' "$file" >/dev/null 2>&1
 }
 
 wait_for_worker_logging() {
@@ -407,7 +445,7 @@ wait_for_worker_logging() {
         && snapshot_endpoint "logs/stats" "$stats_file"; then
         rm -f "$stats_file.err"
         if log_stats_are_clean "$stats_file"; then
-          log "worker logging evidence found in /logs/worker/$WORKER_ID with clean /logs/stats for run $RUN_ID"
+          log "worker logging evidence found in /logs/worker/$WORKER_ID with clean LogIngest-only /logs/stats for run $RUN_ID"
           return 0
         fi
       fi
@@ -436,6 +474,7 @@ main() {
   start_tracked "worker" "$WORKER_STDIO_LOG" cabal run TaskSchedule:exe:ts-worker -- "$WORKER_CONFIG"
   local worker_pid="${PROCESS_PIDS[1]}"
   wait_for_worker "$server_pid" "$worker_pid" || fail_hard "worker did not register"
+  wait_for_runtime_queue_stats "$server_pid" "$worker_pid" || fail_hard "/info.runtimeQueueStats did not expose broker handoff queue fields"
   snapshot_all "ready"
 
   CLIENT_EXIT=0
@@ -463,8 +502,8 @@ main() {
   fi
 
   if [ "$CLIENT_EXIT" -eq 0 ]; then
-    log "PASS: client received ACK, worker wrote fresh marker, and worker logging reached /logs"
-    write_result "PASS" "$CLIENT_EXIT" "client ACK plus fresh marker proof plus /logs worker/stdout/result evidence"
+    log "PASS: client received ACK, worker wrote fresh marker, /info exposed runtimeQueueStats, and worker logging reached LogIngest /logs"
+    write_result "PASS" "$CLIENT_EXIT" "client ACK plus fresh marker proof plus /info.runtimeQueueStats plus LogIngest-only /logs worker/stdout/result/stats evidence"
     return 0
   fi
 

@@ -20,7 +20,7 @@ scripts/task-schedule-smoke.sh
 scripts/task-schedule-multi-worker-smoke.sh
 ```
 
-The helpers generate run-local configs/evidence under `.tmp/`, start only the services they track, probe the HTTP info/log endpoints, verify worker marker files and current-run log events, and clean up tracked process groups.
+The helpers generate run-local configs/evidence under `.tmp/`, start only the services they track, probe the HTTP info/log endpoints, verify worker marker files and current-run log events, assert `/info.runtimeQueueStats`, keep `/logs/stats` scoped to LogIngest accounting, and clean up tracked process groups. The multi-worker helper also captures a capacity/reservation snapshot from `/worker_stats` and `/worker_tasks` so generated capacity-1 workers are not over-assigned during burst dispatch.
 
 ## HTTP probes
 
@@ -50,7 +50,9 @@ Use `curl --noproxy '*'` for loopback probes in proxy-enabled environments.
 - `totalEnqueued` / `totalDrained` — monotonic counters for diagnosis.
 - `warningThreshold` — depth that starts bounded WARN logging.
 
-These metrics are observability only: task/status handoff queues stay intentionally unbounded and non-dropping. Treat rising `currentDepth` or repeatedly increasing `highWaterDepth` as overload evidence, then inspect worker capacity, scheduler throughput, and downstream task execution time. `/logs/stats` remains LogIngest-specific rejected/drop accounting; do not interpret it as task/status queue loss.
+These metrics are observability only: task/status handoff queues stay intentionally unbounded and non-dropping. Treat rising `currentDepth` or repeatedly increasing `highWaterDepth` as overload evidence, then inspect worker capacity, scheduler throughput, and downstream task execution time. The smoke scripts only require the fields and queue names to be present; they do not require a nonzero backlog.
+
+`/logs/stats` remains LogIngest-specific rejected/drop/sequence accounting and is intentionally separate from `/info.runtimeQueueStats`; do not interpret it as task/status queue loss or runtime queue depth.
 
 ## Logging operations
 

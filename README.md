@@ -191,8 +191,8 @@ Use a CI-safe test posture: registered Cabal test suites are bounded, assertion-
 | Full regression | `cabal test all` | Runs bounded assertion-based suites: `lotos` executor, frame, log protocol/ingest/transport tests plus TaskSchedule scheduler and worker-lifecycle tests. |
 | Focused quick regression | `cabal test lotos:test:test-conc-executor` | HUnit coverage for concurrent command success/failure, callbacks, timeout handling, and bounded concurrent execution. |
 | Compile all packages, tests, and demos | `cabal build all --enable-tests` | Builds the workspace, regression test executables, TaskSchedule executables, and `demo-*` executables without running long-lived demos. |
-| Intentional single-worker MVP smoke | `scripts/task-schedule-smoke.sh` | Bounded server/worker/client smoke; run after the build command above and inspect `.tmp/task-schedule-smoke/<run-id>/` for `result.env`, logs, endpoint snapshots, and marker proof. |
-| Intentional multi-worker smoke | `scripts/task-schedule-multi-worker-smoke.sh` | Starts one server, at least two generated worker configs, and multiple distinct clients/tasks; inspect `.tmp/task-schedule-multi-worker-smoke/<run-id>/` for per-worker stdio logs, endpoint snapshots, markers, and `result.env`. |
+| Intentional single-worker MVP smoke | `scripts/task-schedule-smoke.sh` | Bounded server/worker/client smoke; run after the build command above and inspect `.tmp/task-schedule-smoke/<run-id>/` for `result.env`, logs, marker proof, `/info.runtimeQueueStats`, LogIngest-only `/logs/stats`, and endpoint snapshots. |
+| Intentional multi-worker smoke | `scripts/task-schedule-multi-worker-smoke.sh` | Starts one server, at least two generated worker configs, and multiple distinct clients/tasks; inspect `.tmp/task-schedule-multi-worker-smoke/<run-id>/` for per-worker stdio logs, capacity/reservation snapshots, markers, runtime/log stats, endpoint snapshots, and `result.env`. |
 
 Current bounded regression test suites:
 

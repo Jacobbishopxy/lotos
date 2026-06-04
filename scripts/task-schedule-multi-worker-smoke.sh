@@ -26,18 +26,20 @@ WORKER_COUNT="${SMOKE_WORKER_COUNT:-2}"
 TASK_COUNT="${SMOKE_TASK_COUNT:-4}"
 WORKER_ID_PREFIX="${SMOKE_WORKER_ID_PREFIX:-smokeWorker_}"
 CLIENT_ID_PREFIX="${SMOKE_CLIENT_ID_PREFIX:-smokeClient_}"
-SERVER_READY_TIMEOUT_SEC="${SMOKE_SERVER_READY_TIMEOUT_SEC:-60}"
+SERVER_READY_TIMEOUT_SEC="${SMOKE_SERVER_READY_TIMEOUT_SEC:-120}"
 WORKER_READY_TIMEOUT_SEC="${SMOKE_WORKER_READY_TIMEOUT_SEC:-120}"
 CLIENT_TIMEOUT_SEC="${SMOKE_CLIENT_TIMEOUT_SEC:-90}"
 WORKER_EVIDENCE_TIMEOUT_SEC="${SMOKE_WORKER_EVIDENCE_TIMEOUT_SEC:-120}"
 MARKER_TIMEOUT_SEC="${SMOKE_MARKER_TIMEOUT_SEC:-120}"
 LOGGING_TIMEOUT_SEC="${SMOKE_LOGGING_TIMEOUT_SEC:-120}"
+RUNTIME_STATS_TIMEOUT_SEC="${SMOKE_RUNTIME_STATS_TIMEOUT_SEC:-60}"
 TASK_HOLD_SEC="${SMOKE_TASK_HOLD_SEC:-5}"
 TASK_TIMEOUT_SEC="${SMOKE_TASK_TIMEOUT_SEC:-$((TASK_HOLD_SEC + 15))}"
 BATCH_WINDOW_SEC="${SMOKE_BATCH_WINDOW_SEC:-45}"
 TASK_PROCESSOR_NOTIFY_THRESHOLD="${SMOKE_TASK_PROCESSOR_NOTIFY_THRESHOLD:-100}"
 INFO_FETCH_INTERVAL_SEC="${SMOKE_INFO_FETCH_INTERVAL_SEC:-5}"
 WORKER_STATUS_INTERVAL_SEC="${SMOKE_WORKER_STATUS_INTERVAL_SEC:-2}"
+WORKER_CAPACITY="${SMOKE_WORKER_CAPACITY:-1}"
 LOG_INGEST_ADDR="${SMOKE_LOG_INGEST_ADDR:-tcp://127.0.0.1:5558}"
 LOG_INGEST_JOURNAL_PATH="${SMOKE_LOG_INGEST_JOURNAL_PATH:-$EVIDENCE_DIR/worker-logs.journal}"
 
@@ -71,6 +73,7 @@ write_result() {
     printf 'evidence_dir=%s\n' "$EVIDENCE_DIR"
     printf 'worker_count=%s\n' "$WORKER_COUNT"
     printf 'task_count=%s\n' "$TASK_COUNT"
+    printf 'worker_capacity=%s\n' "$WORKER_CAPACITY"
     printf 'detail=%s\n' "$detail"
   } >"$RESULT_FILE"
 }
@@ -171,6 +174,7 @@ require_prerequisites() {
   require_positive_int "$TASK_HOLD_SEC" "SMOKE_TASK_HOLD_SEC"
   require_positive_int "$TASK_TIMEOUT_SEC" "SMOKE_TASK_TIMEOUT_SEC"
   require_positive_int "$BATCH_WINDOW_SEC" "SMOKE_BATCH_WINDOW_SEC"
+  require_positive_int "$WORKER_CAPACITY" "SMOKE_WORKER_CAPACITY"
 
   if [ "$WORKER_COUNT" -lt 2 ]; then
     fail_hard "multi-worker smoke requires at least 2 workers, got $WORKER_COUNT"
@@ -240,6 +244,37 @@ snapshot_all() {
       log "snapshot warning: failed to fetch $endpoint into $file (stderr in $file.err)"
     fi
   done
+}
+
+info_has_runtime_queue_stats() {
+  local file="$1"
+  local field queue_name
+  grep -F '"runtimeQueueStats":[' "$file" >/dev/null 2>&1 || return 1
+  for field in name currentDepth highWaterDepth totalEnqueued totalDrained warningThreshold; do
+    grep -F "\"$field\"" "$file" >/dev/null 2>&1 || return 1
+  done
+  for queue_name in broker.task.queue broker.failed-task.queue broker.socketlayer.frontend-frames broker.socketlayer.backend-frames broker.socketlayer.taskprocessor-frames; do
+    grep -F "\"name\":\"$queue_name\"" "$file" >/dev/null 2>&1 || return 1
+  done
+  return 0
+}
+
+wait_for_runtime_queue_stats() {
+  local info_file="$EVIDENCE_DIR/runtime-queue-stats-info.json"
+  local deadline=$((SECONDS + RUNTIME_STATS_TIMEOUT_SEC))
+  while [ "$SECONDS" -le "$deadline" ]; do
+    all_workers_alive || return 1
+    if snapshot_endpoint "info" "$info_file"; then
+      rm -f "$info_file.err"
+      if info_has_runtime_queue_stats "$info_file"; then
+        log "runtime queue stats found in /info without requiring nonzero backlog"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  log "runtime queue stats timed out after ${RUNTIME_STATS_TIMEOUT_SEC}s"
+  return 1
 }
 
 all_workers_alive() {
@@ -373,13 +408,13 @@ write_worker_configs() {
     "logIngestDropPolicy": "drop-oldest"
   },
   "workerStatusReportIntervalSec": $WORKER_STATUS_INTERVAL_SEC,
-  "parallelTasksNo": 1
+  "parallelTasksNo": $WORKER_CAPACITY
 }
 JSON
     WORKER_IDS+=("$wid")
     WORKER_CONFIGS+=("$config")
     WORKER_STDIO_LOGS+=("$EVIDENCE_DIR/worker-${idx}-stdio.log")
-    log "wrote worker config for $wid to $config"
+    log "wrote worker config for $wid to $config with capacity $WORKER_CAPACITY"
   done
 }
 
@@ -436,6 +471,7 @@ start_server_and_workers() {
   done
 
   wait_for_workers "$server_pid" "$server_log" || fail_hard "not all workers registered"
+  wait_for_runtime_queue_stats || fail_hard "/info.runtimeQueueStats did not expose broker handoff queue fields"
   snapshot_all "ready"
 }
 
@@ -469,6 +505,61 @@ wait_for_clients() {
     return 1
   fi
   return 0
+}
+
+count_worker_current_tasks() {
+  local file="$1"
+  local wid="$2"
+  local worker_slice
+  worker_slice=$(tr -d '\n' <"$file" | sed -n "s/.*\"$wid\":\[\([^]]*\)\].*/\1/p")
+  if [ -z "$worker_slice" ]; then
+    printf '0\n'
+    return 0
+  fi
+  printf '%s\n' "$worker_slice" | grep -o '"taskContent":"[^"]*"' | grep -F "$RUN_ID" | wc -l | tr -d ' '
+  printf '\n'
+}
+
+worker_stats_have_configured_capacity() {
+  local file="$1"
+  local wid capacity_count
+  for wid in "${WORKER_IDS[@]}"; do
+    grep -F "\"$wid\"" "$file" >/dev/null 2>&1 || return 1
+  done
+  capacity_count=$(grep -o "\"taskCapacity\":$WORKER_CAPACITY" "$file" | wc -l | tr -d ' ')
+  [ "$capacity_count" -ge "$WORKER_COUNT" ]
+}
+
+wait_for_capacity_reservation_snapshot() {
+  local tasks_file="$EVIDENCE_DIR/capacity-worker_tasks.json"
+  local stats_file="$EVIDENCE_DIR/capacity-worker_stats.json"
+  local expected_inflight=$((TASK_COUNT < WORKER_COUNT * WORKER_CAPACITY ? TASK_COUNT : WORKER_COUNT * WORKER_CAPACITY))
+  local deadline=$((SECONDS + WORKER_EVIDENCE_TIMEOUT_SEC))
+  local wid count total over_capacity
+  while [ "$SECONDS" -le "$deadline" ]; do
+    all_workers_alive || return 1
+    if snapshot_endpoint "worker_stats" "$stats_file" && snapshot_endpoint "worker_tasks" "$tasks_file"; then
+      rm -f "$stats_file.err" "$tasks_file.err"
+      if worker_stats_have_configured_capacity "$stats_file"; then
+        total=0
+        over_capacity=0
+        for wid in "${WORKER_IDS[@]}"; do
+          count=$(count_worker_current_tasks "$tasks_file" "$wid")
+          total=$((total + count))
+          if [ "$count" -gt "$WORKER_CAPACITY" ]; then
+            over_capacity=1
+          fi
+        done
+        if [ "$total" -eq "$expected_inflight" ] && [ "$over_capacity" -eq 0 ]; then
+          log "capacity/reservation snapshot valid: $total in-flight current-run tasks across ${#WORKER_IDS[@]} workers, capacity $WORKER_CAPACITY each"
+          return 0
+        fi
+      fi
+    fi
+    sleep 1
+  done
+  log "capacity/reservation snapshot timed out after ${WORKER_EVIDENCE_TIMEOUT_SEC}s; expected in-flight current-run tasks=$expected_inflight capacity=$WORKER_CAPACITY"
+  return 1
 }
 
 wait_for_worker_execution_evidence() {
@@ -557,7 +648,10 @@ log_stats_are_clean() {
     && grep -F '"rejectedEvents":0' "$file" >/dev/null 2>&1 \
     && grep -F '"sequenceGaps":0' "$file" >/dev/null 2>&1 \
     && grep -F "\"workers\":$WORKER_COUNT" "$file" >/dev/null 2>&1 \
-    && grep -F "\"tasks\":$TASK_COUNT" "$file" >/dev/null 2>&1 || return 1
+    && grep -F "\"tasks\":$TASK_COUNT" "$file" >/dev/null 2>&1 \
+    && ! grep -F '"runtimeQueueStats"' "$file" >/dev/null 2>&1 \
+    && ! grep -F '"currentDepth"' "$file" >/dev/null 2>&1 \
+    && ! grep -F 'broker.task.queue' "$file" >/dev/null 2>&1 || return 1
   for wid in "${WORKER_IDS[@]}"; do
     grep -F "\"$wid\"" "$file" >/dev/null 2>&1 || return 1
   done
@@ -586,7 +680,7 @@ wait_for_worker_logging() {
       && snapshot_endpoint "logs/stats" "$stats_file"; then
       rm -f "$stats_file.err"
       if log_stats_are_clean "$stats_file"; then
-        log "worker logging evidence found in /logs/worker for all workers with clean /logs/stats for run $RUN_ID"
+        log "worker logging evidence found in /logs/worker for all workers with clean LogIngest-only /logs/stats for run $RUN_ID"
         return 0
       fi
     fi
@@ -607,6 +701,7 @@ main() {
 
   start_server_and_workers
   submit_clients
+  wait_for_capacity_reservation_snapshot || fail_hard "capacity/reservation snapshot did not show configured-capacity-safe dispatch"
   wait_for_clients || fail_hard "one or more ts-client submissions failed; see client stdio logs"
 
   wait_for_worker_execution_evidence || fail_hard "not every worker processed current-run work"
@@ -619,8 +714,8 @@ main() {
     fail_hard "current run appeared in garbage or garbage endpoint was unavailable"
   fi
 
-  log "PASS: $TASK_COUNT tasks ACKed, ${#WORKER_IDS[@]} workers registered, each worker processed current-run work, all markers are fresh, and worker logging reached /logs"
-  write_result "PASS" "multi-worker ACK plus per-worker execution evidence plus fresh marker proof plus /logs worker/stdout/result evidence"
+  log "PASS: $TASK_COUNT tasks ACKed, ${#WORKER_IDS[@]} workers registered, capacity/reservations stayed within configured worker slots, all markers are fresh, /info exposed runtimeQueueStats, and worker logging reached LogIngest /logs"
+  write_result "PASS" "multi-worker ACK plus per-worker execution evidence plus capacity/reservation snapshot plus fresh marker proof plus /info.runtimeQueueStats plus LogIngest-only /logs worker/stdout/result/stats evidence"
   return 0
 }
 

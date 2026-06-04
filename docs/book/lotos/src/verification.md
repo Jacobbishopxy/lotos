@@ -43,11 +43,12 @@ scripts/task-schedule-smoke.sh
 scripts/task-schedule-multi-worker-smoke.sh
 ```
 
-Expected evidence includes client ACKs, worker stats, current-run task side effects, `/logs/worker/<workerId>` result events, clean `/logs/stats`, and no current-run garbage entry.
+Expected evidence includes client ACKs, worker stats, current-run task side effects, `/logs/worker/<workerId>` stdout/result events, clean LogIngest-only `/logs/stats`, broker `/info.runtimeQueueStats`, and no current-run garbage entry. The multi-worker smoke also checks generated worker capacity and a reservation-safe in-flight dispatch snapshot so queued bursts do not exceed configured worker slots while heartbeats catch up.
 
 ## Failure triage
 
 - ACK timeout: verify frontend/backend addresses and REQ/ROUTER frame preservation.
 - Missing worker stats: verify worker backend address, worker routing id, and heartbeat interval versus stale timeout.
-- Missing logs: verify LogIngest endpoint alignment and journal isolation for the run.
-- Capacity surprises: verify `processingTaskNum`, `waitingTaskNum`, and `taskCapacity` in worker status payloads.
+- Missing logs: verify LogIngest endpoint alignment and journal isolation for the run; `/logs/stats` reports LogIngest drop/reject/sequence accounting, not task/status queue depth.
+- Missing runtime stats: inspect `/SimpleServer/info` for `runtimeQueueStats` entries with `currentDepth`, `highWaterDepth`, `totalEnqueued`, and `totalDrained` fields.
+- Capacity surprises: verify `processingTaskNum`, `waitingTaskNum`, `taskCapacity`, and broker reservations in worker status/worker-task snapshots.
