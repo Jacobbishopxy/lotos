@@ -11,10 +11,13 @@ module Lotos.Zmq.LBS.SocketLayer
 where
 
 import Control.Concurrent
+import Control.Concurrent.STM (TQueue, atomically, newTQueueIO, orElse, readTQueue, tryReadTQueue, writeTQueue)
+import Control.Exception (SomeException, try)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Reader (ask)
 import Data.ByteString qualified as ByteString
-import Data.Function ((&))
+import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Lotos.Logger
 import Lotos.TSD.Map
@@ -25,15 +28,16 @@ import Lotos.Zmq.Config
 import Lotos.Zmq.Error
 import Lotos.Zmq.Internal.Liveness
 import Zmqx
+import Zmqx.EventLoop qualified as Zmqx.EventLoop
 import Zmqx.Monad qualified as ZmqxM
 
 ----------------------------------------------------------------------------------------------------
 
 data SocketLayer t w = SocketLayer
-  { frontendRouter :: Zmqx.Router, -- receives message (tasks) from clients (external)
-    backendRouter :: Zmqx.Router, -- receives message (worker status) from workers (external)
-    backendReceiver :: Zmqx.Pair, -- receives message (tasks) from TaskProcessor's load balancer (cross-threads)
-    backendSender :: Zmqx.Pair, -- sends message (notifies) to TaskProcessor's event trigger (cross-threads)
+  { brokerEventLoop :: Zmqx.EventLoop.EventLoop,
+    frontendFrames :: TQueue [ByteString.ByteString],
+    backendFrames :: TQueue [ByteString.ByteString],
+    taskProcessorFrames :: TQueue [ByteString.ByteString],
     taskQueue :: TSQueue (Task t), -- frontend puts message
     failedTaskQueue :: TSQueue (RetryTask t), -- backend puts retryable failed tasks with readiness metadata
     workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modifies map
@@ -43,21 +47,39 @@ data SocketLayer t w = SocketLayer
     workerStaleTimeoutSec :: Int
   }
 
+data SocketLayerFrames
+  = FrontendFrames [ByteString.ByteString]
+  | BackendFrames [ByteString.ByteString]
+  | TaskProcessorFrames [ByteString.ByteString]
+
+data DrainPreference
+  = PreferFrontend
+  | PreferBackend
+  | PreferTaskProcessor
+
+brokerFrontendEndpoint :: Text.Text
+brokerFrontendEndpoint = "broker.frontend"
+
+brokerBackendEndpoint :: Text.Text
+brokerBackendEndpoint = "broker.backend"
+
+brokerTaskProcessorInEndpoint :: Text.Text
+brokerTaskProcessorInEndpoint = "broker.taskprocessor.in"
+
+brokerTaskProcessorNotifyEndpoint :: Text.Text
+brokerTaskProcessorNotifyEndpoint = "broker.taskprocessor.notify"
+
+socketLayerDrainBatchLimit :: Int
+socketLayerDrainBatchLimit = 64
+
 ----------------------------------------------------------------------------------------------------
 
 -- main function of the socket layer
 --
--- TP-031 intentionally keeps the broker on the direct ZMQ poll path instead of
--- wrapping the frontend ROUTER, backend ROUTER, and TaskProcessor PAIR sockets
--- in Zmqx.EventLoop.  These sockets are already opened and touched only by the
--- SocketLayer thread below; an EventLoop migration would add a second owner
--- thread plus bounded mailbox/drop semantics around client ACKs, worker task
--- dispatch, retry/garbage handling, and scheduler notifications without a
--- measured fairness benefit.  TP-038 prepares for any future EventLoop work by
--- separating decoded-message business handlers from socket receive/send
--- mechanics while preserving this direct poll loop.  If this is revisited, use
--- mailbox dispatch rather than heavy EventLoop callbacks for the queue/map
--- mutations in this module.
+-- The broker frontend ROUTER, backend ROUTER, and TaskProcessor PAIR sockets
+-- are owned by 'Zmqx.EventLoop'. EventLoop callbacks only hand complete
+-- multipart messages to unbounded STM queues; parsing and all queue/map/ring
+-- buffer mutations remain on the SocketLayer app thread.
 runSocketLayer ::
   forall t w.
   (FromZmq t, ToZmq t, FromZmq w) =>
@@ -69,56 +91,154 @@ runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq 
   logApp INFO "runSocketLayer start!"
 
   -- Init frontend Router
-  frontend <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "frontend"
+  frontend <- (zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "frontend") :: LotosApp Zmqx.Router
   zmqUnwrap $ ZmqxM.bind frontend frontendAddr
   -- Init backend Router
-  backend <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "backend"
+  backend <- (zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "backend") :: LotosApp Zmqx.Router
   zmqUnwrap $ ZmqxM.bind backend backendAddr
   -- Init receiver Pair
-  receiverPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "slReceiver"
+  receiverPair <- (zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "slReceiver") :: LotosApp Zmqx.Pair
   zmqUnwrap $ ZmqxM.bind receiverPair taskProcessorSenderAddr
   -- Init sender Pair
-  senderPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "slSender"
+  senderPair <- (zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "slSender") :: LotosApp Zmqx.Pair
   zmqUnwrap $ ZmqxM.bind senderPair socketLayerSenderAddr -- Fixed to use connect
 
-  -- pollItems & socketLayer cst
-  let pollItems = ZmqxM.pollIn frontend & ZmqxM.pollInAlso backend & ZmqxM.pollInAlso receiverPair
-      socketLayer = SocketLayer frontend backend receiverPair senderPair tq ftq wtm wsm wam gbb staleTimeoutSec
+  context <- ZmqxM.askContext
+  appEnv <- ask
+  frontendQueue <- liftIO newTQueueIO
+  backendQueue <- liftIO newTQueueIO
+  taskProcessorQueue <- liftIO newTQueueIO
+  let spec =
+        Zmqx.EventLoop.addSender
+          brokerTaskProcessorNotifyEndpoint
+          senderPair
+          $ Zmqx.EventLoop.addReceiver
+            brokerTaskProcessorInEndpoint
+            receiverPair
+            (Zmqx.EventLoop.Callback $ atomically . writeTQueue taskProcessorQueue)
+          $ Zmqx.EventLoop.addTransceiver
+            brokerBackendEndpoint
+            backend
+            (Zmqx.EventLoop.Callback $ atomically . writeTQueue backendQueue)
+          $ Zmqx.EventLoop.addTransceiver
+            brokerFrontendEndpoint
+            frontend
+            (Zmqx.EventLoop.Callback $ atomically . writeTQueue frontendQueue)
+            Zmqx.EventLoop.emptySpec
 
-  -- Start the direct socket poll loop in a separate thread
-  forkApp $ layerLoop pollItems socketLayer
+  -- Start the EventLoop-owned socket loop in a separate thread.
+  forkApp $ do
+    result <-
+      liftIO $
+        try $
+          Zmqx.EventLoop.withEventLoopIn context spec $ \loop ->
+            runAppWithEnv appEnv $
+              layerLoop $
+                SocketLayer loop frontendQueue backendQueue taskProcessorQueue tq ftq wtm wsm wam gbb staleTimeoutSec
+    case (result :: Either SomeException ()) of
+      Left exception -> logApp ERROR $ "SocketLayer EventLoop stopped: " <> show exception
+      Right () -> pure ()
 
--- direct socket poll loop
 layerLoop ::
   (FromZmq t, ToZmq t, FromZmq w) =>
-  Zmqx.Sockets ->
   SocketLayer t w ->
   LotosApp ()
-layerLoop pollItems layer =
-  zmqUnwrap (ZmqxM.poll pollItems) >>= \ready -> do
-    handleFrontend layer ready
-    handleBackend layer ready
-    layerLoop pollItems layer -- Recursive direct poll loop
+layerLoop layer = do
+  frames <- drainSocketLayerFrames layer
+  handleSocketLayerFrames layer frames
+  layerLoop layer
+
+drainSocketLayerFrames :: SocketLayer t w -> LotosApp SocketLayerFrames
+drainSocketLayerFrames SocketLayer {..} =
+  liftIO $
+    atomically $
+      (FrontendFrames <$> readTQueue frontendFrames)
+        `orElse` (BackendFrames <$> readTQueue backendFrames)
+        `orElse` (TaskProcessorFrames <$> readTQueue taskProcessorFrames)
+
+handleSocketLayerFrames ::
+  (FromZmq t, ToZmq t, FromZmq w) =>
+  SocketLayer t w ->
+  SocketLayerFrames ->
+  LotosApp ()
+handleSocketLayerFrames layer frames = do
+  handleOneSocketLayerFrame layer frames
+  drainQueuedSocketLayerFrames layer socketLayerDrainBatchLimit (nextDrainPreferenceAfter frames)
+
+handleOneSocketLayerFrame ::
+  (FromZmq t, ToZmq t, FromZmq w) =>
+  SocketLayer t w ->
+  SocketLayerFrames ->
+  LotosApp ()
+handleOneSocketLayerFrame layer = \case
+  FrontendFrames fs -> handleFrontendFrames layer fs
+  BackendFrames fs -> handleWorkerFrames layer fs
+  TaskProcessorFrames fs -> handleLoadBalancerFrames layer fs
+
+drainQueuedSocketLayerFrames ::
+  (FromZmq t, ToZmq t, FromZmq w) =>
+  SocketLayer t w ->
+  Int ->
+  DrainPreference ->
+  LotosApp ()
+drainQueuedSocketLayerFrames layer@SocketLayer {..} limit initialPreference = go limit initialPreference
+  where
+    go remaining preference
+      | remaining <= 0 = pure ()
+      | otherwise =
+          liftIO (tryReadSocketLayerFrames preference frontendFrames backendFrames taskProcessorFrames) >>= \case
+            Nothing -> pure ()
+            Just frames -> do
+              handleOneSocketLayerFrame layer frames
+              go (remaining - 1) (nextDrainPreferenceAfter frames)
+
+nextDrainPreferenceAfter :: SocketLayerFrames -> DrainPreference
+nextDrainPreferenceAfter = \case
+  FrontendFrames _ -> PreferBackend
+  BackendFrames _ -> PreferTaskProcessor
+  TaskProcessorFrames _ -> PreferFrontend
+
+tryReadSocketLayerFrames ::
+  DrainPreference ->
+  TQueue [ByteString.ByteString] ->
+  TQueue [ByteString.ByteString] ->
+  TQueue [ByteString.ByteString] ->
+  IO (Maybe SocketLayerFrames)
+tryReadSocketLayerFrames preference frontendQ backendQ taskProcessorQ =
+  atomically $ tryReadOrdered $ queueOrder preference
+  where
+    queueOrder = \case
+      PreferFrontend -> [tryFrontend, tryBackend, tryTaskProcessor]
+      PreferBackend -> [tryBackend, tryTaskProcessor, tryFrontend]
+      PreferTaskProcessor -> [tryTaskProcessor, tryFrontend, tryBackend]
+
+    tryFrontend = fmap FrontendFrames <$> tryReadTQueue frontendQ
+    tryBackend = fmap BackendFrames <$> tryReadTQueue backendQ
+    tryTaskProcessor = fmap TaskProcessorFrames <$> tryReadTQueue taskProcessorQ
+
+    tryReadOrdered [] = pure Nothing
+    tryReadOrdered (readNext : rest) =
+      readNext >>= \case
+        Just frames -> pure $ Just frames
+        Nothing -> tryReadOrdered rest
 
 -- ⭐⭐ handle message from clients
-handleFrontend ::
+handleFrontendFrames ::
   forall t w.
   (FromZmq t) =>
   SocketLayer t w ->
-  Zmqx.Ready ->
+  [ByteString.ByteString] ->
   LotosApp ()
-handleFrontend SocketLayer {..} (Zmqx.Ready ready) =
-  -- 📩 receive message from a client
-  when (ready frontendRouter) $ do
-    logApp DEBUG "handleFrontend: recv client request"
-    fromZmq @(RouterFrontendIn t) <$> zmqUnwrap (ZmqxM.receives frontendRouter) >>= \case
-      Left e -> logApp ERROR $ "handleFrontend: unable to parse client request; no ACK sent: " <> show e
-      Right (ClientRequest clientID clientReqID task) ->
-        handleClientRequest taskQueue (sendClientAck frontendRouter) clientID clientReqID task
+handleFrontendFrames SocketLayer {..} frames = do
+  logApp DEBUG "handleFrontend: recv client request"
+  case fromZmq @(RouterFrontendIn t) frames of
+    Left e -> logApp ERROR $ "handleFrontend: unable to parse client request; no ACK sent: " <> show e
+    Right (ClientRequest clientID clientReqID task) ->
+      handleClientRequest taskQueue (sendClientAck brokerEventLoop) clientID clientReqID task
 
--- Handle a decoded frontend client request. Socket receive mechanics stay in
--- 'handleFrontend'; this helper owns the behavior that must be preserved when a
--- future EventLoop-preparation seam hands decoded requests to the SocketLayer thread.
+-- Handle a decoded frontend client request after EventLoop callback handoff.
+-- The callback only queues raw frames; this helper preserves enqueue-before-ACK
+-- behavior on the SocketLayer app thread.
 handleClientRequest ::
   (FromZmq t) =>
   TSQueue (Task t) ->
@@ -134,43 +254,28 @@ handleClientRequest taskQueue sendAck clientID clientReqID task = do
   sendAck (ClientAck clientID clientReqID ack)
   logApp DEBUG $ "handleFrontend: sent client ACK after enqueue: " <> show clientID <> " " <> show ack
 
-sendClientAck :: Zmqx.Router -> RouterFrontendOut -> LotosApp ()
-sendClientAck frontendRouter ack =
-  zmqUnwrap $ ZmqxM.sends frontendRouter $ toZmq ack
-
--- ⭐⭐ handle message from load-balancer or workers
-handleBackend ::
-  forall t w.
-  (FromZmq t, ToZmq t, FromZmq w) =>
-  SocketLayer t w ->
-  Zmqx.Ready ->
-  LotosApp ()
-handleBackend layer@SocketLayer {..} (Zmqx.Ready ready) = do
-  -- 📩 receive message from load-balancer
-  when (ready backendReceiver) $
-    handleLoadBalancerMessage layer
-
-  -- 📩 receive message from a worker
-  when (ready backendRouter) $
-    handleWorkerMessage layer
+sendClientAck :: Zmqx.EventLoop.EventLoop -> RouterFrontendOut -> LotosApp ()
+sendClientAck brokerLoop ack =
+  zmqUnwrap $ Zmqx.EventLoop.sends brokerLoop brokerFrontendEndpoint $ toZmq ack
 
 ----------------------------------------------------------------------------------------------------
 
 -- Handle messages coming from the load balancer
-handleLoadBalancerMessage ::
+handleLoadBalancerFrames ::
   forall t w.
   (FromZmq t, ToZmq t) =>
   SocketLayer t w ->
+  [ByteString.ByteString] ->
   LotosApp ()
-handleLoadBalancerMessage SocketLayer {..} = do
+handleLoadBalancerFrames SocketLayer {..} frames = do
   logApp DEBUG "handleBackend: recv load-balancer request"
-  fromZmq @(RouterBackendOut t) <$> zmqUnwrap (ZmqxM.receives backendReceiver) >>= \case
+  case fromZmq @(RouterBackendOut t) frames of
     Left e -> logApp ERROR $ show e
-    Right wt -> dispatchWorkerTask workerTasksMap (sendWorkerTask backendRouter) wt
+    Right wt -> dispatchWorkerTask workerTasksMap (sendWorkerTask brokerEventLoop) wt
 
--- Handle a decoded load-balancer dispatch. The send callback is explicit so a
--- later EventLoop-preparation step can swap socket ownership without changing the
--- worker-task bookkeeping order: send first, then record the task as in flight.
+-- Handle a decoded load-balancer dispatch. The send callback is explicit so the
+-- EventLoop send path preserves the bookkeeping order: send first, then record
+-- the task as in flight.
 dispatchWorkerTask ::
   (ToZmq t) =>
   TSWorkerTasksMap (TaskID, Task t, TaskStatus) ->
@@ -184,19 +289,20 @@ dispatchWorkerTask workerTasksMap sendTask wt@(WorkerTask wID task) = do
   let uuid = unwrapOption (taskID task)
   liftIO $ appendTSWorkerTasks wID (uuid, task, TaskInit) workerTasksMap
 
-sendWorkerTask :: (ToZmq t) => Zmqx.Router -> RouterBackendOut t -> LotosApp ()
-sendWorkerTask backendRouter wt =
-  zmqUnwrap $ ZmqxM.sends backendRouter $ toZmq wt
+sendWorkerTask :: (ToZmq t) => Zmqx.EventLoop.EventLoop -> RouterBackendOut t -> LotosApp ()
+sendWorkerTask brokerLoop wt =
+  zmqUnwrap $ Zmqx.EventLoop.sends brokerLoop brokerBackendEndpoint $ toZmq wt
 
 -- Handle messages coming from workers
-handleWorkerMessage ::
+handleWorkerFrames ::
   forall t w.
   (FromZmq t, ToZmq t, FromZmq w) =>
   SocketLayer t w ->
+  [ByteString.ByteString] ->
   LotosApp ()
-handleWorkerMessage layer@SocketLayer {..} = do
+handleWorkerFrames layer@SocketLayer {..} frames = do
   logApp DEBUG "handleBackend: recv worker request"
-  fromZmq @(RouterBackendIn w) <$> zmqUnwrap (ZmqxM.receives backendRouter) >>= \case
+  case fromZmq @(RouterBackendIn w) frames of
     Left e -> logApp ERROR $ show e
     -- 💾 worker status changed
     Right (WorkerStatus wID mt a st) ->
@@ -216,15 +322,15 @@ data TaskContext t = TaskContext
   }
 
 -- Extract the narrow task-status context from SocketLayer so retry/garbage and
--- notify handling stays explicit in the direct poll loop without layering an
--- extra ReaderT allocation on every worker task-status frame.
+-- notify handling stays explicit on the SocketLayer app thread without layering
+-- an extra ReaderT allocation on every worker task-status frame.
 getTaskContext :: SocketLayer t w -> TaskContext t
 getTaskContext SocketLayer {..} =
   TaskContext
     { tcWorkerTasksMap = workerTasksMap,
       tcFailedTaskQueue = failedTaskQueue,
       tcGarbageBin = garbageBin,
-      tcNotifyLoadBalancer = notifyLoadBalancer backendSender
+      tcNotifyLoadBalancer = notifyLoadBalancer brokerEventLoop
     }
 
 ----------------------------------------------------------------------------------------------------
@@ -262,7 +368,7 @@ handleWorkerTaskStatus taskContext wID mt a uuid tst = do
   when (mt == WorkerTaskStatusT) $
     handleTaskStatus taskContext wID uuid tst
 
--- Handle task status in an explicit direct-poll context
+-- Handle task status on the SocketLayer app thread after EventLoop callback handoff.
 handleTaskStatus ::
   (FromZmq t, ToZmq t) =>
   TaskContext t ->
@@ -278,7 +384,7 @@ handleTaskStatus taskContext wID uuid tst = case tst of
   -- handle other status
   status -> handleOtherTaskStatus taskContext wID uuid status
 
--- Handle failed tasks using the explicit direct-poll task context
+-- Handle failed tasks using the explicit SocketLayer task context.
 handleFailedTask ::
   (FromZmq t, ToZmq t) =>
   TaskContext t ->
@@ -301,7 +407,7 @@ handleFailedTask TaskContext {..} wID uuid = do
   -- notify load-balancer
   tcNotifyLoadBalancer
 
--- Handle other task statuses using the explicit direct-poll task context
+-- Handle other task statuses using the explicit SocketLayer task context.
 handleOtherTaskStatus ::
   (FromZmq t, ToZmq t) =>
   TaskContext t ->
@@ -321,8 +427,8 @@ handleOtherTaskStatus TaskContext {..} wID uuid status = do
   -- notify load-balancer
   tcNotifyLoadBalancer
 
--- Helper function to notify the load balancer from the direct poll loop
-notifyLoadBalancer :: Zmqx.Pair -> LotosApp ()
-notifyLoadBalancer backendSender = do
+-- Helper function to notify the load balancer through the EventLoop-owned PAIR.
+notifyLoadBalancer :: Zmqx.EventLoop.EventLoop -> LotosApp ()
+notifyLoadBalancer brokerLoop = do
   ack <- liftIO $ newAck
-  zmqUnwrap $ ZmqxM.sends backendSender $ toZmq (Notify ack)
+  zmqUnwrap $ Zmqx.EventLoop.sends brokerLoop brokerTaskProcessorNotifyEndpoint $ toZmq (Notify ack)

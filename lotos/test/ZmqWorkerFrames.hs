@@ -1,4 +1,5 @@
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -7,13 +8,13 @@ module Main where
 import Control.Concurrent (MVar, killThread, newEmptyMVar, putMVar, readMVar, threadDelay)
 import Control.Concurrent.STM (atomically, newTQueueIO, readTQueue, writeTQueue)
 import Control.Exception (finally)
-import Control.Monad (forM_, void, when)
+import Control.Monad (forM_, replicateM_, void, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Time (UTCTime (..), addUTCTime, fromGregorian)
 import Lotos.TSD.Map (insertMap, lookupMap, mkTSMap)
-import Lotos.TSD.Queue (mkTSQueue, readQueue')
-import Lotos.TSD.RingBuffer (getBuffer', mkTSRingBuffer)
+import Lotos.TSD.Queue (TSQueue, mkTSQueue, readQueue')
+import Lotos.TSD.RingBuffer (TSRingBuffer, getBuffer', mkTSRingBuffer)
 import Lotos.Zmq
 import Lotos.Zmq.Internal.Liveness
 import Lotos.Zmq.Internal.Retry
@@ -103,6 +104,25 @@ unwrapM action = action >>= either (liftIO . ioError . userError . show) pure
 
 expectJust :: String -> Maybe a -> IO a
 expectJust message = maybe (ioError $ userError message) pure
+
+waitForJust :: String -> IO (Maybe a) -> IO a
+waitForJust message action =
+  expectJust message =<< timeout 1000000 poll
+  where
+    poll =
+      action >>= \case
+        Just value -> pure value
+        Nothing -> threadDelay 10000 >> poll
+
+waitForNonEmpty :: String -> IO [a] -> IO [a]
+waitForNonEmpty message action =
+  expectJust message =<< timeout 1000000 poll
+  where
+    poll = do
+      values <- action
+      if null values
+        then threadDelay 10000 >> poll
+        else pure values
 
 assertNothing :: String -> Maybe a -> Assertion
 assertNothing _ Nothing = pure ()
@@ -399,6 +419,103 @@ forkedAppActionsAreCancelledBeforeContextTeardown =
     stopped <- timeout 1000000 $ readMVar childStopped
     expectJust "forked LotosApp action outlived runZmqApp context teardown" stopped
 
+brokerSocketLayerEventLoopPreservesBrokerTraffic :: Assertion
+brokerSocketLayerEventLoopPreservesBrokerTraffic =
+  Logger.withConsoleLogger Logger.ERROR $ \loggerEnv ->
+    Logger.runZmqApp loggerEnv do
+      taskQueue <- liftIO (mkTSQueue :: IO (TSQueue (Task ())))
+      failedTaskQueue <- liftIO (mkTSQueue :: IO (TSQueue (RetryTask ())))
+      workerTasksMap <- liftIO (newTSWorkerTasksMap :: IO (TSWorkerTasksMap (TaskID, Task (), TaskStatus)))
+      workerStatusMap <- liftIO (mkTSMap :: IO (TSWorkerStatusMap ()))
+      workerAliveMap <- liftIO newTSWorkerAliveMap
+      garbageBin <- liftIO (mkTSRingBuffer 10 :: IO (TSRingBuffer (Task ())))
+      let frontendAddr = "inproc://tp039-broker-frontend"
+          backendAddr = "inproc://tp039-broker-backend"
+          taskProcessorSenderAddr = "inproc://taskProcessorSender"
+          socketLayerSenderAddr = "inproc://socketLayerSender"
+          schedulerData = TaskSchedulerData taskQueue failedTaskQueue workerTasksMap workerStatusMap workerAliveMap garbageBin
+      socketLayerTid <- runSocketLayer (SocketLayerConfig frontendAddr backendAddr) 60 schedulerData
+
+      clientReq <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp039-client-req") :: LotosApp Zmqx.Req
+      liftIO $ Zmqx.setSocketOpt clientReq (Zmqx.Z_RoutingId $ textToBS "tp039-client")
+      liftIO $ Zmqx.setSocketOpt clientReq (Zmqx.Z_RcvTimeO 1000)
+      unwrapM $ ZmqxM.connect clientReq frontendAddr
+
+      frontendNoise <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp039-frontend-noise") :: LotosApp Zmqx.Dealer
+      liftIO $ Zmqx.setSocketOpt frontendNoise (Zmqx.Z_RoutingId $ textToBS "tp039-noisy-client")
+      unwrapM $ ZmqxM.connect frontendNoise frontendAddr
+
+      workerDealer <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp039-worker-dealer") :: LotosApp Zmqx.Dealer
+      liftIO $ Zmqx.setSocketOpt workerDealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
+      liftIO $ Zmqx.setSocketOpt workerDealer (Zmqx.Z_RcvTimeO 1000)
+      unwrapM $ ZmqxM.connect workerDealer backendAddr
+
+      backendNoise <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp039-backend-noise") :: LotosApp Zmqx.Dealer
+      liftIO $ Zmqx.setSocketOpt backendNoise (Zmqx.Z_RoutingId $ textToBS "tp039-noisy-worker")
+      unwrapM $ ZmqxM.connect backendNoise backendAddr
+
+      taskProcessorSender <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp039-taskprocessor-sender") :: LotosApp Zmqx.Pair
+      unwrapM $ ZmqxM.connect taskProcessorSender taskProcessorSenderAddr
+      taskProcessorReceiver <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp039-taskprocessor-receiver") :: LotosApp Zmqx.Pair
+      liftIO $ Zmqx.setSocketOpt taskProcessorReceiver (Zmqx.Z_RcvTimeO 1000)
+      unwrapM $ ZmqxM.connect taskProcessorReceiver socketLayerSenderAddr
+      liftIO $ threadDelay 100000
+
+      unwrapM $ ZmqxM.sends clientReq $ toZmq (defaultTask :: Task ())
+      ackFrames <- liftIO . expectJust "client did not receive EventLoop broker ACK" =<< unwrapM (ZmqxM.receivesFor clientReq 1000)
+      liftIO $ case fromZmq ackFrames :: Either ZmqError Ack of
+        Right _ -> pure ()
+        Left err -> assertFailure $ "client ACK did not decode: " <> show err
+      queuedTasks <- liftIO $ waitForNonEmpty "client ACK arrived before task enqueue was visible" $ readQueue' taskQueue
+      liftIO $ case queuedTasks of
+        queuedTask : _ -> assertBool "enqueued client task should have a UUID" $ taskID queuedTask /= Nothing
+        [] -> assertFailure "expected at least one enqueued client task"
+
+      statusAck <- liftIO newAck
+      unwrapM $ ZmqxM.sends workerDealer $ toZmq $ WorkerReportStatus statusAck ()
+      liftIO $ void $ waitForJust "worker status was not recorded" $ lookupMap testWorkerId workerStatusMap
+      liftIO $ void $ waitForJust "worker liveness was not recorded" $ lookupMap testWorkerId workerAliveMap
+
+      replicateM_ 20 do
+        unwrapM $ ZmqxM.sends frontendNoise $ ["queued", ""] <> toZmq (defaultTask :: Task ())
+        ack <- liftIO newAck
+        unwrapM $ ZmqxM.sends backendNoise $ toZmq $ WorkerReportStatus ack ()
+      dispatchTask <- liftIO $ fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1})
+      let dispatchTaskId = unsafeGetTaskID dispatchTask
+      unwrapM $ ZmqxM.sends taskProcessorSender $ toZmq $ WorkerTask testWorkerId dispatchTask
+      dispatchedFrames <- liftIO . expectJust "worker did not receive TaskProcessor dispatch amid frontend/backend traffic" =<< unwrapM (ZmqxM.receivesFor workerDealer 1000)
+      liftIO $ dispatchedFrames @?= toZmq dispatchTask
+      assignedTasks <- liftIO $ waitForJust "worker task map was not updated after dispatch" $ lookupTSWorkerTasks testWorkerId workerTasksMap
+      liftIO $ assertBool "dispatched task was not tracked as in-flight" $ any (\(taskId, _, status) -> taskId == dispatchTaskId && status == TaskInit) assignedTasks
+
+      failedAck <- liftIO newAck
+      unwrapM $ ZmqxM.sends workerDealer $ toZmq $ WorkerReportTaskStatus failedAck dispatchTaskId TaskFailed
+      notifyFrames <- liftIO . expectJust "TaskProcessor did not receive retry notification" =<< unwrapM (ZmqxM.receivesFor taskProcessorReceiver 1000)
+      liftIO $ case fromZmq notifyFrames :: Either ZmqError Notify of
+        Right _ -> pure ()
+        Left err -> assertFailure $ "retry notify did not decode: " <> show err
+      retryTasks <- liftIO $ waitForNonEmpty "failed retry task was not queued" $ readQueue' failedTaskQueue
+      liftIO $ case retryTasks of
+        retryTask : _ -> assertTaskMatches dispatchTask {taskRetry = 0} (retryTaskPayload retryTask)
+        [] -> assertFailure "expected at least one retry task"
+
+      exhaustedTask <- liftIO $ fillTaskID' ((defaultTask :: Task ()) {taskRetry = 0})
+      let exhaustedTaskId = unsafeGetTaskID exhaustedTask
+      unwrapM $ ZmqxM.sends taskProcessorSender $ toZmq $ WorkerTask testWorkerId exhaustedTask
+      exhaustedFrames <- liftIO . expectJust "worker did not receive exhausted retry dispatch" =<< unwrapM (ZmqxM.receivesFor workerDealer 1000)
+      liftIO $ exhaustedFrames @?= toZmq exhaustedTask
+      exhaustedAck <- liftIO newAck
+      unwrapM $ ZmqxM.sends workerDealer $ toZmq $ WorkerReportTaskStatus exhaustedAck exhaustedTaskId TaskFailed
+      garbageNotifyFrames <- liftIO . expectJust "TaskProcessor did not receive garbage notification" =<< unwrapM (ZmqxM.receivesFor taskProcessorReceiver 1000)
+      liftIO $ case fromZmq garbageNotifyFrames :: Either ZmqError Notify of
+        Right _ -> pure ()
+        Left err -> assertFailure $ "garbage notify did not decode: " <> show err
+      garbageTasks <- liftIO $ waitForNonEmpty "failed exhausted task was not moved to garbage" $ getBuffer' garbageBin
+      liftIO $ case garbageTasks of
+        garbageTask : _ -> assertTaskMatches exhaustedTask garbageTask
+        [] -> assertFailure "expected at least one garbage task"
+      liftIO $ killThread socketLayerTid
+
 failedTaskWithRemainingRetryRequeuesWithDecrementedRetry :: Assertion
 failedTaskWithRemainingRetryRequeuesWithDecrementedRetry = do
   task <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1})
@@ -524,6 +641,7 @@ tests =
       TestLabel "worker backend EventLoop stopped send returns error" (TestCase workerBackendEventLoopStoppedSendReturnsError),
       TestLabel "worker task-status callback returns after backend stopped" (TestCase workerTaskStatusCallbackReturnsAfterBackendStopped),
       TestLabel "forked LotosApp actions cancel before context teardown" (TestCase forkedAppActionsAreCancelledBeforeContextTeardown),
+      TestLabel "broker SocketLayer EventLoop preserves mixed protocol traffic" (TestCase brokerSocketLayerEventLoopPreservesBrokerTraffic),
       TestLabel "failed task with remaining retry requeues with decremented retry" (TestCase failedTaskWithRemainingRetryRequeuesWithDecrementedRetry),
       TestLabel "failed task with no retry goes to garbage" (TestCase failedTaskWithNoRetryGoesToGarbage),
       TestLabel "positive retry interval delays eligibility until ready" (TestCase positiveRetryIntervalDelaysEligibilityUntilReady),

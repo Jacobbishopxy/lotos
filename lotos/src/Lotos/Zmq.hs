@@ -94,6 +94,7 @@ module Lotos.Zmq
     TaskProcessorConfig (..),
     InfoStorageConfig (..),
     LogIngestConfig (..),
+    TaskSchedulerData (..),
     defaultLogIngestConfig,
     defaultReliableLogIngestAddr,
 
@@ -104,6 +105,7 @@ module Lotos.Zmq
     ScheduledResult (..),
     LoadBalancerAlgo (..),
     runLBS,
+    runSocketLayer,
 
     -- * load balancer worker
     LogEnqueueResult (..),
@@ -137,5 +139,6 @@ import Lotos.Zmq.Config
 import Lotos.Zmq.Error
 import Lotos.Zmq.LBC
 import Lotos.Zmq.LBS
+import Lotos.Zmq.LBS.SocketLayer (runSocketLayer)
 import Lotos.Zmq.LBW
 import Lotos.Zmq.Util
