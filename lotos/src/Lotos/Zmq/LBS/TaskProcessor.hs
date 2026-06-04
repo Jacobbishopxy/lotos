@@ -15,10 +15,12 @@ module Lotos.Zmq.LBS.TaskProcessor
 where
 
 import Control.Concurrent
+import Control.Exception (SomeException, try)
 import Control.Monad (unless, when)
 import Control.Monad.RWS
 import Data.Map.Strict qualified as Map
-import Data.Time (getCurrentTime)
+import Data.Text qualified as Text
+import Data.Time (UTCTime, getCurrentTime)
 import Lotos.Logger
 import Lotos.TSD.Map
 import Lotos.TSD.Queue
@@ -28,6 +30,7 @@ import Lotos.Zmq.Config
 import Lotos.Zmq.Error
 import Lotos.Zmq.Internal.Liveness
 import Zmqx
+import Zmqx.EventLoop qualified as Zmqx.EventLoop
 import Zmqx.Monad qualified as ZmqxM
 
 ----------------------------------------------------------------------------------------------------
@@ -70,8 +73,7 @@ class LoadBalancerAlgo lb t w where
 
 data TaskProcessor lb t w
   = (LoadBalancerAlgo lb t w) => TaskProcessor
-  { lbReceiver :: Zmqx.Pair,
-    lbSender :: Zmqx.Pair,
+  { taskProcessorEventLoop :: Zmqx.EventLoop.EventLoop,
     taskQueue :: TSQueue (Task t),
     failedTaskQueue :: TSQueue (RetryTask t), -- backend put retryable failures with readiness metadata
     workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modify map
@@ -82,6 +84,15 @@ data TaskProcessor lb t w
     trigger :: EventTrigger,
     ver :: Int
   }
+
+taskProcessorDispatchEndpoint :: Text.Text
+taskProcessorDispatchEndpoint = "taskprocessor.dispatch"
+
+taskProcessorNotifyEndpoint :: Text.Text
+taskProcessorNotifyEndpoint = "taskprocessor.notify"
+
+taskProcessorNotifyMailboxCapacity :: Int
+taskProcessorNotifyMailboxCapacity = 1024
 
 ----------------------------------------------------------------------------------------------------
 
@@ -96,17 +107,38 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
   logApp INFO "runTaskProcessor"
 
   -- Init receiver Pair
-  receiverPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "tpReceiver"
+  receiverPair <- (zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "tpReceiver") :: LotosApp Zmqx.Pair
   zmqUnwrap $ ZmqxM.connect receiverPair socketLayerSenderAddr
   -- Init sender Pair
-  senderPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "tpSender"
+  senderPair <- (zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "tpSender") :: LotosApp Zmqx.Pair
   zmqUnwrap $ ZmqxM.connect senderPair taskProcessorSenderAddr
+
+  context <- ZmqxM.askContext
+  appEnv <- ask
 
   -- task processor cst
   tg <- liftIO $ mkCombinedTrigger triggerAlgoMaxNotifyCount triggerAlgoMaxWaitSec
-  let taskProcessor = TaskProcessor receiverPair senderPair tq ftq wtm wsm wam gbb loadBalancer tg 0
+  let spec =
+        Zmqx.EventLoop.addSender
+          taskProcessorDispatchEndpoint
+          senderPair
+          $ Zmqx.EventLoop.addReceiver
+            taskProcessorNotifyEndpoint
+            receiverPair
+            (Zmqx.EventLoop.Mailbox taskProcessorNotifyMailboxCapacity)
+            Zmqx.EventLoop.emptySpec
 
-  forkApp $ processorLoop config taskProcessor
+  forkApp $ do
+    result <-
+      liftIO $
+        try $
+          Zmqx.EventLoop.withEventLoopIn context spec $ \loop ->
+            runAppWithEnv appEnv $
+              processorLoop config $
+                TaskProcessor loop tq ftq wtm wsm wam gbb loadBalancer tg 0
+    case (result :: Either SomeException ()) of
+      Left exception -> logApp ERROR $ "TaskProcessor EventLoop stopped: " <> show exception
+      Right () -> pure ()
 
 processorLoop ::
   forall lb t w.
@@ -119,13 +151,8 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   triggerNow <- liftIO getCurrentTime
   (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger triggerNow
 
-  -- 1. receiving notification (BLOCKING !!!)
-  zmqUnwrap (ZmqxM.receivesFor lbReceiver $ timeoutInterval newTrigger triggerNow) >>= \case
-    Just bs ->
-      case (fromZmq bs) of
-        Left e -> logApp ERROR $ show e
-        Right (Notify ack) -> logApp DEBUG $ "processorLoop -> lbReceiver(ack): " <> show ack
-    Nothing -> logApp DEBUG $ "processorLoop -> lbReceiver(none): " <> show triggerNow
+  -- 1. receive a scheduler notification through the EventLoop mailbox.
+  receiveNotify taskProcessorEventLoop newTrigger triggerNow
 
   -- 2. when the trigger is inactivated, enter into a new loop
   unless shouldProcess $ processorLoop cfg tp {trigger = newTrigger}
@@ -157,8 +184,8 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
     logApp ERROR $
       "processorLoop.leftTasks: " <> show errLen
 
-  -- 6. send to backend router
-  mapM_ (zmqUnwrap . ZmqxM.sends lbSender . toZmq) workerTasks
+  -- 6. send to backend router through the EventLoop-owned PAIR socket.
+  mapM_ (sendWorkerTask taskProcessorEventLoop) workerTasks
 
   -- 7. re-enqueue invalid tasks
   liftIO $ enqueueTSs invalidTasks taskQueue
@@ -166,6 +193,19 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
 
   -- 8. loop
   processorLoop cfg tp {trigger = newTrigger, loadBalancer = newLoadBalancer}
+
+receiveNotify :: Zmqx.EventLoop.EventLoop -> EventTrigger -> UTCTime -> LotosApp ()
+receiveNotify taskProcessorLoop trigger triggerNow =
+  zmqUnwrap (Zmqx.EventLoop.recv taskProcessorLoop taskProcessorNotifyEndpoint $ timeoutInterval trigger triggerNow) >>= \case
+    Just bs ->
+      case fromZmq bs of
+        Left e -> logApp ERROR $ show e
+        Right (Notify ack) -> logApp DEBUG $ "processorLoop -> lbReceiver(ack): " <> show ack
+    Nothing -> logApp DEBUG $ "processorLoop -> lbReceiver(none): " <> show triggerNow
+
+sendWorkerTask :: (ToZmq t) => Zmqx.EventLoop.EventLoop -> RouterBackendOut t -> LotosApp ()
+sendWorkerTask taskProcessorLoop workerTask =
+  zmqUnwrap $ Zmqx.EventLoop.sends taskProcessorLoop taskProcessorDispatchEndpoint $ toZmq workerTask
 
 ----------------------------------------------------------------------------------------------------
 
