@@ -8,13 +8,11 @@ module Main where
 import Adt (ClientTask)
 import Client (readTaskFromFile)
 import Control.Exception (SomeException, try)
-import Control.Monad (join)
 import Lotos.Logger (LogLevel (DEBUG), runZmqApp, withLocalTimeLogger)
 import Lotos.Zmq (Ack, ClientServiceConfig (..), Task, mkClientService, readClientConfig, sendTaskRequest)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
-import System.Timeout (timeout)
 
 data ClientArgs = ClientArgs
   { clientConfigPath :: Maybe FilePath,
@@ -54,19 +52,11 @@ readClientTask ClientArgs {clientTaskPath = path} = do
     Right task -> pure task
 
 submitClientTask :: ClientServiceConfig -> Task ClientTask -> IO (Maybe Ack)
-submitClientTask clientConfig task = do
-  timedAck <- timeout (requestTimeoutMicroseconds clientConfig) $ submitClientTaskOnce clientConfig task
-  pure $ join timedAck
-
-submitClientTaskOnce :: ClientServiceConfig -> Task ClientTask -> IO (Maybe Ack)
-submitClientTaskOnce clientConfig task =
+submitClientTask clientConfig task =
   withLocalTimeLogger "./logs/taskScheduleClient.log" DEBUG False $ \logConfig ->
     runZmqApp logConfig $ do
       service <- mkClientService clientConfig
       sendTaskRequest service task
-
-requestTimeoutMicroseconds :: ClientServiceConfig -> Int
-requestTimeoutMicroseconds clientConfig = reqTimeoutSec clientConfig * 1_000_000
 
 runClient :: ClientArgs -> IO (Maybe Ack)
 runClient clientArgs = do

@@ -95,7 +95,7 @@ sleep 5
 cat .tmp/task-schedule-demo.out
 ```
 
-The client ACK means the broker accepted/enqueued the task; completion proof comes from the worker marker file, worker logs, or the info API. To build a new scheduler on top of `lotos`, start with [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md), then use the TaskSchedule source files as the concrete reference implementation.
+The client ACK means the broker accepted/enqueued the task; completion proof comes from the worker marker file, worker logs, or the info API. Client request submission remains a direct synchronous REQ/ACK exchange, and `ClientServiceConfig.reqTimeoutSec` bounds how long `sendTaskRequest` waits for that ACK before returning `Nothing`. To build a new scheduler on top of `lotos`, start with [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md), then use the TaskSchedule source files as the concrete reference implementation.
 
 ## Architecture overview
 
@@ -184,7 +184,7 @@ Current bounded regression test suites:
 
 - `lotos:test:test-conc-executor` is the concurrent process executor regression suite.
 - `lotos:test:test-zmq-worker-frames` checks bounded worker status, worker task-status, retry/failure status payload, retry-delay eligibility, stale-worker recovery, and scheduled task ROUTER/DEALER frame contracts.
-- `lotos:test:test-zmq-client-ack-frames` checks bounded frontend REQ/ROUTER client ACK frames.
+- `lotos:test:test-zmq-client-ack-frames` checks bounded frontend REQ/ROUTER client ACK frames and the client-service ACK timeout path.
 - `lotos:test:test-zmq-log-protocol-config` checks reliable log protocol frames plus JSON/config compatibility defaults.
 - `lotos:test:test-zmq-log-ingest` checks broker LogIngest cache, journal, query/stats, ACK, rejection, and same-address startup behavior.
 - `lotos:test:test-zmq-worker-log-transport` checks worker-side bounded buffering, drop markers, ACK retry clearing, and wire-rounded ACK matching.
@@ -231,7 +231,7 @@ cabal run TaskSchedule:exe:ts-worker
 cabal run TaskSchedule:exe:ts-worker -- applications/TaskSchedule/config/worker.json
 ```
 
-Submit a task JSON with the client. A client config can be supplied as the first argument when overriding the frontend address or timeout:
+Submit a task JSON with the client. A client config can be supplied as the first argument when overriding the frontend address or `reqTimeoutSec`; if no ACK arrives before that timeout, `ts-client` exits non-zero with a no-ACK message:
 
 ```bash
 cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/task-demo.json

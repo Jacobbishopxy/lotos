@@ -6,6 +6,7 @@ module Main where
 import Control.Concurrent (threadDelay)
 import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Lotos.Logger (LogLevel (DEBUG), withConsoleLogger)
 import Lotos.Zmq
 import System.Exit (exitFailure)
 import Test.HUnit
@@ -62,6 +63,27 @@ clientReqReceivesBrokerAck =
       Right decodedAck -> liftIO $ toZmq decodedAck @?= ackFrames
       Left err -> liftIO $ assertFailure $ "client ACK frames did not decode: " <> show err
 
+clientServiceRequestTimesOutWithoutAck :: Assertion
+clientServiceRequestTimesOutWithoutAck =
+  runZmqContextIO do
+    let endpoint = "inproc://tp041-client-service-timeout"
+        clientConfig =
+          ClientServiceConfig
+            { clientId = testClientId,
+              loadBalancerFrontendAddr = endpoint,
+              reqTimeoutSec = 1
+            }
+    router <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp041-client-timeout-router") :: ZmqxM.ZmqxT IO Zmqx.Router
+    unwrapM $ ZmqxM.bind router endpoint
+    context <- ZmqxM.askContext
+
+    ack <- liftIO $ withConsoleLogger DEBUG $ \logConfig ->
+      runAppWithContext context logConfig do
+        service <- mkClientService clientConfig
+        sendTaskRequest service (defaultTask :: Task ())
+
+    liftIO $ ack @?= Nothing
+
 malformedClientRequestFramesFailDecode :: Assertion
 malformedClientRequestFramesFailDecode =
   case fromZmq ["simpleClient_1", "request-id", "", "not-a-uuid", "Ping", "0", "0", "0", ""] :: Either ZmqError (RouterFrontendIn ()) of
@@ -72,6 +94,7 @@ tests :: Test
 tests =
   TestList
     [ TestLabel "client REQ receives broker ACK as a single ACK frame" (TestCase clientReqReceivesBrokerAck),
+      TestLabel "client service returns Nothing when ACK times out" (TestCase clientServiceRequestTimesOutWithoutAck),
       TestLabel "malformed client request frames fail before ACK" (TestCase malformedClientRequestFramesFailDecode)
     ]
 

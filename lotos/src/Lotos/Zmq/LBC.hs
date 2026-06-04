@@ -47,6 +47,11 @@ sendTaskRequest ClientService {..} t = do
   -- send task
   zmqUnwrap $ ZmqxM.sends clientReq $ toZmq t
   -- recv ack
-  fromZmq @Ack <$> zmqUnwrap (ZmqxM.receives clientReq) >>= \case
-    Left e -> logApp ERROR (show e) >> pure Nothing
-    Right ack -> logApp INFO ("recv ack from load-balancer: " <> show ack) >> return (Just ack)
+  zmqUnwrap (ZmqxM.receivesFor clientReq $ secondsToMilliseconds $ reqTimeoutSec conf) >>= \case
+    Nothing -> do
+      logApp WARN $ "timed out waiting for load-balancer ACK after " <> show (reqTimeoutSec conf) <> "s"
+      pure Nothing
+    Just frames ->
+      case fromZmq @Ack frames of
+        Left e -> logApp ERROR (show e) >> pure Nothing
+        Right ack -> logApp INFO ("recv ack from load-balancer: " <> show ack) >> return (Just ack)
