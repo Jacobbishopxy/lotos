@@ -25,11 +25,13 @@ module Lotos.Zmq.LBW
 where
 
 import Control.Concurrent (myThreadId)
-import Control.Monad (unless, void, when)
+import Control.Concurrent.STM (TQueue, atomically, newTQueueIO, orElse, readTQueue, writeTQueue)
+import Control.Exception (SomeException, try)
+import Control.Monad (unless, void)
 import Control.Monad.RWS
-import Data.Function
+import Data.ByteString qualified as ByteString
 import Data.Text qualified as Text
-import Data.Time (getCurrentTime)
+import Data.Time (UTCTime, getCurrentTime)
 import Lotos.Logger hiding (LogLevel)
 import Lotos.TSD.Queue
 import Lotos.Zmq.Adt
@@ -38,7 +40,9 @@ import Lotos.Zmq.Error (ZmqError, zmqAppUnwrap, zmqThrow, zmqUnwrap)
 import Lotos.Zmq.Internal.WorkerRuntime
 import Lotos.Zmq.LBW.LogTransport
 import Lotos.Zmq.Util (textToBS)
+import System.Timeout (timeout)
 import Zmqx
+import Zmqx.EventLoop qualified as Zmqx.EventLoop
 import Zmqx.Monad qualified as ZmqxM
 
 ----------------------------------------------------------------------------------------------------
@@ -201,80 +205,156 @@ runWorkerService ws WorkerServiceConfig {..} = do
   logApp INFO $ "tasksExecLoop on thread: " <> show tid2
 
   -- worker Dealer init in a separate thread
-  wDealer <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "workerDealer"
+  wDealer <- (zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "workerDealer") :: LotosApp Zmqx.Dealer
   liftIO $ Zmqx.setSocketOpt wDealer (Zmqx.Z_RoutingId $ textToBS workerId)
   zmqUnwrap $ ZmqxM.connect wDealer loadBalancerBackendAddr
   -- worker Dealer Pair init in a separate thread
-  wDealerPair' <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "workerDealerPair'"
+  wDealerPair' <- (zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "workerDealerPair'") :: LotosApp Zmqx.Pair
   zmqUnwrap $ ZmqxM.connect wDealerPair' workerDealerPairAddr
 
-  -- start the reliable logging loop on its own DEALER channel.
+  -- Start the reliable logging loop before the backend task/status loop, but
+  -- keep it on its own DEALER, EventLoop thread, endpoint, and bounded ACK
+  -- mailbox. Logging backpressure must never share the backend EventLoop that
+  -- receives tasks and forwards task-status/heartbeat frames.
   tLog <- runWorkerLogTransport (workerLogTransport ws)
   logApp INFO $ "workerLogTransport threadID: " <> show tLog
 
-  let pollItems = ZmqxM.pollIn wDealer & ZmqxM.pollInAlso wDealerPair'
+  context <- ZmqxM.askContext
+  appEnv <- ask
+  backendFrames <- liftIO newTQueueIO
+  statusFrames <- liftIO newTQueueIO
+  let spec =
+        Zmqx.EventLoop.addReceiver
+          workerBackendStatusPairEndpoint
+          wDealerPair'
+          (Zmqx.EventLoop.Callback $ atomically . writeTQueue statusFrames)
+          $ Zmqx.EventLoop.addTransceiver
+            workerBackendDealerEndpoint
+            wDealer
+            (Zmqx.EventLoop.Callback $ atomically . writeTQueue backendFrames)
+            Zmqx.EventLoop.emptySpec
+  result <-
+    liftIO $
+      try $
+        -- The backend DEALER and internal PAIR were opened through MonadZmqx;
+        -- run the EventLoop against that explicit context and treat registered
+        -- sockets as worker-owned until the socket loop exits.
+        Zmqx.EventLoop.withEventLoopIn context spec $ \loop ->
+          runAppWithEnv appEnv $ socketLoop ws loop backendFrames statusFrames
+  case (result :: Either SomeException ()) of
+    Left exception ->
+      logApp ERROR $ "worker backend EventLoop stopped: " <> show exception
+    Right () -> pure ()
 
-  -- start the socket loop
-  socketLoop pollItems ws wDealer wDealerPair'
+workerBackendWaitSliceMs :: Int
+workerBackendWaitSliceMs = 50
 
--- | Main communication loop for the worker service
+workerBackendDrainBatchLimit :: Int
+workerBackendDrainBatchLimit = 32
+
+-- | Main communication loop for the worker service.
 --
--- 1. Receives tasks from the load balancer (blocking)
--- 2. Periodically sends worker status updates
--- 3. Handles task queue operations
+-- Backend DEALER and internal PAIR sockets are owned by 'Zmqx.EventLoop'. Its
+-- callbacks only hand raw multipart frames to STM queues; parsing, task enqueue,
+-- wake notification, status forwarding, and heartbeat sends stay on this worker
+-- socket-loop thread.
 socketLoop ::
   forall ta sr t w.
   (FromZmq t, ToZmq w, StatusReporter sr w) =>
-  Zmqx.Sockets ->
   WorkerService ta sr t w ->
-  Zmqx.Dealer ->
-  Zmqx.Pair ->
+  Zmqx.EventLoop.EventLoop ->
+  TQueue [ByteString.ByteString] ->
+  TQueue [ByteString.ByteString] ->
   LotosApp ()
-socketLoop
-  pollItems
-  ws@WorkerService {..}
-  workerDealer
-  workerDealerPair' =
-  do
-    -- 0. according to the trigger, deciding enter into a new loop or continue
-    now <- liftIO getCurrentTime
-    (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger now
-    logApp DEBUG $ "socketLoop -> start, now: " <> show now <> ", shouldProcess: " <> show shouldProcess
+socketLoop ws@WorkerService {..} backendLoop backendFrames statusFrames = do
+  -- 0. according to the trigger, deciding enter into a new loop or continue
+  now <- liftIO getCurrentTime
+  (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger now
+  logApp DEBUG $ "socketLoop -> start, now: " <> show now <> ", shouldProcess: " <> show shouldProcess
 
-    rdy <- zmqUnwrap (ZmqxM.pollFor pollItems $ timeoutInterval newTrigger now)
-
-    case rdy of
-      Just (Zmqx.Ready ready) -> do
-        -- receive message from external
-        when (ready workerDealer) do
-          logApp DEBUG $ "socketLoop -> workerDealer: " <> show now
-          fromZmq @(Task t) <$> zmqUnwrap (ZmqxM.receives workerDealer) >>= \case
-            Left e -> logApp ERROR $ show e
-            Right task -> liftIO $ do
-              enqueueTS task taskQueue
-              notifyTaskWakeSignal taskWakeSignal
-        -- receive message from internal
-        when (ready workerDealerPair') do
-          logApp DEBUG $ "socketLoop -> workerDealerPair: " <> show now
-          zmqUnwrap (ZmqxM.receives workerDealerPair') >>= \msg ->
-            case (fromZmq msg :: Either ZmqError WorkerReportTaskStatus) of
-              Left e -> logApp ERROR $ show e
-              Right _ -> zmqUnwrap $ ZmqxM.sends workerDealer msg
+  processedQueued <- drainWorkerBackendFrames backendLoop ws backendFrames statusFrames
+  unless (processedQueued || shouldProcess) do
+    waitWorkerBackendFrames backendFrames statusFrames (workerBackendTimeout newTrigger now) >>= \case
       Nothing -> logApp DEBUG $ "socketLoop -> none: " <> show now
+      Just frames -> handleWorkerBackendFrames backendLoop ws frames
+    void $ drainWorkerBackendFrames backendLoop ws backendFrames statusFrames
 
-    -- 2. when the trigger is inactivated, enter into a new loop
-    unless shouldProcess $ socketLoop pollItems (ws {trigger = newTrigger} :: WorkerService ta sr t w) workerDealer workerDealerPair'
+  if shouldProcess
+    then do
+      -- 3. gather & send worker status (due to EventTrigger, it sends worker status periodically)
+      wInfo <- liftIO $ readWorkerInfoVar workerInfo
+      let statusReporterAPI = StatusReporterAPI {srReportInfo = wInfo}
+      (newReporter, workerStatus :: w) <- gatherStatus statusReporterAPI reporter
+      -- construct `WorkerReportStatus`
+      ack <- liftIO newAck
+      sendWorkerBackendFramesOrStop "worker heartbeat status" backendLoop $ toZmq $ WorkerReportStatus ack workerStatus
+      socketLoop (ws {trigger = newTrigger, reporter = newReporter} :: WorkerService ta sr t w) backendLoop backendFrames statusFrames
+    else
+      socketLoop (ws {trigger = newTrigger} :: WorkerService ta sr t w) backendLoop backendFrames statusFrames
 
-    -- 3. gather & send worker status (due to EventTrigger, it sends worker status periodically
-    wInfo <- liftIO $ readWorkerInfoVar workerInfo
-    let statusReporterAPI = StatusReporterAPI {srReportInfo = wInfo}
-    (newReporter, workerStatus :: w) <- gatherStatus statusReporterAPI reporter
-    -- construct `WorkerReportStatus`
-    ack <- liftIO newAck
-    zmqUnwrap $ ZmqxM.sends workerDealer $ toZmq $ WorkerReportStatus ack workerStatus
+workerBackendTimeout :: EventTrigger -> UTCTime -> Int
+workerBackendTimeout trigger now =
+  let heartbeatTimeout = timeoutInterval trigger now
+   in if heartbeatTimeout <= 0 then 0 else min heartbeatTimeout workerBackendWaitSliceMs
 
-    -- loop
-    socketLoop pollItems (ws {trigger = newTrigger, reporter = newReporter} :: WorkerService ta sr t w) workerDealer workerDealerPair'
+drainWorkerBackendFrames ::
+  forall ta sr t w.
+  (FromZmq t) =>
+  Zmqx.EventLoop.EventLoop ->
+  WorkerService ta sr t w ->
+  TQueue [ByteString.ByteString] ->
+  TQueue [ByteString.ByteString] ->
+  LotosApp Bool
+drainWorkerBackendFrames backendLoop ws backendFrames statusFrames = do
+  appEnv <- ask
+  liftIO $
+    drainWorkerBackendFramesWith workerBackendDrainBatchLimit backendFrames statusFrames $
+      runAppWithEnv appEnv . handleWorkerBackendFrames backendLoop ws
+
+waitWorkerBackendFrames ::
+  TQueue [ByteString.ByteString] ->
+  TQueue [ByteString.ByteString] ->
+  Int ->
+  LotosApp (Maybe (WorkerBackendFrames [ByteString.ByteString] [ByteString.ByteString]))
+waitWorkerBackendFrames backendFrames statusFrames timeoutMs
+  | timeoutMs <= 0 = liftIO $ tryReadWorkerBackendFrames True backendFrames statusFrames
+  | otherwise =
+      liftIO $
+        timeout (timeoutMs * 1000) $
+          atomically $
+            (InternalTaskStatusFrames <$> readTQueue statusFrames)
+              `orElse` (BackendTaskFrames <$> readTQueue backendFrames)
+
+handleWorkerBackendFrames ::
+  forall ta sr t w.
+  (FromZmq t) =>
+  Zmqx.EventLoop.EventLoop ->
+  WorkerService ta sr t w ->
+  WorkerBackendFrames [ByteString.ByteString] [ByteString.ByteString] ->
+  LotosApp ()
+handleWorkerBackendFrames backendLoop WorkerService {..} = \case
+  BackendTaskFrames frames -> do
+    logApp DEBUG "socketLoop -> workerBackendDealer"
+    case fromZmq @(Task t) frames of
+      Left e -> logApp ERROR $ show e
+      Right task -> liftIO $ enqueueBackendTaskAndNotify task taskQueue taskWakeSignal
+  InternalTaskStatusFrames frames -> do
+    logApp DEBUG "socketLoop -> workerBackendStatusPair"
+    case (fromZmq frames :: Either ZmqError WorkerReportTaskStatus) of
+      Left e -> logApp ERROR $ show e
+      Right _ -> sendWorkerBackendFramesOrStop "worker task status" backendLoop frames
+
+sendWorkerBackendFramesOrStop :: String -> Zmqx.EventLoop.EventLoop -> [ByteString.ByteString] -> LotosApp ()
+sendWorkerBackendFramesOrStop operation backendLoop frames = do
+  sendResult <- liftIO $ sendWorkerBackendDealerFrames backendLoop frames
+  case sendResult of
+    Right () -> pure ()
+    Left err -> do
+      logApp ERROR $
+        operation
+          <> " send failed; stopping worker backend socket-loop before accepting more task/status frames: "
+          <> show err
+      zmqUnwrap $ pure sendResult
 
 -- used for worker executing tasks
 

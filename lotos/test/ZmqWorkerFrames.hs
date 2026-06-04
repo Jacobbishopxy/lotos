@@ -3,9 +3,11 @@
 
 module Main where
 
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (newEmptyMVar, putMVar, readMVar, threadDelay)
+import Control.Concurrent.STM (atomically, newTQueueIO, readTQueue, writeTQueue)
 import Control.Monad (forM_, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Time (UTCTime (..), addUTCTime, fromGregorian)
 import Lotos.TSD.Map (insertMap, lookupMap, mkTSMap)
 import Lotos.TSD.Queue (mkTSQueue, readQueue')
@@ -20,9 +22,21 @@ import Lotos.Zmq.Internal.Retry
     partitionRetryTasks,
     retryTaskEligible,
   )
+import Lotos.Zmq.Internal.WorkerRuntime
+  ( WorkerBackendFrames (..),
+    drainWorkerBackendFramesWith,
+    enqueueBackendTaskAndNotify,
+    newTaskWakeSignal,
+    sendWorkerBackendDealerFrames,
+    waitTaskWakeSignal,
+    workerBackendDealerEndpoint,
+    workerBackendStatusPairEndpoint,
+  )
 import System.Exit (exitFailure)
+import System.Timeout (timeout)
 import Test.HUnit
 import Zmqx qualified
+import Zmqx.EventLoop qualified as Zmqx.EventLoop
 import Zmqx.Monad qualified as ZmqxM
 
 testWorkerId :: RoutingID
@@ -154,6 +168,151 @@ scheduledWorkerTaskFramesStripRouterEnvelope =
       Right decodedTask -> liftIO $ assertTaskMatches task decodedTask
       Left err -> liftIO $ assertFailure $ "scheduled worker task frames did not decode: " <> show err
 
+workerBackendEventLoopReceivesTaskFramesInOrder :: Assertion
+workerBackendEventLoopReceivesTaskFramesInOrder =
+  runZmqContextIO do
+    let endpoint = "inproc://tp035-worker-backend-eventloop-task-order"
+        backendEndpoint = workerBackendDealerEndpoint
+    router <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp035-worker-backend-task-router") :: ZmqxM.ZmqxT IO Zmqx.Router
+    dealer <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp035-worker-backend-task-dealer") :: ZmqxM.ZmqxT IO Zmqx.Dealer
+    backendQueue <- liftIO newTQueueIO
+    context <- ZmqxM.askContext
+
+    liftIO $ Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
+    unwrapM $ ZmqxM.bind router endpoint
+    unwrapM $ ZmqxM.connect dealer endpoint
+    liftIO $ threadDelay 100000
+
+    let spec =
+          Zmqx.EventLoop.addTransceiver
+            backendEndpoint
+            dealer
+            (Zmqx.EventLoop.Callback $ atomically . writeTQueue backendQueue)
+            Zmqx.EventLoop.emptySpec
+    liftIO $ Zmqx.EventLoop.withEventLoopIn context spec $ \loop -> do
+      registrationAck <- newAck
+      unwrap $ Zmqx.EventLoop.sends loop backendEndpoint $ toZmq $ WorkerReportStatus registrationAck ()
+      _ <- expectJust "backend ROUTER did not receive EventLoop worker registration before task send" =<< unwrap (Zmqx.receivesFor router 1000)
+
+      task1 <- fillTaskID' (defaultTask :: Task ())
+      task2 <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1})
+      unwrap $ Zmqx.sends router $ toZmq $ WorkerTask testWorkerId task1
+      unwrap $ Zmqx.sends router $ toZmq $ WorkerTask testWorkerId task2
+
+      frames1 <- expectJust "EventLoop backend queue did not receive first task" =<< timeout 1000000 (atomically $ readTQueue backendQueue)
+      frames2 <- expectJust "EventLoop backend queue did not receive second task" =<< timeout 1000000 (atomically $ readTQueue backendQueue)
+      frames1 @?= toZmq task1
+      frames2 @?= toZmq task2
+
+workerBackendEventLoopForwardsStatusAndHeartbeatFrames :: Assertion
+workerBackendEventLoopForwardsStatusAndHeartbeatFrames =
+  runZmqContextIO do
+    let backendAddr = "inproc://tp035-worker-backend-eventloop-status"
+        pairAddr = "inproc://tp035-worker-backend-eventloop-status-pair"
+        backendEndpoint = workerBackendDealerEndpoint
+        statusPairEndpoint = workerBackendStatusPairEndpoint
+    router <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp035-worker-backend-status-router") :: ZmqxM.ZmqxT IO Zmqx.Router
+    dealer <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp035-worker-backend-status-dealer") :: ZmqxM.ZmqxT IO Zmqx.Dealer
+    pairBind <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp035-worker-backend-status-pair-bind") :: ZmqxM.ZmqxT IO Zmqx.Pair
+    pairEventLoop <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp035-worker-backend-status-pair-eventloop") :: ZmqxM.ZmqxT IO Zmqx.Pair
+    statusQueue <- liftIO newTQueueIO
+    context <- ZmqxM.askContext
+
+    liftIO $ Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
+    unwrapM $ ZmqxM.bind router backendAddr
+    unwrapM $ ZmqxM.connect dealer backendAddr
+    unwrapM $ ZmqxM.bind pairBind pairAddr
+    unwrapM $ ZmqxM.connect pairEventLoop pairAddr
+    liftIO $ threadDelay 100000
+
+    let spec =
+          Zmqx.EventLoop.addReceiver
+            statusPairEndpoint
+            pairEventLoop
+            (Zmqx.EventLoop.Callback $ atomically . writeTQueue statusQueue)
+            $ Zmqx.EventLoop.addTransceiver
+              backendEndpoint
+              dealer
+              Zmqx.EventLoop.NoReceivers
+              Zmqx.EventLoop.emptySpec
+    liftIO $ Zmqx.EventLoop.withEventLoopIn context spec $ \loop -> do
+      heartbeatAck <- newAck
+      let heartbeat = WorkerReportStatus heartbeatAck ()
+      unwrap $ sendWorkerBackendDealerFrames loop $ toZmq heartbeat
+      heartbeatFrames <- expectJust "backend ROUTER did not receive EventLoop heartbeat status" =<< unwrap (Zmqx.receivesFor router 1000)
+      heartbeatFrames @?= textToBS testWorkerId : toZmq heartbeat
+
+      task <- fillTaskID' (defaultTask :: Task ())
+      taskStatusAck <- newAck
+      let taskStatus = WorkerReportTaskStatus taskStatusAck (unsafeGetTaskID task) TaskSucceed
+      unwrap $ Zmqx.sends pairBind $ toZmq taskStatus
+      statusFrames <- expectJust "EventLoop status PAIR did not receive task-status frames" =<< timeout 1000000 (atomically $ readTQueue statusQueue)
+      statusFrames @?= toZmq taskStatus
+
+      unwrap $ sendWorkerBackendDealerFrames loop statusFrames
+      forwardedFrames <- expectJust "backend ROUTER did not receive forwarded task-status frames" =<< unwrap (Zmqx.receivesFor router 1000)
+      forwardedFrames @?= textToBS testWorkerId : toZmq taskStatus
+
+workerBackendDrainAlternatesStatusAndBackendQueues :: Assertion
+workerBackendDrainAlternatesStatusAndBackendQueues = do
+  backendQueue <- newTQueueIO
+  statusQueue <- newTQueueIO
+  seen <- newIORef []
+
+  atomically do
+    writeTQueue backendQueue ("backend-1" :: String)
+    writeTQueue backendQueue "backend-2"
+    writeTQueue statusQueue ("status-1" :: String)
+    writeTQueue statusQueue "status-2"
+
+  processed <- drainWorkerBackendFramesWith 4 backendQueue statusQueue $ \frames ->
+    modifyIORef' seen (frames :)
+
+  processed @?= True
+  processedFrames <- reverse <$> readIORef seen
+  processedFrames
+    @?= [ InternalTaskStatusFrames "status-1",
+          BackendTaskFrames "backend-1",
+          InternalTaskStatusFrames "status-2",
+          BackendTaskFrames "backend-2"
+        ]
+
+workerBackendEnqueueNotifiesAfterTaskIsQueued :: Assertion
+workerBackendEnqueueNotifiesAfterTaskIsQueued = do
+  taskQueue <- mkTSQueue
+  taskWakeSignal <- newTaskWakeSignal
+  task1 <- fillTaskID' (defaultTask :: Task ())
+  task2 <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1})
+
+  enqueueBackendTaskAndNotify task1 taskQueue taskWakeSignal
+  enqueueBackendTaskAndNotify task2 taskQueue taskWakeSignal
+
+  queuedTasks <- readQueue' taskQueue
+  (taskID <$> queuedTasks) @?= [taskID task1, taskID task2]
+  wake <- timeout 100000 (waitTaskWakeSignal taskWakeSignal)
+  expectJust "backend enqueue did not notify the worker wake signal" wake
+
+workerBackendEventLoopStoppedSendReturnsError :: Assertion
+workerBackendEventLoopStoppedSendReturnsError =
+  runZmqContextIO do
+    let backendEndpoint = workerBackendDealerEndpoint
+    dealer <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp035-worker-backend-stopped-dealer") :: ZmqxM.ZmqxT IO Zmqx.Dealer
+    context <- ZmqxM.askContext
+    loopVar <- liftIO newEmptyMVar
+
+    let spec =
+          Zmqx.EventLoop.addTransceiver
+            backendEndpoint
+            dealer
+            Zmqx.EventLoop.NoReceivers
+            Zmqx.EventLoop.emptySpec
+    liftIO $ Zmqx.EventLoop.withEventLoopIn context spec $ \loop -> putMVar loopVar loop
+    loop <- liftIO $ readMVar loopVar
+    sendResult <- liftIO $ sendWorkerBackendDealerFrames loop [""]
+    case sendResult of
+      Left _ -> pure ()
+      Right () -> liftIO $ assertFailure "stopped backend EventLoop send unexpectedly succeeded"
+
 failedTaskWithRemainingRetryRequeuesWithDecrementedRetry :: Assertion
 failedTaskWithRemainingRetryRequeuesWithDecrementedRetry = do
   task <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1})
@@ -272,6 +431,11 @@ tests =
       TestLabel "worker task status ROUTER frames use configured DEALER routing id" (TestCase workerTaskStatusFramesUseConfiguredDealerRoutingId),
       TestLabel "worker report task status payloads round-trip all task statuses" (TestCase workerReportTaskStatusPayloadsRoundTrip),
       TestLabel "scheduled worker task frames strip ROUTER envelope for DEALER" (TestCase scheduledWorkerTaskFramesStripRouterEnvelope),
+      TestLabel "worker backend EventLoop receives task frames in order" (TestCase workerBackendEventLoopReceivesTaskFramesInOrder),
+      TestLabel "worker backend EventLoop forwards task status and heartbeat frames" (TestCase workerBackendEventLoopForwardsStatusAndHeartbeatFrames),
+      TestLabel "worker backend drain alternates status and backend queues" (TestCase workerBackendDrainAlternatesStatusAndBackendQueues),
+      TestLabel "worker backend enqueue notifies after task is queued" (TestCase workerBackendEnqueueNotifiesAfterTaskIsQueued),
+      TestLabel "worker backend EventLoop stopped send returns error" (TestCase workerBackendEventLoopStoppedSendReturnsError),
       TestLabel "failed task with remaining retry requeues with decremented retry" (TestCase failedTaskWithRemainingRetryRequeuesWithDecrementedRetry),
       TestLabel "failed task with no retry goes to garbage" (TestCase failedTaskWithNoRetryGoesToGarbage),
       TestLabel "positive retry interval delays eligibility until ready" (TestCase positiveRetryIntervalDelaysEligibilityUntilReady),
