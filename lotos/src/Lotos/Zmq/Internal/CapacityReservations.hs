@@ -79,8 +79,9 @@ refreshNonTerminalReservation ::
   IO ()
 refreshNonTerminalReservation workerId taskId workerReservationsMap = do
   existingReservation <- deleteTSWorkerReservationByTask workerId taskId workerReservationsMap
-  let baseline = existingReservation >>= wcrBaselineOccupiedSlots
-  appendTSWorkerReservation workerId (WorkerCapacityReservation taskId baseline) workerReservationsMap
+  case existingReservation of
+    Nothing -> pure ()
+    Just reservation -> appendTSWorkerReservation workerId reservation workerReservationsMap
 
 releaseReservationByTask ::
   RoutingID ->

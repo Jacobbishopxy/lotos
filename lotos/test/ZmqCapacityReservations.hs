@@ -44,14 +44,32 @@ reconciliationRequiresHeartbeatToAccountForKnownBaseline = do
   remaining <- toMapTSWorkerReservations reservations
   Map.lookup "worker-a" remaining @?= Nothing
 
-nonTerminalRefreshPreservesDispatchBaseline :: Assertion
-nonTerminalRefreshPreservesDispatchBaseline = do
+nonTerminalRefreshPreservesDispatchBaselineUntilSafeHeartbeat :: Assertion
+nonTerminalRefreshPreservesDispatchBaselineUntilSafeHeartbeat = do
   reservation <- mkReservation (Just 1)
   reservations <- reservationMapFor "worker-a" [reservation]
 
   refreshNonTerminalReservation "worker-a" (wcrTaskId reservation) reservations
+
+  unsafeHeartbeat <- reconcileWorkerReservations (const $ occupiedSlots 1) [("worker-a", ())] reservations
+  Map.lookup "worker-a" unsafeHeartbeat @?= Just [reservation]
+
+  safeHeartbeat <- reconcileWorkerReservations (const $ occupiedSlots 2) [("worker-a", ())] reservations
+  Map.lookup "worker-a" safeHeartbeat @?= Just []
   remaining <- toMapTSWorkerReservations reservations
-  fmap (fmap wcrBaselineOccupiedSlots) (Map.lookup "worker-a" remaining) @?= Just [Just 1]
+  Map.lookup "worker-a" remaining @?= Nothing
+
+lateNonTerminalRefreshDoesNotRecreateReconciledReservation :: Assertion
+lateNonTerminalRefreshDoesNotRecreateReconciledReservation = do
+  reservation <- mkReservation (Just 1)
+  reservations <- reservationMapFor "worker-a" [reservation]
+
+  safeHeartbeat <- reconcileWorkerReservations (const $ occupiedSlots 2) [("worker-a", ())] reservations
+  Map.lookup "worker-a" safeHeartbeat @?= Just []
+
+  refreshNonTerminalReservation "worker-a" (wcrTaskId reservation) reservations
+  remaining <- toMapTSWorkerReservations reservations
+  Map.lookup "worker-a" remaining @?= Nothing
 
 terminalStatusReleaseDeletesByTask :: Assertion
 terminalStatusReleaseDeletesByTask = do
@@ -79,7 +97,8 @@ tests =
   TestList
     [ TestLabel "reconciliation keeps unknown-baseline occupancy" (TestCase reconciliationKeepsUnknownBaselineOccupancy),
       TestLabel "reconciliation requires heartbeat to account for known baseline" (TestCase reconciliationRequiresHeartbeatToAccountForKnownBaseline),
-      TestLabel "non-terminal refresh preserves dispatch baseline" (TestCase nonTerminalRefreshPreservesDispatchBaseline),
+      TestLabel "non-terminal refresh preserves dispatch baseline until safe heartbeat" (TestCase nonTerminalRefreshPreservesDispatchBaselineUntilSafeHeartbeat),
+      TestLabel "late non-terminal refresh does not recreate reconciled reservation" (TestCase lateNonTerminalRefreshDoesNotRecreateReconciledReservation),
       TestLabel "terminal status release deletes a single reservation" (TestCase terminalStatusReleaseDeletesByTask),
       TestLabel "stale-worker recovery deletes all reservations for the worker" (TestCase staleWorkerRecoveryDeletesAllWorkerReservations)
     ]
