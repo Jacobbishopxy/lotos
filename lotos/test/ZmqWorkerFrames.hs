@@ -503,6 +503,7 @@ brokerSocketLayerEventLoopPreservesBrokerTraffic =
       taskQueue <- liftIO (mkTSQueue :: IO (TSQueue (Task ())))
       failedTaskQueue <- liftIO (mkTSQueue :: IO (TSQueue (RetryTask ())))
       workerTasksMap <- liftIO (newTSWorkerTasksMap :: IO (TSWorkerTasksMap (TaskID, Task (), TaskStatus)))
+      workerReservationsMap <- liftIO newTSWorkerReservationsMap
       workerStatusMap <- liftIO (mkTSMap :: IO (TSWorkerStatusMap ()))
       workerAliveMap <- liftIO newTSWorkerAliveMap
       garbageBin <- liftIO (mkTSRingBuffer 10 :: IO (TSRingBuffer (Task ())))
@@ -515,7 +516,7 @@ brokerSocketLayerEventLoopPreservesBrokerTraffic =
           backendAddr = "inproc://tp039-broker-backend"
           taskProcessorSenderAddr = "inproc://taskProcessorSender"
           socketLayerSenderAddr = "inproc://socketLayerSender"
-          schedulerData = TaskSchedulerData taskQueue failedTaskQueue workerTasksMap workerStatusMap workerAliveMap garbageBin queueRegistry taskQueueStats failedTaskQueueStats
+          schedulerData = TaskSchedulerData taskQueue failedTaskQueue workerTasksMap workerReservationsMap workerStatusMap workerAliveMap garbageBin queueRegistry taskQueueStats failedTaskQueueStats
       socketLayerTid <- runSocketLayer (SocketLayerConfig frontendAddr backendAddr) 60 schedulerData
 
       clientReq <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp039-client-req") :: LotosApp Zmqx.Req

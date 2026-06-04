@@ -74,6 +74,7 @@ runLBS n BrokerServiceConfig {..} loadBalancer = do
     taskQueue <- mkTSQueue :: IO (TSQueue (Task t))
     failedTaskQueue <- mkTSQueue :: IO (TSQueue (RetryTask t))
     workerTasksMap <- newTSWorkerTasksMap :: IO (TSWorkerTasksMap (TaskID, Task t, TaskStatus))
+    workerReservationsMap <- newTSWorkerReservationsMap
     workerStatusMap <- mkTSMap :: IO (TSWorkerStatusMap w)
     workerAliveMap <- newTSWorkerAliveMap
     garbageBin <- mkTSRingBuffer (garbageBinSize taskSchedulerConfig) :: IO (TSRingBuffer (Task t))
@@ -82,7 +83,7 @@ runLBS n BrokerServiceConfig {..} loadBalancer = do
     failedTaskQueueStats <- newHandoffQueueStats "broker.failed-task.queue" (failedTaskQueueHWM taskSchedulerConfig)
     registerHandoffQueueStats queueRegistry taskQueueStats
     registerHandoffQueueStats queueRegistry failedTaskQueueStats
-    pure $ TaskSchedulerData taskQueue failedTaskQueue workerTasksMap workerStatusMap workerAliveMap garbageBin queueRegistry taskQueueStats failedTaskQueueStats
+    pure $ TaskSchedulerData taskQueue failedTaskQueue workerTasksMap workerReservationsMap workerStatusMap workerAliveMap garbageBin queueRegistry taskQueueStats failedTaskQueueStats
 
   -- 2. run socket layer
   t1 <- runSocketLayer socketLayerConfig (workerStaleTimeoutSec taskProcessorConfig) taskSchedulerData

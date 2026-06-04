@@ -295,7 +295,7 @@ infoLoop iss@InfoStorageServer {..} layer = do
 mkInfoStorage ::
   TaskSchedulerData t w ->
   LotosApp (InfoStorage t w)
-mkInfoStorage (TaskSchedulerData tq ftq wtm wsm _ gbb queueRegistry _ _) = do
+mkInfoStorage (TaskSchedulerData tq ftq wtm _ wsm _ gbb queueRegistry _ _) = do
   tasksInQueue <- liftIO $ readQueue' tq
   tasksInFailedQueue <- liftIO $ fmap retryTaskPayload <$> readQueue' ftq
   workerTasksMap <- liftIO $ Map.map (map (\(_, task, _) -> task)) <$> toMapTSWorkerTasks wtm

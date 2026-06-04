@@ -24,6 +24,12 @@ data SimpleServer = SimpleServer
 
 -- | Assign tasks to workers with the lowest combined CPU/memory load score.
 instance LoadBalancerAlgo SimpleServer ClientTask WorkerState where
+  applyCapacityReservations _ _ reservedSlots ws =
+    ws {waitingTaskNum = waitingTaskNum ws + reservedSlots}
+
+  workerOccupiedSlots _ _ ws =
+    Just $ processingTaskNum ws + waitingTaskNum ws
+
   scheduleTasks lb workers tasks = do
     logApp INFO $ "scheduleTasks: " ++ show workers ++ ", " ++ show tasks
     let sortedWorkers = sortBy (\(_, ws1) (_, ws2) -> compare (loadScore ws1) (loadScore ws2)) workers

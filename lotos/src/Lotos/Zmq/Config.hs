@@ -79,6 +79,7 @@ data TaskSchedulerData t s
       (TSQueue (Task t)) -- task queue
       (TSQueue (RetryTask t)) -- failed task queue with retry readiness metadata
       (TSWorkerTasksMap (TaskID, Task t, TaskStatus)) -- worker task map
+      TSWorkerReservationsMap -- broker-known occupied worker capacity slots
       (TSWorkerStatusMap s) -- worker status map
       TSWorkerAliveMap -- worker liveness map
       (TSRingBuffer (Task t)) -- exhausted retry / garbage bin

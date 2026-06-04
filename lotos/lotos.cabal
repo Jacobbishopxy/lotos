@@ -44,6 +44,7 @@ library
     Lotos.TSD.RingBuffer
     Lotos.Util
     Lotos.Zmq
+    Lotos.Zmq.Internal.CapacityReservations
     Lotos.Zmq.Internal.HandoffQueueStats
     Lotos.Zmq.Internal.Liveness
     Lotos.Zmq.Internal.Retry
@@ -132,6 +133,15 @@ test-suite test-zmq-worker-wake
   main-is:        ZmqWorkerWake.hs
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
+
+test-suite test-zmq-capacity-reservations
+  import:         shared-properties, test
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        ZmqCapacityReservations.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , containers
 
 test-suite test-zmq-log-protocol-config
   import:         shared-properties, test

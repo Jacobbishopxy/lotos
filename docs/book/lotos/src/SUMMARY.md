@@ -4,10 +4,12 @@
 
 # Architecture and API
 
+- [Architecture](architecture.md)
 - [Observations](observations.md)
 - [Public API Guide](public-api.md)
 - [ZMQ Protocol Architecture](zmq-protocol.md)
 - [EventLoop Ownership](eventloop-ownership.md)
+- [TaskSchedule](task-schedule.md)
 - [TaskSchedule Demo](task-schedule-demo.md)
 - [Operations Runbook](operations.md)
 - [Compatibility Notes](compatibility.md)

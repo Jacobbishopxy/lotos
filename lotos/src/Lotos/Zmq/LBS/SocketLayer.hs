@@ -26,6 +26,7 @@ import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
+import Lotos.Zmq.Internal.CapacityReservations
 import Lotos.Zmq.Internal.HandoffQueueStats
 import Lotos.Zmq.Internal.Liveness
 import Zmqx
@@ -47,6 +48,7 @@ data SocketLayer t w = SocketLayer
     failedTaskQueue :: TSQueue (RetryTask t), -- backend puts retryable failed tasks with readiness metadata
     failedTaskQueueStats :: HandoffQueueStatsVar,
     workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modifies map
+    workerReservationsMap :: TSWorkerReservationsMap, -- backend releases broker-side capacity reservations
     workerStatusMap :: TSWorkerStatusMap w, -- backend modifies map
     workerAliveMap :: TSWorkerAliveMap, -- backend records worker status heartbeat times
     garbageBin :: TSRingBuffer (Task t), -- backend discards tasks
@@ -93,7 +95,7 @@ runSocketLayer ::
   Int ->
   TaskSchedulerData t w ->
   LotosApp ThreadId
-runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq wtm wsm wam gbb queueRegistry tqStats ftqStats) = do
+runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq wtm wrm wsm wam gbb queueRegistry tqStats ftqStats) = do
   logApp INFO "runSocketLayer start!"
 
   -- Init frontend Router
@@ -144,7 +146,7 @@ runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq 
           Zmqx.EventLoop.withEventLoopIn context spec $ \loop ->
             runAppWithEnv appEnv $
               layerLoop $
-                SocketLayer loop frontendQueue frontendStats backendQueue backendStats taskProcessorQueue taskProcessorStats tq tqStats ftq ftqStats wtm wsm wam gbb staleTimeoutSec
+                SocketLayer loop frontendQueue frontendStats backendQueue backendStats taskProcessorQueue taskProcessorStats tq tqStats ftq ftqStats wtm wrm wsm wam gbb staleTimeoutSec
     case (result :: Either SomeException ()) of
       Left exception -> logApp ERROR $ "SocketLayer EventLoop stopped: " <> show exception
       Right () -> pure ()
@@ -366,6 +368,7 @@ handleWorkerFrames layer@SocketLayer {..} frames = do
 -- New data type to hold the context needed for task handling
 data TaskContext t = TaskContext
   { tcWorkerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus),
+    tcWorkerReservationsMap :: TSWorkerReservationsMap,
     tcFailedTaskQueue :: TSQueue (RetryTask t),
     tcFailedTaskQueueStats :: HandoffQueueStatsVar,
     tcGarbageBin :: TSRingBuffer (Task t),
@@ -379,6 +382,7 @@ getTaskContext :: SocketLayer t w -> TaskContext t
 getTaskContext SocketLayer {..} =
   TaskContext
     { tcWorkerTasksMap = workerTasksMap,
+      tcWorkerReservationsMap = workerReservationsMap,
       tcFailedTaskQueue = failedTaskQueue,
       tcFailedTaskQueueStats = failedTaskQueueStats,
       tcGarbageBin = garbageBin,
@@ -433,7 +437,9 @@ handleTaskStatus taskContext wID uuid tst = case tst of
   TaskInit -> pure ()
   -- handle failed status
   TaskFailed -> handleFailedTask taskContext wID uuid
-  -- handle other status
+  -- handle completed status
+  TaskSucceed -> handleSucceededTask taskContext wID uuid
+  -- handle other non-terminal status
   status -> handleOtherTaskStatus taskContext wID uuid status
 
 -- Handle failed tasks using the explicit SocketLayer task context.
@@ -444,7 +450,8 @@ handleFailedTask ::
   TaskID ->
   LotosApp ()
 handleFailedTask TaskContext {..} wID uuid = do
-  -- delete the task
+  -- release the broker-side occupied slot and delete the task
+  liftIO $ releaseReservationByTask wID uuid tcWorkerReservationsMap
   v <- liftIO $ deleteTSWorkerTasks' wID (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
   case v of
     Nothing -> logApp ERROR $ "handleBackend -> TaskFailed: uuid not found: " <> show uuid
@@ -463,6 +470,21 @@ handleFailedTask TaskContext {..} wID uuid = do
   -- notify load-balancer
   tcNotifyLoadBalancer
 
+-- Handle succeeded tasks using the explicit SocketLayer task context.
+handleSucceededTask ::
+  (FromZmq t, ToZmq t) =>
+  TaskContext t ->
+  RoutingID ->
+  TaskID ->
+  LotosApp ()
+handleSucceededTask TaskContext {..} wID uuid = do
+  liftIO $ releaseReservationByTask wID uuid tcWorkerReservationsMap
+  v <- liftIO $ deleteTSWorkerTasks' wID (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
+  case v of
+    Nothing -> logApp ERROR $ "handleBackend -> TaskSucceed: uuid not found: " <> show uuid
+    Just _ -> pure ()
+  tcNotifyLoadBalancer
+
 -- Handle other task statuses using the explicit SocketLayer task context.
 handleOtherTaskStatus ::
   (FromZmq t, ToZmq t) =>
@@ -472,14 +494,23 @@ handleOtherTaskStatus ::
   TaskStatus ->
   LotosApp ()
 handleOtherTaskStatus TaskContext {..} wID uuid status = do
-  -- check if task exists
+  -- check if task exists before mutating capacity overlay state; duplicate or
+  -- late non-terminal status frames for unknown tasks must not leak slots.
   v <- liftIO $ lookupTSWorkerTasks' wID (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
   case v of
     Nothing ->
       logApp ERROR $ "handleBackend -> " <> show status <> ": uuid not found: " <> show uuid
     -- modify task status
-    Just (_, task, _) ->
-      liftIO $ modifyTSWorkerTasks' wID (uuid, task, status) (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
+    Just (_, task, _) -> do
+      liftIO $ do
+        -- A worker task-status transition proves the raw dispatch reservation is
+        -- no longer merely unobserved. Keep capacity consumed with a broker-known
+        -- non-terminal occupancy marker until terminal status or safe heartbeat
+        -- reconciliation releases it, preserving the original dispatch baseline
+        -- if one exists.
+        when (status == TaskPending || status == TaskProcessing) $
+          refreshNonTerminalReservation wID uuid tcWorkerReservationsMap
+        modifyTSWorkerTasks' wID (uuid, task, status) (\(tID, _, _) -> tID == uuid) tcWorkerTasksMap
   -- notify load-balancer
   tcNotifyLoadBalancer
 

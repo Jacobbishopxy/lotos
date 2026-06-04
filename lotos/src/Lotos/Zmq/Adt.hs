@@ -84,6 +84,16 @@ module Lotos.Zmq.Adt
     toListTSWorkerTasks,
     toMapTSWorkerTasks,
 
+    -- * worker capacity reservations
+    WorkerCapacityReservation (..),
+    TSWorkerReservationsMap,
+    newTSWorkerReservationsMap,
+    appendTSWorkerReservation,
+    deleteTSWorkerReservation,
+    deleteTSWorkerReservationByTask,
+    toListTSWorkerReservations,
+    toMapTSWorkerReservations,
+
     -- * event trigger
     EventTrigger,
     mkCounterTrigger,
@@ -980,6 +990,41 @@ toListTSWorkerTasks = toListMap
 -- Converts the thread-safe worker tasks map to a map of RoutingID to lists of tasks.
 toMapTSWorkerTasks :: TSWorkerTasksMap a -> IO (Map.Map RoutingID [a])
 toMapTSWorkerTasks = toMap
+
+----------------------------------------------------------------------------------------------------
+-- Worker capacity reservations
+----------------------------------------------------------------------------------------------------
+
+-- | Broker-side marker for capacity that has been assigned by the scheduler but
+-- may not yet be safely reflected in the worker heartbeat snapshot consumed by
+-- 'LoadBalancerAlgo'. The optional baseline is the worker-reported occupied
+-- slot count at dispatch time when the scheduler can expose one.
+data WorkerCapacityReservation = WorkerCapacityReservation
+  { wcrTaskId :: TaskID,
+    wcrBaselineOccupiedSlots :: Maybe Int
+  }
+  deriving (Show, Eq)
+
+type TSWorkerReservationsMap = TSWorkerTasksMap WorkerCapacityReservation
+
+newTSWorkerReservationsMap :: IO TSWorkerReservationsMap
+newTSWorkerReservationsMap = newTSWorkerTasksMap
+
+appendTSWorkerReservation :: RoutingID -> WorkerCapacityReservation -> TSWorkerReservationsMap -> IO ()
+appendTSWorkerReservation = appendTSWorkerTasks
+
+deleteTSWorkerReservation :: RoutingID -> TSWorkerReservationsMap -> IO ()
+deleteTSWorkerReservation = deleteTSWorkerTasks
+
+deleteTSWorkerReservationByTask :: RoutingID -> TaskID -> TSWorkerReservationsMap -> IO (Maybe WorkerCapacityReservation)
+deleteTSWorkerReservationByTask workerId taskId =
+  deleteTSWorkerTasks' workerId (\reservation -> wcrTaskId reservation == taskId)
+
+toListTSWorkerReservations :: TSWorkerReservationsMap -> IO [(RoutingID, [WorkerCapacityReservation])]
+toListTSWorkerReservations = toListTSWorkerTasks
+
+toMapTSWorkerReservations :: TSWorkerReservationsMap -> IO (Map.Map RoutingID [WorkerCapacityReservation])
+toMapTSWorkerReservations = toMapTSWorkerTasks
 
 ----------------------------------------------------------------------------------------------------
 -- EventTrigger

@@ -26,6 +26,10 @@ waitingWorker = idleWorker {waitingTaskNum = 1}
 capacityWorker :: Int -> WorkerState
 capacityWorker capacity = idleWorker {taskCapacity = capacity}
 
+reservationAdjustedWorker :: Int -> WorkerState -> WorkerState
+reservationAdjustedWorker reservedSlots =
+  applyCapacityReservations SimpleServer (Nothing :: Maybe (Task ClientTask)) reservedSlots
+
 mkTask :: Int -> Task ClientTask
 mkTask n =
   Task
@@ -79,6 +83,34 @@ partialCapacitySubtractsProcessingAndWaitingWork = do
   assignmentSummary result @?= [("partial", "task-1"), ("partial", "task-2")]
   leftSummary result @?= ["task-3"]
 
+repeatedSchedulingConsumesBrokerReservations :: Assertion
+repeatedSchedulingConsumesBrokerReservations = do
+  firstPass <- runSchedule [("worker-a", capacityWorker 2)] (mkTask <$> [1 .. 2])
+  assignmentSummary firstPass @?= [("worker-a", "task-1"), ("worker-a", "task-2")]
+
+  secondPass <- runSchedule [("worker-a", reservationAdjustedWorker 2 (capacityWorker 2))] [mkTask 3]
+  assignmentSummary secondPass @?= []
+  leftSummary secondPass @?= ["task-3"]
+
+terminalReleaseReopensReservedCapacity :: Assertion
+terminalReleaseReopensReservedCapacity = do
+  held <- runSchedule [("worker-a", reservationAdjustedWorker 1 (capacityWorker 1))] [mkTask 1]
+  assignmentSummary held @?= []
+  leftSummary held @?= ["task-1"]
+
+  released <- runSchedule [("worker-a", capacityWorker 1)] [mkTask 1]
+  assignmentSummary released @?= [("worker-a", "task-1")]
+  leftSummary released @?= []
+
+nonTerminalStatusAndStaleHeartbeatKeepCapacityOccupied :: Assertion
+nonTerminalStatusAndStaleHeartbeatKeepCapacityOccupied = do
+  let staleHeartbeatForOldWork = (capacityWorker 2) {processingTaskNum = 1, waitingTaskNum = 0}
+      brokerKnownNewTask = reservationAdjustedWorker 1 staleHeartbeatForOldWork
+  workerOccupiedSlots SimpleServer (Nothing :: Maybe (Task ClientTask)) staleHeartbeatForOldWork @?= Just 1
+  result <- runSchedule [("worker-a", brokerKnownNewTask)] [mkTask 1]
+  assignmentSummary result @?= []
+  leftSummary result @?= ["task-1"]
+
 saturatedWorkersDoNotReceiveWork :: Assertion
 saturatedWorkersDoNotReceiveWork = do
   result <-
@@ -118,6 +150,9 @@ tests =
     [ TestLabel "equal idle workers split a burst and leave overflow queued" (TestCase equalIdleWorkersSplitBurst),
       TestLabel "capacity-aware workers use available slots in rounds" (TestCase capacityAwareWorkersUseAvailableSlotsInRounds),
       TestLabel "partial capacity subtracts processing and waiting work" (TestCase partialCapacitySubtractsProcessingAndWaitingWork),
+      TestLabel "repeated scheduling consumes broker reservations" (TestCase repeatedSchedulingConsumesBrokerReservations),
+      TestLabel "terminal release reopens reserved capacity" (TestCase terminalReleaseReopensReservedCapacity),
+      TestLabel "non-terminal status and stale heartbeat keep capacity occupied" (TestCase nonTerminalStatusAndStaleHeartbeatKeepCapacityOccupied),
       TestLabel "busy or waiting workers receive no new work" (TestCase saturatedWorkersDoNotReceiveWork),
       TestLabel "all saturated workers leave all tasks queued" (TestCase allSaturatedWorkersLeaveEverythingQueued),
       TestLabel "lowest load idle worker receives the first task" (TestCase leastLoadedIdleWorkerPreferred),
