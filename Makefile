@@ -8,6 +8,20 @@ MDBOOK_DIR ?= docs/book/lotos
 MDBOOK_HOST ?= 127.0.0.1
 MDBOOK_PORT ?= 3003
 
+CI_TEST_TARGETS ?= \
+	lotos:test:test-conc-executor \
+	lotos:test:test-zmq-worker-frames \
+	lotos:test:test-zmq-client-ack-frames \
+	lotos:test:test-zmq-worker-wake \
+	lotos:test:test-zmq-capacity-reservations \
+	lotos:test:test-zmq-log-protocol-config \
+	lotos:test:test-zmq-log-ingest \
+	lotos:test:test-zmq-worker-log-transport \
+	TaskSchedule:test:test-worker-lifecycle \
+	TaskSchedule:test:test-scheduler
+
+.PHONY: tree clean update build ci-build ci-test ci-docs ci-check book-build book-serve docs-build docs-serve smoke-single smoke-multi hie
+
 tree:
 	tree . --gitignore
 
@@ -20,6 +34,19 @@ update:
 build:
 	cabal build all
 
+ci-build:
+	cabal build all --enable-tests
+
+ci-test:
+	@for target in $(CI_TEST_TARGETS); do \
+		echo "==> cabal test $$target"; \
+		cabal test $$target; \
+	done
+
+ci-docs: book-build
+
+ci-check: ci-build ci-test ci-docs
+
 book-build:
 	mdbook build $(MDBOOK_DIR)
 
@@ -29,6 +56,12 @@ book-serve:
 docs-build: book-build
 
 docs-serve: book-serve
+
+smoke-single:
+	scripts/task-schedule-smoke.sh
+
+smoke-multi:
+	scripts/task-schedule-multi-worker-smoke.sh
 
 hie:
 	gen-hie > hie.yaml

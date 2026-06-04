@@ -28,13 +28,14 @@ This repository is a Haskell/Cabal workspace for a ZeroMQ-backed task load-balan
 
 - Use Cabal commands; no Stack/Nix workflow is checked in. Current package metadata targets `cabal-version: 3.14` and `tested-with: GHC == 9.14.1`.
 - Standard build: `cabal build all` or `make build`.
+- Routine CI/local verification gate: `make ci-check` (compiles all components/tests/demos with `cabal build all --enable-tests`, runs the explicit bounded regression target list, and builds the mdBook).
 - Targeted build examples:
   - `cabal build lotos`
   - `cabal build TaskSchedule:exe:ts-server`
   - `cabal build TaskSchedule:exe:ts-worker`
-- Prefer targeted tests. The quickest meaningful regression suite is:
+- Prefer targeted tests while developing. The quickest meaningful regression suite is:
   - `cabal test lotos:test:test-conc-executor`
-- Do **not** use `cabal test all` as a default check: several suites are long-running demos/servers. Prefer compiling all tests with `cabal build all --enable-tests`, then running targeted terminating suites.
+- Do **not** use `cabal test all` as a default check. Prefer `make ci-test` for the explicit terminating suite list, or compile all tests with `cabal build all --enable-tests` and then run targeted terminating suites.
 - If a build needs dependency downloads, remember `cabal.project` pins `zmqx` to `git@github.com:Jacobbishopxy/zmqx.git`; fresh environments may require GitHub SSH access or a source override.
 
 ## Change guidance

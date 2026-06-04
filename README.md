@@ -64,15 +64,14 @@ Executables:
 
 ## Quickstart for new adopters
 
-From a checkout with GHC/Cabal and ZeroMQ available:
+From a checkout with GHC/Cabal, mdBook, and ZeroMQ available:
 
 ```bash
 cabal update
-cabal build all --enable-tests
-cabal test all
+make ci-check
 ```
 
-Then run one of the intentional end-to-end demo smokes from the repository root:
+`make ci-check` compiles every workspace component with tests enabled, runs the bounded regression test targets explicitly, and builds the mdBook. Then run one of the intentional end-to-end demo smokes from the repository root:
 
 ```bash
 scripts/task-schedule-smoke.sh
@@ -188,11 +187,13 @@ Use a CI-safe test posture: registered Cabal test suites are bounded, assertion-
 
 | Goal | Command | Notes |
 |---|---|---|
-| Full regression | `cabal test all` | Runs bounded assertion-based suites: `lotos` executor, frame, log protocol/ingest/transport tests plus TaskSchedule scheduler and worker-lifecycle tests. |
+| Routine CI/local gate | `make ci-check` | Runs `ci-build`, `ci-test`, and `ci-docs`: compile every workspace component/test/demo executable, run the explicit bounded regression target list, and build the mdBook. |
+| Compile all packages, tests, and demos | `make ci-build` | Executes `cabal build all --enable-tests`; this compiles demo executables without running long-lived demos. |
+| Full bounded regression | `make ci-test` | Runs the explicit test target list in `CI_TEST_TARGETS`; this avoids relying on unbounded demo/server executables. Override `CI_TEST_TARGETS=...` for a narrower local pass. |
+| Documentation gate | `make ci-docs` or `make book-build` | Builds the mdBook from `docs/book/lotos` without committing generated `book/` output. |
 | Focused quick regression | `cabal test lotos:test:test-conc-executor` | HUnit coverage for concurrent command success/failure, callbacks, timeout handling, and bounded concurrent execution. |
-| Compile all packages, tests, and demos | `cabal build all --enable-tests` | Builds the workspace, regression test executables, TaskSchedule executables, and `demo-*` executables without running long-lived demos. |
-| Intentional single-worker MVP smoke | `scripts/task-schedule-smoke.sh` | Bounded server/worker/client smoke; run after the build command above and inspect `.tmp/task-schedule-smoke/<run-id>/` for `result.env`, logs, marker proof, `/info.runtimeQueueStats`, LogIngest-only `/logs/stats`, and endpoint snapshots. |
-| Intentional multi-worker smoke | `scripts/task-schedule-multi-worker-smoke.sh` | Starts one server, at least two generated worker configs, and multiple distinct clients/tasks; inspect `.tmp/task-schedule-multi-worker-smoke/<run-id>/` for per-worker stdio logs, capacity/reservation snapshots, markers, runtime/log stats, endpoint snapshots, and `result.env`. |
+| Intentional single-worker MVP smoke | `make smoke-single` or `scripts/task-schedule-smoke.sh` | Bounded server/worker/client smoke; run after `make ci-build` and inspect `.tmp/task-schedule-smoke/<run-id>/` for `result.env`, logs, marker proof, `/info.runtimeQueueStats`, LogIngest-only `/logs/stats`, and endpoint snapshots. |
+| Intentional multi-worker smoke | `make smoke-multi` or `scripts/task-schedule-multi-worker-smoke.sh` | Starts one server, at least two generated worker configs, and multiple distinct clients/tasks; inspect `.tmp/task-schedule-multi-worker-smoke/<run-id>/` for per-worker stdio logs, capacity/reservation snapshots, markers, runtime/log stats, endpoint snapshots, and `result.env`. |
 
 Current bounded regression test suites:
 
@@ -264,7 +265,7 @@ The single-worker smoke helper starts the server and one worker with the checked
 
 The multi-worker smoke helper generates a per-run broker config, two worker configs by default (`smokeWorker_1` and `smokeWorker_2`), unique client configs, and four fresh task JSON files. It requires all workers to appear in `/SimpleServer/worker_stats`, all clients to receive ACKs, every task marker to match the current run, every worker-specific stdio log to show current-run task processing, `/SimpleServer/logs/worker/<workerId>` to contain current-run stdout plus final `ExitSuccess` result events for each worker, clean `/SimpleServer/logs/stats`, no current-run garbage, and no leftover `ts-server`/`ts-worker`/`ts-client` processes from its tracked process groups.
 
-Latest TP-025 verification is green after the reliable logging smoke/docs cleanup: `cabal build all --enable-tests`, `cabal test all`, the single-worker smoke, and the multi-worker smoke all passed. The bounded scheduler suite covers deterministic assignment/deferred-task behavior, while the smoke helpers prove end-to-end execution and reliable `/logs` evidence without relying on timing-sensitive exact distribution.
+Latest TP-049 verification profile is green: `make ci-check` compiles all components with tests enabled, runs the explicit bounded regression target list, and builds the mdBook. Intentional single- and multi-worker smokes remain opt-in after the build gate. The bounded scheduler suite covers deterministic assignment/deferred-task behavior, while the smoke helpers prove end-to-end execution and reliable `/logs` evidence without relying on timing-sensitive exact distribution.
 
 ## Info API
 
@@ -291,7 +292,7 @@ The `/info` response is intentionally a lightweight scheduler snapshot; worker l
 - Failed tasks retry while `taskRetry > 0`; positive `taskRetryInterval` values delay eligibility until the interval has elapsed, while `0` or less preserves immediate retry.
 - Worker status heartbeats drive broker liveness. When a worker is stale for `taskProcessor.workerStaleTimeoutSec`, the broker removes it from scheduling/info maps and recovers its non-succeeded in-flight tasks through the same retry/garbage path.
 - TaskSchedule's demo scheduler uses `WorkerState.taskCapacity - processingTaskNum - waitingTaskNum` as remaining capacity. The capacity field is appended to the worker-status payload; decoders still accept the older payload shape as a conservative single-slot worker status. See the mdBook protocol compatibility chapter for append-only examples and break criteria.
-- Safe verification commands are `cabal build all --enable-tests` for compilation, `cabal test all` for bounded regression suites, `scripts/task-schedule-smoke.sh` for the intentional single-worker end-to-end demo smoke, and `scripts/task-schedule-multi-worker-smoke.sh` for bounded multi-worker scheduling smoke after building.
+- Safe verification commands are `make ci-check` for the routine compile/test/docs gate, `make ci-test` for the explicit bounded regression list, `make smoke-single` / `scripts/task-schedule-smoke.sh` for the intentional single-worker end-to-end demo smoke, and `make smoke-multi` / `scripts/task-schedule-multi-worker-smoke.sh` for bounded multi-worker scheduling smoke after building.
 
 ## Development notes
 
