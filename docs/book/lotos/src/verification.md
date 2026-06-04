@@ -16,6 +16,17 @@ make ci-check
 
 A repository-hosted workflow is not required for the profile itself; this repo currently has no `.github/workflows` directory, so TP-049 keeps CI wiring dependency-free and documents the Makefile gate for contributors and future workflow integration.
 
+## Package metadata checks
+
+For package-release polish, run `cabal check` from each package directory:
+
+```bash
+(cd lotos && cabal check)
+(cd applications/TaskSchedule && cabal check)
+```
+
+This repository uses the package-local form because some cabal-install versions reject `cabal check <path>` with `Cabal-7055`. `cabal check` should be warning-free before a release-readiness handoff; see [Release Readiness](release.md) for the dependency upper-bound policy and known non-release gaps.
+
 ## Documentation checks
 
 For this book:

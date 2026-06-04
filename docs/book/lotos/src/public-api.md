@@ -85,3 +85,7 @@ Log delivery is at-least-once: workers retain unacknowledged batches and retry, 
 ## Client requests
 
 Use `mkClientService` and `sendTaskRequest`. `sendTaskRequest` returns `Maybe Ack`; `Nothing` means the configured request timeout elapsed or the ACK failed to decode. An ACK means accepted/enqueued by the broker, not completed by a worker.
+
+## Package/release boundaries
+
+Public API compatibility is source/protocol behavior; package metadata compatibility is handled separately in [Release Readiness](release.md). The current first-release bounds are conservative upper bounds for public-library dependencies, while `cabal.project` solver overrides and the pinned `zmqx` source repository remain workspace development settings.

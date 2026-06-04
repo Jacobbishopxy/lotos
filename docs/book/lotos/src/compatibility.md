@@ -1,5 +1,9 @@
 # Compatibility Notes
 
+## Package dependency bounds
+
+Package dependency upper bounds are part of the first-release compatibility contract for published metadata, not runtime behavior. `lotos` and TaskSchedule use conservative PVP-style upper bounds for public-library dependencies based on the currently verified GHC 9.14.1 dependency plan; workspace-only `cabal.project` overrides such as `allow-newer` and the pinned `zmqx` source repository are local development settings. That verified plan currently relies on `allow-newer` because upstream `servant-server` metadata excludes `base-4.22`, so strict published-metadata solving remains a release gap. See [Release Readiness](release.md) for the complete policy and current non-release gaps.
+
 ## Protocol frames
 
 All ZeroMQ payloads use positional multipart frames. Preserve frame order for `Task`, client ACK, backend worker status/task-status, and logging frames unless a task explicitly scopes a protocol migration with tests for both peers. The full append-only policy, WorkerState example, break criteria, and version-tag guidance live in [Protocol Compatibility and Versioning](protocol-compatibility.md).

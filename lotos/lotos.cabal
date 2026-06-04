@@ -67,30 +67,30 @@ library
 
   -- other-extensions:
   build-depends:
-    , aeson
-    , async
-    , attoparsec
+    , aeson <2.4
+    , async <2.3
+    , attoparsec <0.15
     , base
-    , bytestring
-    , containers
-    , directory
-    , dlist
-    , fast-logger
-    , filepath
-    , mtl
-    , process
-    , servant
-    , servant-server
-    , stm
-    , text
-    , time
-    , unordered-containers
-    , uuid
-    , vector
-    , wai
-    , warp
-    , yaml
-    , zmqx
+    , bytestring <0.13
+    , containers <0.9
+    , directory <1.4
+    , dlist <1.1
+    , fast-logger <3.3
+    , filepath <1.6
+    , mtl <2.4
+    , process <1.7
+    , servant <0.21
+    , servant-server <0.21
+    , stm <2.6
+    , text <2.2
+    , time <1.16
+    , unordered-containers <0.3
+    , uuid <1.4
+    , vector <0.14
+    , wai <3.3
+    , warp <3.5
+    , yaml <0.12
+    , zmqx <0.2
 
   hs-source-dirs:     src
 

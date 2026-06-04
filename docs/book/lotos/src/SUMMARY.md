@@ -16,3 +16,4 @@
 - [Runtime Failure Runbook](runtime-failures.md)
 - [Compatibility Notes](compatibility.md)
 - [Verification Guide](verification.md)
+- [Release Readiness](release.md)

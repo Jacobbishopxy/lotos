@@ -31,10 +31,10 @@ library ts-server-lib
     Util
 
   build-depends:
-    , aeson
-    , lotos
-    , process
-    , text
+    , aeson <2.4
+    , lotos <0.2
+    , process <1.7
+    , text <2.2
 
   hs-source-dirs:  src
 
@@ -62,10 +62,10 @@ library ts-worker-lib
     Worker
 
   build-depends:
-    , aeson
-    , lotos
-    , process
-    , text
+    , aeson <2.4
+    , lotos <0.2
+    , process <1.7
+    , text <2.2
 
   hs-source-dirs:  src
 
@@ -126,11 +126,11 @@ library ts-client-lib
     Util
 
   build-depends:
-    , aeson
-    , bytestring
-    , lotos
-    , process
-    , text
+    , aeson <2.4
+    , bytestring <0.13
+    , lotos <0.2
+    , process <1.7
+    , text <2.2
 
   hs-source-dirs:  src
 

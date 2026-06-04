@@ -107,7 +107,7 @@ The client ACK means the broker accepted/enqueued the task; completion proof com
 
 ## Architecture and API book
 
-A lightweight mdBook collects the architecture observations, public API guide, ZMQ/EventLoop ownership notes, TaskSchedule runbook, runtime failure runbook, compatibility notes, and verification checklist without duplicating all details in this README:
+A lightweight mdBook collects the architecture observations, public API guide, ZMQ/EventLoop ownership notes, TaskSchedule runbook, runtime failure runbook, compatibility notes, release-readiness policy, and verification checklist without duplicating all details in this README:
 
 ```bash
 make book-build
@@ -169,7 +169,7 @@ source-repository-package
   tag: v0.1.1.1
 ```
 
-Fresh environments need GitHub SSH access or a local/alternate source override for `zmqx`.
+Fresh environments need GitHub SSH access or a local/alternate source override for `zmqx`. The package `.cabal` files carry conservative PVP-style upper bounds for public-library dependencies; the `cabal.project` `source-repository-package`, `allow-newer`, and setup constraints are workspace development overrides rather than published package policy. The current GHC 9.14.1 workspace plan relies on `allow-newer` because upstream `servant-server` metadata excludes `base-4.22`, so public packaging still needs a strict solver profile. See the mdBook [Release Readiness](docs/book/lotos/src/release.md) page for the current first-release metadata policy and known non-release gaps.
 
 ## Build
 
