@@ -1,11 +1,13 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Main where
 
-import Control.Concurrent (newEmptyMVar, putMVar, readMVar, threadDelay)
+import Control.Concurrent (MVar, killThread, newEmptyMVar, putMVar, readMVar, threadDelay)
 import Control.Concurrent.STM (atomically, newTQueueIO, readTQueue, writeTQueue)
-import Control.Monad (forM_, when)
+import Control.Exception (finally)
+import Control.Monad (forM_, void, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Time (UTCTime (..), addUTCTime, fromGregorian)
@@ -22,6 +24,7 @@ import Lotos.Zmq.Internal.Retry
     partitionRetryTasks,
     retryTaskEligible,
   )
+import Lotos.Logger qualified as Logger
 import Lotos.Zmq.Internal.WorkerRuntime
   ( WorkerBackendFrames (..),
     drainWorkerBackendFramesWith,
@@ -44,6 +47,53 @@ testWorkerId = "simpleWorker_1"
 
 fixedNow :: UTCTime
 fixedNow = UTCTime (fromGregorian 2026 1 1) 0
+
+mkWorkerCfg :: WorkerServiceConfig
+mkWorkerCfg =
+  WorkerServiceConfig
+    { workerId = testWorkerId,
+      workerDealerPairAddr = "inproc://tp036-worker-pair",
+      loadBalancerBackendAddr = "inproc://tp036-backend",
+      loadBalancerLoggingAddr = "inproc://tp036-legacy-logs",
+      workerLogging =
+        (defaultLogIngestConfig "inproc://tp036-log-ingest")
+          { logIngestSocketHWM = 10,
+            logIngestBatchMaxRecords = 10,
+            logIngestWorkerQueueHWM = 10,
+            logIngestFlushIntervalMicros = 100000,
+            logIngestAckTimeoutMicros = 100000,
+            logIngestRetryBackoffMicros = 100000,
+            logIngestDropPolicy = LogDropOldest
+          },
+      workerStatusReportIntervalSec = 5,
+      parallelTasksNo = 1
+    }
+
+data NoopAcceptor = NoopAcceptor
+
+instance TaskAcceptor NoopAcceptor () where
+  processTasks _ acceptor _ = pure acceptor
+
+data CallbackAcceptor = CallbackAcceptor
+  { callbackStarted :: MVar (),
+    callbackRelease :: MVar (),
+    callbackDone :: MVar ()
+  }
+
+instance TaskAcceptor CallbackAcceptor () where
+  processTasks api acceptor@CallbackAcceptor {..} tasks = do
+    liftIO $ putMVar callbackStarted ()
+    liftIO $ readMVar callbackRelease
+    case tasks of
+      task : _ -> liftIO $ taSendTaskStatus api (unsafeGetTaskID task, TaskSucceed)
+      [] -> pure ()
+    liftIO $ putMVar callbackDone ()
+    pure acceptor
+
+data UnitReporter = UnitReporter
+
+instance StatusReporter UnitReporter () where
+  gatherStatus _ reporter = pure (reporter, ())
 
 unwrap :: (Show e) => IO (Either e a) -> IO a
 unwrap action = action >>= either (ioError . userError . show) pure
@@ -313,6 +363,42 @@ workerBackendEventLoopStoppedSendReturnsError =
       Left _ -> pure ()
       Right () -> liftIO $ assertFailure "stopped backend EventLoop send unexpectedly succeeded"
 
+workerTaskStatusCallbackReturnsAfterBackendStopped :: Assertion
+workerTaskStatusCallbackReturnsAfterBackendStopped =
+  Logger.withConsoleLogger Logger.ERROR $ \loggerEnv ->
+    Logger.runZmqApp loggerEnv do
+      router <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp036-callback-status-router") :: Logger.LotosApp Zmqx.Router
+      unwrapM $ ZmqxM.bind router (loadBalancerBackendAddr mkWorkerCfg)
+      callbackStarted <- liftIO newEmptyMVar
+      callbackRelease <- liftIO newEmptyMVar
+      callbackDone <- liftIO newEmptyMVar
+      let acceptor = CallbackAcceptor {callbackStarted, callbackRelease, callbackDone}
+      service <- (mkWorkerService mkWorkerCfg acceptor UnitReporter :: LotosApp (WorkerService CallbackAcceptor UnitReporter () ()))
+      workerTid <- Logger.forkApp $ runWorkerService service mkWorkerCfg
+      liftIO $ threadDelay 100000
+      task <- liftIO $ fillTaskID' (defaultTask :: Task ())
+      unwrapM $ ZmqxM.sends router $ toZmq $ WorkerTask testWorkerId task
+      liftIO $ expectJust "callback acceptor did not start" =<< timeout 1000000 (readMVar callbackStarted)
+      liftIO $ killThread workerTid
+      liftIO $ threadDelay 100000
+      liftIO $ putMVar callbackRelease ()
+      result <- liftIO $ timeout 1000000 $ readMVar callbackDone
+      liftIO $ expectJust "taSendTaskStatus blocked after backend transport stopped" result
+
+forkedAppActionsAreCancelledBeforeContextTeardown :: Assertion
+forkedAppActionsAreCancelledBeforeContextTeardown =
+  Logger.withConsoleLogger Logger.ERROR $ \loggerEnv -> do
+    childStarted <- newEmptyMVar
+    childStopped <- newEmptyMVar
+    Logger.runZmqApp loggerEnv $ do
+      void $
+        Logger.forkApp $
+          liftIO $
+            putMVar childStarted () >> (threadDelay 10000000 `finally` putMVar childStopped ())
+      liftIO $ readMVar childStarted
+    stopped <- timeout 1000000 $ readMVar childStopped
+    expectJust "forked LotosApp action outlived runZmqApp context teardown" stopped
+
 failedTaskWithRemainingRetryRequeuesWithDecrementedRetry :: Assertion
 failedTaskWithRemainingRetryRequeuesWithDecrementedRetry = do
   task <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1})
@@ -436,6 +522,8 @@ tests =
       TestLabel "worker backend drain alternates status and backend queues" (TestCase workerBackendDrainAlternatesStatusAndBackendQueues),
       TestLabel "worker backend enqueue notifies after task is queued" (TestCase workerBackendEnqueueNotifiesAfterTaskIsQueued),
       TestLabel "worker backend EventLoop stopped send returns error" (TestCase workerBackendEventLoopStoppedSendReturnsError),
+      TestLabel "worker task-status callback returns after backend stopped" (TestCase workerTaskStatusCallbackReturnsAfterBackendStopped),
+      TestLabel "forked LotosApp actions cancel before context teardown" (TestCase forkedAppActionsAreCancelledBeforeContextTeardown),
       TestLabel "failed task with remaining retry requeues with decremented retry" (TestCase failedTaskWithRemainingRetryRequeuesWithDecrementedRetry),
       TestLabel "failed task with no retry goes to garbage" (TestCase failedTaskWithNoRetryGoesToGarbage),
       TestLabel "positive retry interval delays eligibility until ready" (TestCase positiveRetryIntervalDelaysEligibilityUntilReady),

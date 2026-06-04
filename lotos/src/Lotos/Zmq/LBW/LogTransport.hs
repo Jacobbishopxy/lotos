@@ -16,6 +16,7 @@ module Lotos.Zmq.LBW.LogTransport
     retryWorkerLogBatch,
     ackWorkerLogBatch,
     workerLogPendingEvents,
+    workerLogLoopStep,
     runWorkerLogTransport,
   )
 where
@@ -174,45 +175,66 @@ runWorkerLogEventLoop transport@WorkerLogTransport {workerLogTransportConfig = W
     Right () -> pure ()
 
 workerLogLoop :: WorkerLogTransport -> Zmqx.EventLoop.EventLoop -> Logger.LotosApp ()
-workerLogLoop transport@WorkerLogTransport {workerLogTransportConfig = WorkerServiceConfig {..}} loop = do
-  drainWorkerLogAcks transport loop
-  maybeBatch <- liftIO $ nextWorkerLogBatch transport
-  case maybeBatch of
-    Nothing -> liftIO $ threadDelay $ positiveMicros $ logIngestFlushIntervalMicros workerLogging
-    Just batch -> do
-      sendResult <- liftIO $ Zmqx.EventLoop.sends loop workerLogEventLoopEndpoint $ toZmq batch
-      case sendResult of
-        Left err -> do
-          Logger.logApp Logger.ERROR $ "worker LogIngest EventLoop send failed: " <> show err
-          liftIO $ threadDelay $ positiveMicros $ logIngestRetryBackoffMicros workerLogging
-        Right () -> do
-          maybeAckFrames <- recvWorkerLogAck loop $ microsToMillis $ logIngestAckTimeoutMicros workerLogging
-          case maybeAckFrames of
-            Nothing -> do
-              Logger.logApp Logger.DEBUG $ "worker LogIngest ACK timeout for batch " <> show (logBatchAck batch)
-              liftIO $ threadDelay $ positiveMicros $ logIngestRetryBackoffMicros workerLogging
-            Just ackFrames -> handleWorkerLogAckFrames transport ackFrames
-  workerLogLoop transport loop
+workerLogLoop transport loop = do
+  continue <- workerLogLoopStep transport loop
+  when continue $ workerLogLoop transport loop
+
+-- | Run one bounded logging-loop iteration. The production loop recurses while
+-- this returns 'True'; tests use it to assert stopped EventLoops terminate rather
+-- than retrying forever.
+workerLogLoopStep :: WorkerLogTransport -> Zmqx.EventLoop.EventLoop -> Logger.LotosApp Bool
+workerLogLoopStep transport@WorkerLogTransport {workerLogTransportConfig = WorkerServiceConfig {..}} loop = do
+  drainWorkerLogAcks transport loop >>= \case
+    False -> pure False
+    True -> do
+      maybeBatch <- liftIO $ nextWorkerLogBatch transport
+      case maybeBatch of
+        Nothing -> do
+          liftIO $ threadDelay $ positiveMicros $ logIngestFlushIntervalMicros workerLogging
+          pure True
+        Just batch -> do
+          sendResult <- liftIO $ Zmqx.EventLoop.sends loop workerLogEventLoopEndpoint $ toZmq batch
+          case sendResult of
+            Left err -> handleWorkerLogLoopError transport "send" err
+            Right () -> do
+              recvWorkerLogAck loop (microsToMillis $ logIngestAckTimeoutMicros workerLogging) >>= \case
+                Left err -> handleWorkerLogLoopError transport "recv" err
+                Right Nothing -> do
+                  Logger.logApp Logger.DEBUG $ "worker LogIngest ACK timeout for batch " <> show (logBatchAck batch)
+                  liftIO $ threadDelay $ positiveMicros $ logIngestRetryBackoffMicros workerLogging
+                  pure True
+                Right (Just ackFrames) -> do
+                  handleWorkerLogAckFrames transport ackFrames
+                  pure True
 
 -- | Consume ACKs already delivered to the EventLoop mailbox before sending a
 -- retry. This lets broker replies that arrive during retry backoff clear the
 -- in-flight batch without touching the DEALER from the logging loop thread.
-drainWorkerLogAcks :: WorkerLogTransport -> Zmqx.EventLoop.EventLoop -> Logger.LotosApp ()
+drainWorkerLogAcks :: WorkerLogTransport -> Zmqx.EventLoop.EventLoop -> Logger.LotosApp Bool
 drainWorkerLogAcks transport loop = do
   recvWorkerLogAck loop 0 >>= \case
-    Just ackFrames -> do
+    Right (Just ackFrames) -> do
       handleWorkerLogAckFrames transport ackFrames
       drainWorkerLogAcks transport loop
-    Nothing -> pure ()
+    Right Nothing -> pure True
+    Left err -> handleWorkerLogLoopError transport "recv" err
 
-recvWorkerLogAck :: Zmqx.EventLoop.EventLoop -> Int -> Logger.LotosApp (Maybe [ByteString.ByteString])
-recvWorkerLogAck loop timeoutMs = do
-  recvResult <- liftIO $ Zmqx.EventLoop.recv loop workerLogEventLoopEndpoint timeoutMs
-  case recvResult of
-    Left err -> do
-      Logger.logApp Logger.ERROR $ "worker LogIngest EventLoop recv failed: " <> show err
-      pure Nothing
-    Right maybeFrames -> pure maybeFrames
+recvWorkerLogAck :: Zmqx.EventLoop.EventLoop -> Int -> Logger.LotosApp (Either Zmqx.Error (Maybe [ByteString.ByteString]))
+recvWorkerLogAck loop timeoutMs =
+  liftIO $ Zmqx.EventLoop.recv loop workerLogEventLoopEndpoint timeoutMs
+
+handleWorkerLogLoopError :: WorkerLogTransport -> String -> Zmqx.Error -> Logger.LotosApp Bool
+handleWorkerLogLoopError WorkerLogTransport {workerLogTransportConfig = WorkerServiceConfig {..}} operation err
+  | isStoppedLoopError err = do
+      Logger.logApp Logger.WARN $ "worker LogIngest EventLoop " <> operation <> " stopped: " <> show err
+      pure False
+  | otherwise = do
+      Logger.logApp Logger.ERROR $ "worker LogIngest EventLoop " <> operation <> " failed: " <> show err
+      liftIO $ threadDelay $ positiveMicros $ logIngestRetryBackoffMicros workerLogging
+      pure True
+
+isStoppedLoopError :: Zmqx.Error -> Bool
+isStoppedLoopError err = Zmqx.errno err == Zmqx.ETERM
 
 handleWorkerLogAckFrames :: WorkerLogTransport -> [ByteString.ByteString] -> Logger.LotosApp ()
 handleWorkerLogAckFrames transport ackFrames =

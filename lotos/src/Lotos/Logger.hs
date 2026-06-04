@@ -27,9 +27,10 @@ module Lotos.Logger
   )
 where
 
-import Control.Concurrent (ThreadId, forkIO, myThreadId, threadDelay)
+import Control.Concurrent (ThreadId, forkIO, killThread, myThreadId, threadDelay)
 import Control.Concurrent.Async (Async, async, cancel)
-import Control.Exception (SomeException, bracket, handle)
+import Control.Concurrent.MVar (MVar, modifyMVar, modifyMVar_, newEmptyMVar, newMVar, putMVar, readMVar)
+import Control.Exception (SomeException, bracket, finally, handle)
 import Control.Monad (forever, when)
 import Control.Monad.Reader
 import Data.Time
@@ -49,7 +50,8 @@ data LoggerEnv = LoggerEnv
     consoleLogger :: Maybe LoggerSet,
     minLogLevel :: LogLevel,
     currentLogPath :: FilePath,
-    rotationThread :: Maybe (Async ())
+    rotationThread :: Maybe (Async ()),
+    childThreads :: MVar [(ThreadId, MVar ())]
   }
 
 data LotosEnv = LotosEnv
@@ -75,7 +77,15 @@ runAppWithEnv :: LotosEnv -> LotosApp a -> IO a
 runAppWithEnv env app = runReaderT (unApp app) env
 
 runAppWithContext :: Zmqx.Context -> LoggerEnv -> LotosApp a -> IO a
-runAppWithContext context loggerEnv = runAppWithEnv (LotosEnv loggerEnv context)
+runAppWithContext context loggerEnv action =
+  runAppWithEnv (LotosEnv loggerEnv context) action
+    `finally` cancelForkedAppThreads (childThreads loggerEnv)
+
+cancelForkedAppThreads :: MVar [(ThreadId, MVar ())] -> IO ()
+cancelForkedAppThreads childRegistry = do
+  children <- modifyMVar childRegistry $ \children -> pure ([], children)
+  mapM_ (killThread . fst) children
+  mapM_ (readMVar . snd) children
 
 runZmqApp :: LoggerEnv -> LotosApp a -> IO a
 runZmqApp loggerEnv action =
@@ -98,7 +108,10 @@ runApp = runZmqApp
 forkApp :: LotosApp () -> LotosApp ThreadId
 forkApp action = do
   env <- ask -- Capture the current logger and ZMQ context
-  liftIO $ forkIO (runAppWithEnv env action) -- Run the action in the new thread
+  done <- liftIO newEmptyMVar
+  tid <- liftIO $ forkIO (runAppWithEnv env action `finally` putMVar done ()) -- Run the action in the new thread
+  liftIO $ modifyMVar_ (childThreads $ lotosLoggerEnv env) $ \children -> pure ((tid, done) : children)
+  pure tid
 
 -- Helper function for logging
 logApp :: LogLevel -> String -> LotosApp ()
@@ -125,14 +138,16 @@ initLocalTimeLogger logPath minLevel withConsole = do
 
   -- Start rotation monitor thread using local time
   rotationThread <- async (localTimeRotationMonitor logPath set)
+  childRegistry <- newMVar []
 
-  return $ LoggerEnv set console minLevel logPath (Just rotationThread)
+  return $ LoggerEnv set console minLevel logPath (Just rotationThread) childRegistry
 
 -- Initialize logger with console output only
 initConsoleLogger :: LogLevel -> IO LoggerEnv
 initConsoleLogger minLevel = do
   set <- newStdoutLoggerSet defaultBufSize
-  return $ LoggerEnv set Nothing minLevel "" Nothing
+  childRegistry <- newMVar []
+  return $ LoggerEnv set Nothing minLevel "" Nothing childRegistry
 
 -- Resource-safe logger usage
 withLocalTimeLogger :: FilePath -> LogLevel -> Bool -> (LoggerEnv -> IO a) -> IO a

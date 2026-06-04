@@ -15,6 +15,7 @@ import System.Exit (exitFailure)
 import System.Timeout (timeout)
 import Test.HUnit
 import Zmqx qualified
+import Zmqx.EventLoop qualified as Zmqx.EventLoop
 import Zmqx.Monad qualified as ZmqxM
 
 fixedNow :: UTCTime
@@ -153,6 +154,25 @@ lowPriorityDropPolicyPreservesResultLogs = withTaskId $ \taskId -> do
   assertBool "result event should survive low-priority pressure" $ any ((== LogResult) . logEventStream) pending
   assertBool "overflow should be visible as a gap marker" $ any ((== Just 1) . logEventDroppedFrom) pending
 
+workerLogLoopStepTerminatesOnStoppedEventLoop :: Assertion
+workerLogLoopStepTerminatesOnStoppedEventLoop =
+  Logger.withConsoleLogger Logger.ERROR $ \env ->
+    Logger.runZmqApp env $ do
+      dealer <- (unwrapApp $ ZmqxM.open $ Zmqx.name "tp036-worker-log-stopped-dealer") :: Logger.LotosApp Zmqx.Dealer
+      context <- ZmqxM.askContext
+      loopVar <- liftIO newEmptyMVar
+      transport <- liftIO $ newWorkerLogTransport $ mkWorkerCfg 10 LogDropOldest
+      let spec =
+            Zmqx.EventLoop.addTransceiver
+              "worker-log-dealer"
+              dealer
+              (Zmqx.EventLoop.Mailbox 1)
+              Zmqx.EventLoop.emptySpec
+      liftIO $ Zmqx.EventLoop.withEventLoopIn context spec $ \loop -> putMVar loopVar loop
+      loop <- liftIO $ readMVar loopVar
+      continue <- workerLogLoopStep transport loop
+      liftIO $ assertBool "workerLogLoopStep retried after stopped EventLoop" (not continue)
+
 eventLoopDelayedAckClearsBeforeRetry :: Assertion
 eventLoopDelayedAckClearsBeforeRetry = withTaskId $ \taskId ->
   Logger.withConsoleLogger Logger.ERROR $ \env -> do
@@ -219,6 +239,7 @@ tests =
       TestLabel "rejected no-progress ACK becomes a visible gap marker" (TestCase rejectedBatchWithoutProgressBecomesGapMarker),
       TestLabel "wire-rounded ACK clears in-flight batch" (TestCase wireRoundedAckClearsInflightBatch),
       TestLabel "low-priority drop policy preserves result logs" (TestCase lowPriorityDropPolicyPreservesResultLogs),
+      TestLabel "worker log loop step terminates on stopped EventLoop" (TestCase workerLogLoopStepTerminatesOnStoppedEventLoop),
       TestLabel "EventLoop delayed ACK clears in-flight batch before retry" (TestCase eventLoopDelayedAckClearsBeforeRetry)
     ]
 
