@@ -8,6 +8,7 @@
 - [Observations](observations.md)
 - [Public API Guide](public-api.md)
 - [ZMQ Protocol Architecture](zmq-protocol.md)
+- [Protocol Compatibility and Versioning](protocol-compatibility.md)
 - [EventLoop Ownership](eventloop-ownership.md)
 - [TaskSchedule](task-schedule.md)
 - [TaskSchedule Demo](task-schedule-demo.md)

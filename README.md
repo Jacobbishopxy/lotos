@@ -140,7 +140,7 @@ class StatusReporter sr w where
 
 For a new application, import `Lotos.Zmq` and provide application payloads plus the three extension points above:
 
-1. Define a task payload and worker-status payload with `ToZmq`/`FromZmq` instances. Their multipart frame order is the protocol contract; keep peer encoders/decoders and regression tests aligned.
+1. Define a task payload and worker-status payload with `ToZmq`/`FromZmq` instances. Their multipart frame order is the protocol contract; keep peer encoders/decoders and regression tests aligned. Compatible wire changes are append-only at the payload tail and must keep old-frame decoder coverage.
 2. Define a `Task t` JSON shape for clients. New client tasks may leave `taskID = null`; the broker assigns the UUID before scheduling, and worker/scheduler code assumes a UUID is present before calling `unsafeGetTaskID`. `taskRetryInterval` is a retry delay in seconds for failed tasks with retries remaining; `0` or less retries immediately.
 3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current non-stale worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass. The TaskSchedule demo reports configured worker capacity in `WorkerState.taskCapacity`, subtracts reported processing/waiting work, assigns fresh tasks across remaining slots in load-sorted rounds, and leaves overflow queued.
 4. Implement `TaskAcceptor` for workers. Process each task batch, enqueue structured task logs with `taSendTaskLog` (or the compatibility `taPubTaskLogging` wrapper), and report `TaskProcessing`, `TaskSucceed`, or `TaskFailed` with `taSendTaskStatus`.
@@ -284,13 +284,13 @@ The `/info` response is intentionally a lightweight scheduler snapshot; worker l
 
 ## Protocol and verification invariants
 
-- `ToZmq` and `FromZmq` instances define positional multipart wire formats. Do not reorder frames without updating both peers and the bounded frame regression tests.
+- `ToZmq` and `FromZmq` instances define positional multipart wire formats. Treat them as a stable wire ABI: compatible changes append payload frames at the tail, keep old-frame decoder fallbacks, and update bounded frame tests; route/envelope/discriminator changes require an explicit protocol migration.
 - Client ACKs mean accepted/enqueued by the broker, not worker completion. Completion evidence comes from worker side effects, worker task/status state, logs, or smoke artifacts.
 - The broker owns UUID assignment. Client task JSON may set `taskID` to `null`, but scheduled/executing tasks must have IDs before `unsafeGetTaskID` is used.
 - Worker DEALER routing ids and reliable worker log DEALER routing ids both use `workerId`; custom configs must align client/frontend, worker/backend, and LogIngest endpoints.
 - Failed tasks retry while `taskRetry > 0`; positive `taskRetryInterval` values delay eligibility until the interval has elapsed, while `0` or less preserves immediate retry.
 - Worker status heartbeats drive broker liveness. When a worker is stale for `taskProcessor.workerStaleTimeoutSec`, the broker removes it from scheduling/info maps and recovers its non-succeeded in-flight tasks through the same retry/garbage path.
-- TaskSchedule's demo scheduler uses `WorkerState.taskCapacity - processingTaskNum - waitingTaskNum` as remaining capacity. The capacity field is appended to the worker-status payload; decoders still accept the older payload shape as a conservative single-slot worker status.
+- TaskSchedule's demo scheduler uses `WorkerState.taskCapacity - processingTaskNum - waitingTaskNum` as remaining capacity. The capacity field is appended to the worker-status payload; decoders still accept the older payload shape as a conservative single-slot worker status. See the mdBook protocol compatibility chapter for append-only examples and break criteria.
 - Safe verification commands are `cabal build all --enable-tests` for compilation, `cabal test all` for bounded regression suites, `scripts/task-schedule-smoke.sh` for the intentional single-worker end-to-end demo smoke, and `scripts/task-schedule-multi-worker-smoke.sh` for bounded multi-worker scheduling smoke after building.
 
 ## Development notes

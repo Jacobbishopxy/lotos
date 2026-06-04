@@ -136,13 +136,18 @@ workerStateFramesAppendCapacityAndDecodeOldPayloads :: Assertion
 workerStateFramesAppendCapacityAndDecodeOldPayloads = do
   let state = (capacityWorker 4) {processingTaskNum = 1, waitingTaskNum = 2}
       frames = toZmq state
+      expectedFrames = ["0.0", "0.0", "0.0", "100.0", "10.0", "90.0", "1", "2", "4"]
+      oldFrames = take 8 expectedFrames
       assertDecode label expected payload =
         case fromZmq payload of
           Right actual -> actual @?= expected
           Left err -> assertFailure $ label <> " failed to decode: " <> show err
-  length frames @?= 9
-  assertDecode "new WorkerState payload" state frames
-  assertDecode "old WorkerState payload" (state {taskCapacity = 1}) (take 8 frames)
+  frames @?= expectedFrames
+  assertDecode "new WorkerState payload" state expectedFrames
+  assertDecode "old WorkerState payload" (state {taskCapacity = 1}) oldFrames
+  case fromZmq (expectedFrames <> ["future-extra-frame"]) :: Either ZmqError WorkerState of
+    Left _ -> pure ()
+    Right actual -> assertFailure $ "WorkerState unexpectedly decoded a non-policy extra frame as " <> show actual
 
 tests :: Test
 tests =
