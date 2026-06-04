@@ -13,9 +13,22 @@ Info HTTP readers -> Broker InfoStorage/LogIngest state
 
 Clients send `Task t` frames through a REQ socket with a stable routing id. The broker frontend ROUTER receives the REQ envelope, preserves the binary request-id delimiter sequence, fills the task UUID, enqueues the task, and replies with a `ClientAck`. The ACK is an acceptance signal only.
 
+```text
+ClientRequest: clientRoutingId requestId "" taskUuid taskContent retry retryInterval timeout taskPayload...
+ClientAck:     clientRoutingId requestId "" ackTimestamp
+```
+
 ## Broker to worker
 
 Workers connect with DEALER sockets whose routing id is the worker id. Worker status heartbeats update liveness and scheduler snapshots. Broker-assigned task messages and worker task-status reports retain their existing `RouterBackendOut`/`RouterBackendIn` multipart shapes.
+
+```text
+WorkerTask:       workerRoutingId taskUuid taskContent retry retryInterval timeout taskPayload...
+WorkerStatus:     workerRoutingId WorkerStatusT ackTimestamp workerStatusPayload...
+WorkerTaskStatus: workerRoutingId WorkerTaskStatusT ackTimestamp taskUuid taskStatus
+```
+
+The current TaskSchedule `WorkerState` heartbeat payload appends `taskCapacity` after the old eight-frame load/memory/task-count prefix. The decoder still accepts the old prefix and defaults capacity to one.
 
 ## Task processor and socket layer
 
@@ -26,6 +39,12 @@ The TaskProcessor also uses EventLoop-registered PAIR sockets for worker dispatc
 ## Reliable logging
 
 Runtime task logs use a separate LogIngest path. Workers send ordered `LogBatch` messages, the broker persists accepted `LogEvent`s, updates bounded read caches, and replies with `LogAck`. If dispatch or persistence fails, the broker withholds the ACK so workers retry. Visible drop/gap records are required when worker-side log queues overflow.
+
+```text
+LogEvent: workerId taskUuid seq timestamp stream level message droppedFrom droppedThrough
+LogBatch: ackTimestamp workerId firstSeq eventCount LogEvent...
+LogAck:   ackTimestamp workerId acceptedThrough rejectedCount rejectedMessage...
+```
 
 ## Compatibility rule
 

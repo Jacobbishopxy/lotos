@@ -11,6 +11,8 @@ Compatible evolution is append-only at the tail of an application payload:
 3. Teach the decoder to accept the previous exact frame count and choose a conservative default for the new field.
 4. Add regression tests for both the new frame order and the old-frame fallback.
 
+Golden frame fixtures now enforce this policy in code. Before changing any `ToZmq` or `FromZmq` instance, update the relevant exact-frame assertion in `lotos/test/ZmqWorkerFrames.hs`, `lotos/test/ZmqClientAckFrames.hs`, `lotos/test/ZmqLogProtocolConfig.hs`, or `applications/TaskSchedule/test/Scheduler.hs`, then run the targeted protocol suites. These tests intentionally use fixed UUID/ACK values so frame order changes show up as simple list diffs.
+
 TaskSchedule's `WorkerState.taskCapacity` is the current example. New workers send nine status payload frames; old workers sent eight. The decoder still accepts the eight-frame shape and treats it as `taskCapacity = 1`, so old workers remain schedulable without over-assigning capacity.
 
 ```text
@@ -42,14 +44,14 @@ Most current payloads decode only the current frame shape. The explicit compatib
 
 | Payload surface | Shape notes | Fallback status |
 |---|---|---|
-| `Task t` | Fixed task prefix followed by nested task payload frames. | No fallback; nested payload owns any tail evolution. |
-| Client frontend `ClientRequest` / `ClientAck` | ROUTER/REQ routing id, request id, delimiter, and task/ack payloads. | No fallback; envelope placement is stable. |
-| Backend `WorkerTask`, `WorkerStatus`, `WorkerTaskStatus` | Worker routing id plus task payload or `WorkerMsgType`, `Ack`, and status payload. | No fallback; discriminator and prefix frames are stable. |
-| `WorkerReportStatus`, `WorkerReportTaskStatus` | Worker DEALER payloads before ZeroMQ adds the routing envelope. | No fallback except through nested worker-status payloads. |
-| `WorkerLogging` | Legacy task id plus text line. | No fallback; retained as a compatibility surface. |
-| `LogEvent`, `LogBatch`, `LogAck` | Fixed log event frames; batches/acks include count-delimited variable tails. | No old-frame fallback; counts must match tails exactly. |
+| `Task t` | Fixed task prefix followed by nested task payload frames. | No fallback; covered by worker golden fixtures. |
+| Client frontend `ClientRequest` / `ClientAck` | ROUTER/REQ routing id, request id, delimiter, and task/ack payloads. | No fallback; envelope placement is stable and covered by client golden fixtures. |
+| Backend `WorkerTask`, `WorkerStatus`, `WorkerTaskStatus` | Worker routing id plus task payload or `WorkerMsgType`, `Ack`, and status payload. | No fallback; discriminator and prefix frames are stable and covered by worker golden fixtures. |
+| `WorkerReportStatus`, `WorkerReportTaskStatus` | Worker DEALER payloads before ZeroMQ adds the routing envelope. | No fallback except through nested worker-status payloads; covered by worker golden fixtures. |
+| `WorkerLogging` | Legacy task id plus text line. | No fallback; retained as a compatibility surface and covered by log compatibility tests. |
+| `LogEvent`, `LogBatch`, `LogAck` | Fixed log event frames; batches/acks include count-delimited variable tails. | No old-frame fallback; counts must match tails exactly and are covered by log golden/negative fixtures. |
 | `Notify`, `Ack`, scalar enums/discriminators | Small exact positional payloads. | No fallback. |
-| TaskSchedule `WorkerState` | Nine-frame status payload with appended `taskCapacity`. | Accepts old eight-frame payload as single-slot capacity. |
+| TaskSchedule `WorkerState` | Nine-frame status payload with appended `taskCapacity`. | Accepts old eight-frame payload as single-slot capacity; covered both directly and inside worker-status wrapper frames. |
 | TaskSchedule `ClientTask` | Command and timeout frames. | No fallback. |
 
 ## Deliberate compatibility breaks

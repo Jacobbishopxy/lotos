@@ -16,6 +16,12 @@ import Zmqx.Monad qualified as ZmqxM
 testClientId :: RoutingID
 testClientId = "simpleClient_1"
 
+fixedAck :: Ack
+fixedAck =
+  case ackFromText "2026-01-01T00:00:00Z" of
+    Right ack -> ack
+    Left err -> error $ "invalid fixed ACK fixture: " <> show err
+
 unwrap :: (Show e) => IO (Either e a) -> IO a
 unwrap action = action >>= either (ioError . userError . show) pure
 
@@ -24,6 +30,45 @@ unwrapM action = action >>= either (liftIO . ioError . userError . show) pure
 
 expectJust :: String -> Maybe a -> IO a
 expectJust message = maybe (ioError $ userError message) pure
+
+assertLeft :: String -> Either e a -> Assertion
+assertLeft _ (Left _) = pure ()
+assertLeft message (Right _) = assertFailure $ message <> "; decoded successfully"
+
+exactClientRequestAndAckGoldenFrames :: Assertion
+exactClientRequestAndAckGoldenFrames = do
+  let task = Task Nothing "golden-client-task" 1 2 3 ()
+      requestId = "golden-req-id"
+      requestFrames = [textToBS testClientId, requestId, "", "", "golden-client-task", "1", "2", "3", ""]
+      ack = fixedAck
+      ackPayloadFrames = ["2026-01-01T00:00:00Z"]
+      ackRouterFrames = [textToBS testClientId, requestId, "", "2026-01-01T00:00:00Z"]
+  toZmq task @?= ["", "golden-client-task", "1", "2", "3", ""]
+  case fromZmq requestFrames :: Either ZmqError (RouterFrontendIn ()) of
+    Right (ClientRequest decodedClientId decodedReqId decodedTask) -> do
+      decodedClientId @?= testClientId
+      decodedReqId @?= requestId
+      taskID decodedTask @?= taskID task
+      taskContent decodedTask @?= taskContent task
+      taskRetry decodedTask @?= taskRetry task
+      taskRetryInterval decodedTask @?= taskRetryInterval task
+      taskTimeout decodedTask @?= taskTimeout task
+      taskProp decodedTask @?= taskProp task
+    Left err -> assertFailure $ "client request golden frames did not decode: " <> show err
+  toZmq ack @?= ackPayloadFrames
+  toZmq (ClientAck testClientId requestId ack) @?= ackRouterFrames
+  case fromZmq ackPayloadFrames :: Either ZmqError Ack of
+    Right decodedAck -> decodedAck @?= ack
+    Left err -> assertFailure $ "client ACK golden payload did not decode: " <> show err
+
+wrongOrderClientRequestFramesFailDecode :: Assertion
+wrongOrderClientRequestFramesFailDecode = do
+  assertLeft
+    "client request should reject missing REQ delimiter"
+    (fromZmq [textToBS testClientId, "golden-req-id", "not-empty", "", "golden-client-task", "1", "2", "3", ""] :: Either ZmqError (RouterFrontendIn ()))
+  assertLeft
+    "client request should reject delimiter before request id"
+    (fromZmq [textToBS testClientId, "", "golden-req-id", "", "golden-client-task", "1", "2", "3", ""] :: Either ZmqError (RouterFrontendIn ()))
 
 clientReqReceivesBrokerAck :: Assertion
 clientReqReceivesBrokerAck =
@@ -93,9 +138,11 @@ malformedClientRequestFramesFailDecode =
 tests :: Test
 tests =
   TestList
-    [ TestLabel "client REQ receives broker ACK as a single ACK frame" (TestCase clientReqReceivesBrokerAck),
+    [ TestLabel "client request and ACK golden frames keep exact order" (TestCase exactClientRequestAndAckGoldenFrames),
+      TestLabel "client REQ receives broker ACK as a single ACK frame" (TestCase clientReqReceivesBrokerAck),
       TestLabel "client service returns Nothing when ACK times out" (TestCase clientServiceRequestTimesOutWithoutAck),
-      TestLabel "malformed client request frames fail before ACK" (TestCase malformedClientRequestFramesFailDecode)
+      TestLabel "malformed client request frames fail before ACK" (TestCase malformedClientRequestFramesFailDecode),
+      TestLabel "wrong-order client request frames fail decode" (TestCase wrongOrderClientRequestFramesFailDecode)
     ]
 
 main :: IO ()

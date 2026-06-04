@@ -147,6 +147,10 @@ logProtocolFramesAndJsonRoundTrip = do
       event2Frames = [textToBS testWorkerId, uuidToBS taskId, "2", "2026-01-01T00:00:00Z", "stderr", "warn", "dropped verbose logs", "3", "5"]
       batchFrames = ["2026-01-01T00:00:00Z", textToBS testWorkerId, "1", "2"] <> event1Frames <> event2Frames
       ackFrames = ["2026-01-01T00:00:00Z", textToBS testWorkerId, "5", "1", "duplicate seq"]
+  length event1Frames @?= 9
+  length event2Frames @?= 9
+  length batchFrames @?= 22
+  length ackFrames @?= 5
   toZmq event1 @?= event1Frames
   toZmq event2 @?= event2Frames
   toZmq batch @?= batchFrames
@@ -170,7 +174,19 @@ logBatchRejectsMismatchedEventCount = do
       batchAck = ackFromUTC fixedNow
       event = LogEvent testWorkerId taskId 1 fixedNow LogStdout LogInfo "stdout line" Nothing Nothing
       malformedFrames = toZmq batchAck <> [textToBS testWorkerId, textToBS "1", textToBS "2"] <> toZmq event
+      extraFrames = toZmq batchAck <> [textToBS testWorkerId, textToBS "1", textToBS "0"] <> toZmq event
   assertLeft "mismatched LogBatch event count should fail" (fromZmq malformedFrames :: Either ZmqError LogBatch)
+  assertLeft "LogBatch with extra event frames should fail" (fromZmq extraFrames :: Either ZmqError LogBatch)
+
+logAckRejectsWrongOrderAndCount :: Assertion
+logAckRejectsWrongOrderAndCount = do
+  let batchAck = ackFromUTC fixedNow
+      ackFrames = toZmq batchAck <> [textToBS testWorkerId, "5", "1", "duplicate seq"]
+      wrongOrderFrames = toZmq batchAck <> ["5", textToBS testWorkerId, "1", "duplicate seq"]
+      wrongRejectedCountFrames = toZmq batchAck <> [textToBS testWorkerId, "5", "2", "duplicate seq"]
+  toZmq (LogAck batchAck testWorkerId 5 ["duplicate seq"]) @?= ackFrames
+  assertLeft "LogAck should reject worker id and accepted-through swapped" (fromZmq wrongOrderFrames :: Either ZmqError LogAck)
+  assertLeft "LogAck should reject mismatched rejected count" (fromZmq wrongRejectedCountFrames :: Either ZmqError LogAck)
 
 logSequenceFramesRejectNegativeAndOverflow :: Assertion
 logSequenceFramesRejectNegativeAndOverflow = do
@@ -262,6 +278,7 @@ tests =
     [ TestLabel "legacy WorkerLogging frame order remains taskUuid then text" (TestCase workerLoggingFramesRemainCompatible),
       TestLabel "new log protocol frames and JSON round-trip" (TestCase logProtocolFramesAndJsonRoundTrip),
       TestLabel "LogBatch rejects mismatched event count" (TestCase logBatchRejectsMismatchedEventCount),
+      TestLabel "LogAck rejects wrong frame order and rejected count" (TestCase logAckRejectsWrongOrderAndCount),
       TestLabel "sequence frames reject negative and overflow Word64 values" (TestCase logSequenceFramesRejectNegativeAndOverflow),
       TestLabel "old broker and worker configs get LogIngest defaults" (TestCase oldBrokerAndWorkerConfigsGetLoggingDefaults),
       TestLabel "new broker and worker configs use preferred logging names" (TestCase newBrokerAndWorkerConfigsUsePreferredLoggingNames),

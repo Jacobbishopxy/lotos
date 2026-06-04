@@ -134,6 +134,13 @@ assertEmpty :: String -> [a] -> Assertion
 assertEmpty _ [] = pure ()
 assertEmpty message xs = assertFailure $ message <> "; got " <> show (length xs)
 
+unwrapEither :: (Show e) => Either e a -> IO a
+unwrapEither = either (ioError . userError . show) pure
+
+assertLeft :: String -> Either e a -> Assertion
+assertLeft _ (Left _) = pure ()
+assertLeft message (Right _) = assertFailure $ message <> "; decoded successfully"
+
 assertTaskMatches :: Task () -> Task () -> Assertion
 assertTaskMatches expected actual = do
   taskID actual @?= taskID expected
@@ -214,6 +221,62 @@ workerReportTaskStatusPayloadsRoundTrip = do
         decodedTaskId @?= taskId
         decodedStatus @?= status
       Left err -> assertFailure $ "worker report task status did not round-trip for " <> show status <> ": " <> show err
+
+exactWorkerProtocolGoldenFrames :: Assertion
+exactWorkerProtocolGoldenFrames = do
+  taskId <- unwrapEither $ uuidFromBS "00000000-0000-0000-0000-000000000048"
+  let ack = ackFromUTC fixedNow
+      task = Task (Just taskId) "golden-worker-task" 2 3 4 ()
+      taskFrames = ["00000000-0000-0000-0000-000000000048", "golden-worker-task", "2", "3", "4", ""]
+      brokerTaskFrames = textToBS testWorkerId : taskFrames
+      statusReport = WorkerReportStatus ack ()
+      statusReportFrames = ["WorkerStatusT", "2026-01-01T00:00:00Z", ""]
+      statusRouterFrames = textToBS testWorkerId : statusReportFrames
+      taskStatusReport = WorkerReportTaskStatus ack taskId TaskSucceed
+      taskStatusFrames = ["WorkerTaskStatusT", "2026-01-01T00:00:00Z", "00000000-0000-0000-0000-000000000048", "TaskSucceed"]
+      taskStatusRouterFrames = textToBS testWorkerId : taskStatusFrames
+  toZmq task @?= taskFrames
+  decodedTask <- unwrapEither (fromZmq taskFrames :: Either ZmqError (Task ()))
+  assertTaskMatches task decodedTask
+  toZmq (WorkerTask testWorkerId task) @?= brokerTaskFrames
+  case fromZmq brokerTaskFrames :: Either ZmqError (RouterBackendOut ()) of
+    Right (WorkerTask decodedWorkerId decodedTask') -> do
+      decodedWorkerId @?= testWorkerId
+      assertTaskMatches task decodedTask'
+    Left err -> assertFailure $ "broker worker-task golden frames did not decode: " <> show err
+  toZmq statusReport @?= statusReportFrames
+  case fromZmq statusRouterFrames :: Either ZmqError (RouterBackendIn ()) of
+    Right (WorkerStatus decodedWorkerId decodedType decodedAck ()) -> do
+      decodedWorkerId @?= testWorkerId
+      decodedType @?= WorkerStatusT
+      decodedAck @?= ack
+    Right (WorkerTaskStatus _ _ _ _ _) -> assertFailure "worker status golden decoded as task status"
+    Left err -> assertFailure $ "worker status golden frames did not decode: " <> show err
+  toZmq taskStatusReport @?= taskStatusFrames
+  case fromZmq taskStatusRouterFrames :: Either ZmqError (RouterBackendIn ()) of
+    Right (WorkerTaskStatus decodedWorkerId decodedType decodedAck decodedTaskId decodedStatus) -> do
+      decodedWorkerId @?= testWorkerId
+      decodedType @?= WorkerTaskStatusT
+      decodedAck @?= ack
+      decodedTaskId @?= taskId
+      decodedStatus @?= TaskSucceed
+    Right (WorkerStatus _ _ _ _) -> assertFailure "worker task-status golden decoded as worker status"
+    Left err -> assertFailure $ "worker task-status golden frames did not decode: " <> show err
+
+workerProtocolGoldenFramesRejectWrongOrder :: Assertion
+workerProtocolGoldenFramesRejectWrongOrder = do
+  let workerIdFrame = textToBS testWorkerId
+      ackFrame = "2026-01-01T00:00:00Z"
+      taskIdFrame = "00000000-0000-0000-0000-000000000048"
+  assertLeft
+    "worker backend frames should reject ack before discriminator"
+    (fromZmq [workerIdFrame, ackFrame, "WorkerTaskStatusT", taskIdFrame, "TaskSucceed"] :: Either ZmqError (RouterBackendIn ()))
+  assertLeft
+    "worker task-status payload should reject task UUID before ack"
+    (fromZmq ["WorkerTaskStatusT", taskIdFrame, ackFrame, "TaskSucceed"] :: Either ZmqError WorkerReportTaskStatus)
+  assertLeft
+    "worker task-status payload should reject missing task status"
+    (fromZmq ["WorkerTaskStatusT", ackFrame, taskIdFrame] :: Either ZmqError WorkerReportTaskStatus)
 
 scheduledWorkerTaskFramesStripRouterEnvelope :: Assertion
 scheduledWorkerTaskFramesStripRouterEnvelope =
@@ -719,6 +782,8 @@ tests =
     [ TestLabel "worker status ROUTER frames use configured DEALER routing id" (TestCase workerStatusFramesUseConfiguredDealerRoutingId),
       TestLabel "worker task status ROUTER frames use configured DEALER routing id" (TestCase workerTaskStatusFramesUseConfiguredDealerRoutingId),
       TestLabel "worker report task status payloads round-trip all task statuses" (TestCase workerReportTaskStatusPayloadsRoundTrip),
+      TestLabel "core worker protocol golden frames keep exact order" (TestCase exactWorkerProtocolGoldenFrames),
+      TestLabel "worker protocol golden frames reject wrong order" (TestCase workerProtocolGoldenFramesRejectWrongOrder),
       TestLabel "scheduled worker task frames strip ROUTER envelope for DEALER" (TestCase scheduledWorkerTaskFramesStripRouterEnvelope),
       TestLabel "worker backend EventLoop receives task frames in order" (TestCase workerBackendEventLoopReceivesTaskFramesInOrder),
       TestLabel "worker backend EventLoop forwards task status and heartbeat frames" (TestCase workerBackendEventLoopForwardsStatusAndHeartbeatFrames),

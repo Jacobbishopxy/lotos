@@ -11,6 +11,15 @@ import Server (SimpleServer (..))
 import System.Exit (exitFailure)
 import Test.HUnit
 
+fixedAck :: Ack
+fixedAck =
+  case ackFromText "2026-01-01T00:00:00Z" of
+    Right ack -> ack
+    Left err -> error $ "invalid fixed ACK fixture: " <> show err
+
+testWorkerId :: RoutingID
+testWorkerId = "simpleWorker_1"
+
 idleWorker :: WorkerState
 idleWorker = WorkerState 0.0 0.0 0.0 100.0 10.0 90.0 0 0 1
 
@@ -149,6 +158,27 @@ workerStateFramesAppendCapacityAndDecodeOldPayloads = do
     Left _ -> pure ()
     Right actual -> assertFailure $ "WorkerState unexpectedly decoded a non-policy extra frame as " <> show actual
 
+workerStateStatusGoldenFramesDecodeOldPayloads :: Assertion
+workerStateStatusGoldenFramesDecodeOldPayloads = do
+  let state = (capacityWorker 4) {processingTaskNum = 1, waitingTaskNum = 2}
+      ack = fixedAck
+      expectedStatusPayload = ["WorkerStatusT", "2026-01-01T00:00:00Z", "0.0", "0.0", "0.0", "100.0", "10.0", "90.0", "1", "2", "4"]
+      oldStatusPayload = take 10 expectedStatusPayload
+      expectedRouterFrames = textToBS testWorkerId : expectedStatusPayload
+      oldRouterFrames = textToBS testWorkerId : oldStatusPayload
+      assertStatusDecode label expectedState payload =
+        case fromZmq payload :: Either ZmqError (RouterBackendIn WorkerState) of
+          Right (WorkerStatus decodedWorkerId decodedType decodedAck decodedState) -> do
+            decodedWorkerId @?= testWorkerId
+            decodedType @?= WorkerStatusT
+            decodedAck @?= ack
+            decodedState @?= expectedState
+          Right (WorkerTaskStatus _ _ _ _ _) -> assertFailure $ label <> " decoded as task status"
+          Left err -> assertFailure $ label <> " failed to decode: " <> show err
+  toZmq (WorkerReportStatus ack state) @?= expectedStatusPayload
+  assertStatusDecode "new WorkerState status payload" state expectedRouterFrames
+  assertStatusDecode "old WorkerState status payload" (state {taskCapacity = 1}) oldRouterFrames
+
 tests :: Test
 tests =
   TestList
@@ -161,7 +191,8 @@ tests =
       TestLabel "busy or waiting workers receive no new work" (TestCase saturatedWorkersDoNotReceiveWork),
       TestLabel "all saturated workers leave all tasks queued" (TestCase allSaturatedWorkersLeaveEverythingQueued),
       TestLabel "lowest load idle worker receives the first task" (TestCase leastLoadedIdleWorkerPreferred),
-      TestLabel "WorkerState frames append capacity and decode old payloads" (TestCase workerStateFramesAppendCapacityAndDecodeOldPayloads)
+      TestLabel "WorkerState frames append capacity and decode old payloads" (TestCase workerStateFramesAppendCapacityAndDecodeOldPayloads),
+      TestLabel "WorkerState status golden frames decode old payloads" (TestCase workerStateStatusGoldenFramesDecodeOldPayloads)
     ]
 
 main :: IO ()
