@@ -23,6 +23,7 @@ import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Internal.Liveness
+import Lotos.Zmq.Internal.HandoffQueueStats
 import Lotos.Zmq.LBS.InfoStorage
 import Lotos.Zmq.LBS.LogIngest
 import Lotos.Zmq.LBS.SocketLayer
@@ -69,15 +70,19 @@ runLBS n BrokerServiceConfig {..} loadBalancer = do
           }
 
   -- 1. shared data
-  taskSchedulerData <-
-    liftIO $
-      TaskSchedulerData
-        <$> (mkTSQueue :: IO (TSQueue (Task t)))
-        <*> (mkTSQueue :: IO (TSQueue (RetryTask t)))
-        <*> (newTSWorkerTasksMap :: IO (TSWorkerTasksMap (TaskID, Task t, TaskStatus)))
-        <*> (mkTSMap :: IO (TSWorkerStatusMap w))
-        <*> newTSWorkerAliveMap
-        <*> (mkTSRingBuffer (garbageBinSize taskSchedulerConfig) :: IO (TSRingBuffer (Task t)))
+  taskSchedulerData <- liftIO $ do
+    taskQueue <- mkTSQueue :: IO (TSQueue (Task t))
+    failedTaskQueue <- mkTSQueue :: IO (TSQueue (RetryTask t))
+    workerTasksMap <- newTSWorkerTasksMap :: IO (TSWorkerTasksMap (TaskID, Task t, TaskStatus))
+    workerStatusMap <- mkTSMap :: IO (TSWorkerStatusMap w)
+    workerAliveMap <- newTSWorkerAliveMap
+    garbageBin <- mkTSRingBuffer (garbageBinSize taskSchedulerConfig) :: IO (TSRingBuffer (Task t))
+    queueRegistry <- newHandoffQueueRegistry
+    taskQueueStats <- newHandoffQueueStats "broker.task.queue" (taskQueueHWM taskSchedulerConfig)
+    failedTaskQueueStats <- newHandoffQueueStats "broker.failed-task.queue" (failedTaskQueueHWM taskSchedulerConfig)
+    registerHandoffQueueStats queueRegistry taskQueueStats
+    registerHandoffQueueStats queueRegistry failedTaskQueueStats
+    pure $ TaskSchedulerData taskQueue failedTaskQueue workerTasksMap workerStatusMap workerAliveMap garbageBin queueRegistry taskQueueStats failedTaskQueueStats
 
   -- 2. run socket layer
   t1 <- runSocketLayer socketLayerConfig (workerStaleTimeoutSec taskProcessorConfig) taskSchedulerData

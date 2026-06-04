@@ -11,7 +11,7 @@ module Lotos.Zmq.LBS.SocketLayer
 where
 
 import Control.Concurrent
-import Control.Concurrent.STM (TQueue, atomically, newTQueueIO, orElse, readTQueue, tryReadTQueue, writeTQueue)
+import Control.Concurrent.STM (STM, TQueue, atomically, newTQueueIO, orElse, readTQueue, tryReadTQueue, writeTQueue)
 import Control.Exception (SomeException, try)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
@@ -26,6 +26,7 @@ import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
+import Lotos.Zmq.Internal.HandoffQueueStats
 import Lotos.Zmq.Internal.Liveness
 import Zmqx
 import Zmqx.EventLoop qualified as Zmqx.EventLoop
@@ -36,10 +37,15 @@ import Zmqx.Monad qualified as ZmqxM
 data SocketLayer t w = SocketLayer
   { brokerEventLoop :: Zmqx.EventLoop.EventLoop,
     frontendFrames :: TQueue [ByteString.ByteString],
+    frontendFrameStats :: HandoffQueueStatsVar,
     backendFrames :: TQueue [ByteString.ByteString],
+    backendFrameStats :: HandoffQueueStatsVar,
     taskProcessorFrames :: TQueue [ByteString.ByteString],
+    taskProcessorFrameStats :: HandoffQueueStatsVar,
     taskQueue :: TSQueue (Task t), -- frontend puts message
+    taskQueueStats :: HandoffQueueStatsVar,
     failedTaskQueue :: TSQueue (RetryTask t), -- backend puts retryable failed tasks with readiness metadata
+    failedTaskQueueStats :: HandoffQueueStatsVar,
     workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modifies map
     workerStatusMap :: TSWorkerStatusMap w, -- backend modifies map
     workerAliveMap :: TSWorkerAliveMap, -- backend records worker status heartbeat times
@@ -87,7 +93,7 @@ runSocketLayer ::
   Int ->
   TaskSchedulerData t w ->
   LotosApp ThreadId
-runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq wtm wsm wam gbb) = do
+runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq wtm wsm wam gbb queueRegistry tqStats ftqStats) = do
   logApp INFO "runSocketLayer start!"
 
   -- Init frontend Router
@@ -108,6 +114,10 @@ runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq 
   frontendQueue <- liftIO newTQueueIO
   backendQueue <- liftIO newTQueueIO
   taskProcessorQueue <- liftIO newTQueueIO
+  frontendStats <- liftIO $ newHandoffQueueStats "broker.socketlayer.frontend-frames" 1000
+  backendStats <- liftIO $ newHandoffQueueStats "broker.socketlayer.backend-frames" 1000
+  taskProcessorStats <- liftIO $ newHandoffQueueStats "broker.socketlayer.taskprocessor-frames" 1000
+  liftIO $ mapM_ (registerHandoffQueueStats queueRegistry) [frontendStats, backendStats, taskProcessorStats]
   let spec =
         Zmqx.EventLoop.addSender
           brokerTaskProcessorNotifyEndpoint
@@ -115,15 +125,15 @@ runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq 
           $ Zmqx.EventLoop.addReceiver
             brokerTaskProcessorInEndpoint
             receiverPair
-            (Zmqx.EventLoop.Callback $ atomically . writeTQueue taskProcessorQueue)
+            (Zmqx.EventLoop.Callback $ enqueueSocketLayerFrame taskProcessorStats taskProcessorQueue)
           $ Zmqx.EventLoop.addTransceiver
             brokerBackendEndpoint
             backend
-            (Zmqx.EventLoop.Callback $ atomically . writeTQueue backendQueue)
+            (Zmqx.EventLoop.Callback $ enqueueSocketLayerFrame backendStats backendQueue)
           $ Zmqx.EventLoop.addTransceiver
             brokerFrontendEndpoint
             frontend
-            (Zmqx.EventLoop.Callback $ atomically . writeTQueue frontendQueue)
+            (Zmqx.EventLoop.Callback $ enqueueSocketLayerFrame frontendStats frontendQueue)
             Zmqx.EventLoop.emptySpec
 
   -- Start the EventLoop-owned socket loop in a separate thread.
@@ -134,10 +144,16 @@ runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq 
           Zmqx.EventLoop.withEventLoopIn context spec $ \loop ->
             runAppWithEnv appEnv $
               layerLoop $
-                SocketLayer loop frontendQueue backendQueue taskProcessorQueue tq ftq wtm wsm wam gbb staleTimeoutSec
+                SocketLayer loop frontendQueue frontendStats backendQueue backendStats taskProcessorQueue taskProcessorStats tq tqStats ftq ftqStats wtm wsm wam gbb staleTimeoutSec
     case (result :: Either SomeException ()) of
       Left exception -> logApp ERROR $ "SocketLayer EventLoop stopped: " <> show exception
       Right () -> pure ()
+
+enqueueSocketLayerFrame :: HandoffQueueStatsVar -> TQueue [ByteString.ByteString] -> [ByteString.ByteString] -> IO ()
+enqueueSocketLayerFrame statsVar queue frames =
+  atomically $ do
+    recordHandoffEnqueueSTM statsVar
+    writeTQueue queue frames
 
 layerLoop ::
   (FromZmq t, ToZmq t, FromZmq w) =>
@@ -149,12 +165,10 @@ layerLoop layer = do
   layerLoop layer
 
 drainSocketLayerFrames :: SocketLayer t w -> LotosApp SocketLayerFrames
-drainSocketLayerFrames SocketLayer {..} =
-  liftIO $
-    atomically $
-      (FrontendFrames <$> readTQueue frontendFrames)
-        `orElse` (BackendFrames <$> readTQueue backendFrames)
-        `orElse` (TaskProcessorFrames <$> readTQueue taskProcessorFrames)
+drainSocketLayerFrames layer = do
+  frames <- liftIO $ atomically $ readSocketLayerFramesWithStats layer
+  logSocketLayerQueueWarnings layer
+  pure frames
 
 handleSocketLayerFrames ::
   (FromZmq t, ToZmq t, FromZmq w) =>
@@ -181,14 +195,15 @@ drainQueuedSocketLayerFrames ::
   Int ->
   DrainPreference ->
   LotosApp ()
-drainQueuedSocketLayerFrames layer@SocketLayer {..} limit initialPreference = go limit initialPreference
+drainQueuedSocketLayerFrames layer limit initialPreference = go limit initialPreference
   where
     go remaining preference
       | remaining <= 0 = pure ()
       | otherwise =
-          liftIO (tryReadSocketLayerFrames preference frontendFrames backendFrames taskProcessorFrames) >>= \case
+          liftIO (tryReadSocketLayerFrames preference layer) >>= \case
             Nothing -> pure ()
             Just frames -> do
+              logSocketLayerQueueWarnings layer
               handleOneSocketLayerFrame layer frames
               go (remaining - 1) (nextDrainPreferenceAfter frames)
 
@@ -198,13 +213,29 @@ nextDrainPreferenceAfter = \case
   BackendFrames _ -> PreferTaskProcessor
   TaskProcessorFrames _ -> PreferFrontend
 
+logSocketLayerQueueWarnings :: SocketLayer t w -> LotosApp ()
+logSocketLayerQueueWarnings SocketLayer {..} =
+  mapM_ logQueueWarning [frontendFrameStats, backendFrameStats, taskProcessorFrameStats, taskQueueStats, failedTaskQueueStats]
+
+logQueueWarning :: HandoffQueueStatsVar -> LotosApp ()
+logQueueWarning statsVar =
+  liftIO (takeHandoffQueueWarning statsVar) >>= \case
+    Nothing -> pure ()
+    Just stats -> logApp WARN $ "no-drop queue high-water crossed: " <> show stats
+
+readSocketLayerFramesWithStats :: SocketLayer t w -> STM SocketLayerFrames
+readSocketLayerFramesWithStats SocketLayer {..} =
+  readFrontend `orElse` readBackend `orElse` readTaskProcessor
+  where
+    readFrontend = readTracked frontendFrames frontendFrameStats FrontendFrames
+    readBackend = readTracked backendFrames backendFrameStats BackendFrames
+    readTaskProcessor = readTracked taskProcessorFrames taskProcessorFrameStats TaskProcessorFrames
+
 tryReadSocketLayerFrames ::
   DrainPreference ->
-  TQueue [ByteString.ByteString] ->
-  TQueue [ByteString.ByteString] ->
-  TQueue [ByteString.ByteString] ->
+  SocketLayer t w ->
   IO (Maybe SocketLayerFrames)
-tryReadSocketLayerFrames preference frontendQ backendQ taskProcessorQ =
+tryReadSocketLayerFrames preference SocketLayer {..} =
   atomically $ tryReadOrdered $ queueOrder preference
   where
     queueOrder = \case
@@ -212,15 +243,29 @@ tryReadSocketLayerFrames preference frontendQ backendQ taskProcessorQ =
       PreferBackend -> [tryBackend, tryTaskProcessor, tryFrontend]
       PreferTaskProcessor -> [tryTaskProcessor, tryFrontend, tryBackend]
 
-    tryFrontend = fmap FrontendFrames <$> tryReadTQueue frontendQ
-    tryBackend = fmap BackendFrames <$> tryReadTQueue backendQ
-    tryTaskProcessor = fmap TaskProcessorFrames <$> tryReadTQueue taskProcessorQ
+    tryFrontend = tryReadTracked frontendFrames frontendFrameStats FrontendFrames
+    tryBackend = tryReadTracked backendFrames backendFrameStats BackendFrames
+    tryTaskProcessor = tryReadTracked taskProcessorFrames taskProcessorFrameStats TaskProcessorFrames
 
     tryReadOrdered [] = pure Nothing
     tryReadOrdered (readNext : rest) =
       readNext >>= \case
         Just frames -> pure $ Just frames
         Nothing -> tryReadOrdered rest
+
+readTracked :: TQueue frames -> HandoffQueueStatsVar -> (frames -> wrapped) -> STM wrapped
+readTracked queue statsVar wrap = do
+  frames <- readTQueue queue
+  recordHandoffDrainSTM 1 statsVar
+  pure $ wrap frames
+
+tryReadTracked :: TQueue frames -> HandoffQueueStatsVar -> (frames -> wrapped) -> STM (Maybe wrapped)
+tryReadTracked queue statsVar wrap =
+  tryReadTQueue queue >>= \case
+    Nothing -> pure Nothing
+    Just frames -> do
+      recordHandoffDrainSTM 1 statsVar
+      pure $ Just $ wrap frames
 
 -- ⭐⭐ handle message from clients
 handleFrontendFrames ::
@@ -234,7 +279,7 @@ handleFrontendFrames SocketLayer {..} frames = do
   case fromZmq @(RouterFrontendIn t) frames of
     Left e -> logApp ERROR $ "handleFrontend: unable to parse client request; no ACK sent: " <> show e
     Right (ClientRequest clientID clientReqID task) ->
-      handleClientRequest taskQueue (sendClientAck brokerEventLoop) clientID clientReqID task
+      handleClientRequest taskQueue taskQueueStats (sendClientAck brokerEventLoop) clientID clientReqID task
 
 -- Handle a decoded frontend client request after EventLoop callback handoff.
 -- The callback only queues raw frames; this helper preserves enqueue-before-ACK
@@ -242,14 +287,19 @@ handleFrontendFrames SocketLayer {..} frames = do
 handleClientRequest ::
   (FromZmq t) =>
   TSQueue (Task t) ->
+  HandoffQueueStatsVar ->
   (RouterFrontendOut -> LotosApp ()) ->
   RoutingID ->
   ByteString.ByteString ->
   Task t ->
   LotosApp ()
-handleClientRequest taskQueue sendAck clientID clientReqID task = do
+handleClientRequest taskQueue taskQueueStats sendAck clientID clientReqID task = do
   filledTask <- liftIO $ fillTaskID' task
-  liftIO $ enqueueTS filledTask taskQueue -- Ensure proper enqueueing
+  liftIO $
+    atomically $ do
+      enqueueTSSTM filledTask taskQueue -- Ensure proper enqueueing
+      recordHandoffEnqueueSTM taskQueueStats
+  logQueueWarning taskQueueStats
   ack <- liftIO newAck
   sendAck (ClientAck clientID clientReqID ack)
   logApp DEBUG $ "handleFrontend: sent client ACK after enqueue: " <> show clientID <> " " <> show ack
@@ -317,6 +367,7 @@ handleWorkerFrames layer@SocketLayer {..} frames = do
 data TaskContext t = TaskContext
   { tcWorkerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus),
     tcFailedTaskQueue :: TSQueue (RetryTask t),
+    tcFailedTaskQueueStats :: HandoffQueueStatsVar,
     tcGarbageBin :: TSRingBuffer (Task t),
     tcNotifyLoadBalancer :: LotosApp ()
   }
@@ -329,6 +380,7 @@ getTaskContext SocketLayer {..} =
   TaskContext
     { tcWorkerTasksMap = workerTasksMap,
       tcFailedTaskQueue = failedTaskQueue,
+      tcFailedTaskQueueStats = failedTaskQueueStats,
       tcGarbageBin = garbageBin,
       tcNotifyLoadBalancer = notifyLoadBalancer brokerEventLoop
     }
@@ -402,7 +454,11 @@ handleFailedTask TaskContext {..} wID uuid = do
       case failedTaskDisposition task of
         RetryFailedTask retryTask -> do
           failedAt <- liftIO getCurrentTime
-          liftIO $ enqueueTS (mkRetryTask failedAt retryTask) tcFailedTaskQueue
+          liftIO $
+            atomically $ do
+              enqueueTSSTM (mkRetryTask failedAt retryTask) tcFailedTaskQueue
+              recordHandoffEnqueueSTM tcFailedTaskQueueStats
+          logQueueWarning tcFailedTaskQueueStats
         GarbageFailedTask garbageTask -> liftIO $ writeBuffer tcGarbageBin garbageTask
   -- notify load-balancer
   tcNotifyLoadBalancer

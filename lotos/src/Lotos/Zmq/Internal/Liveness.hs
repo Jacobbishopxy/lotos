@@ -21,7 +21,7 @@ module Lotos.Zmq.Internal.Liveness
   )
 where
 
-import Control.Monad (unless)
+import Control.Monad (foldM)
 import Data.Maybe (fromMaybe)
 import Data.Time (UTCTime, addUTCTime)
 import Lotos.TSD.Map
@@ -66,17 +66,23 @@ recoverStaleWorkerTasks ::
   TSWorkerTasksMap (TaskID, Task t, TaskStatus) ->
   TSQueue (RetryTask t) ->
   TSRingBuffer (Task t) ->
-  IO ()
+  IO Int
 recoverStaleWorkerTasks now workerID workerTasksMap failedTaskQueue garbageBin = do
   taskEntries <- fromMaybe [] <$> lookupTSWorkerTasks workerID workerTasksMap
-  mapM_ recoverTask taskEntries
+  recoveredRetryCount <- foldM recoverTask 0 taskEntries
   deleteTSWorkerTasks workerID workerTasksMap
+  pure recoveredRetryCount
   where
-    recoverTask (_, task, status) =
-      unless (status == TaskSucceed) $
-        case failedTaskDisposition task of
-          RetryFailedTask retryTask -> enqueueTS (mkRetryTask now retryTask) failedTaskQueue
-          GarbageFailedTask garbageTask -> writeBuffer garbageBin garbageTask
+    recoverTask recoveredCount (_, task, status)
+      | status == TaskSucceed = pure recoveredCount
+      | otherwise =
+          case failedTaskDisposition task of
+            RetryFailedTask retryTask -> do
+              enqueueTS (mkRetryTask now retryTask) failedTaskQueue
+              pure $ recoveredCount + 1
+            GarbageFailedTask garbageTask -> do
+              writeBuffer garbageBin garbageTask
+              pure recoveredCount
 
 -- | Recover all stale workers and remove them from liveness/status/task maps.
 recoverStaleWorkers ::
@@ -86,13 +92,14 @@ recoverStaleWorkers ::
   TSWorkerTasksMap (TaskID, Task t, TaskStatus) ->
   TSQueue (RetryTask t) ->
   TSRingBuffer (Task t) ->
-  IO [RoutingID]
+  IO ([RoutingID], Int)
 recoverStaleWorkers now workerAliveMap workerStatusMap workerTasksMap failedTaskQueue garbageBin = do
   staleWorkerIDs' <- staleWorkerIDs now workerAliveMap
-  mapM_ recoverWorker staleWorkerIDs'
-  pure staleWorkerIDs'
+  recoveredRetryCount <- foldM recoverWorker 0 staleWorkerIDs'
+  pure (staleWorkerIDs', recoveredRetryCount)
   where
-    recoverWorker workerID = do
-      recoverStaleWorkerTasks now workerID workerTasksMap failedTaskQueue garbageBin
+    recoverWorker recoveredCount workerID = do
+      workerRecoveredCount <- recoverStaleWorkerTasks now workerID workerTasksMap failedTaskQueue garbageBin
       deleteMap workerID workerStatusMap
       deleteMap workerID workerAliveMap
+      pure $ recoveredCount + workerRecoveredCount

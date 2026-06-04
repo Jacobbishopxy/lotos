@@ -39,6 +39,7 @@ import Data.Text qualified as Text
 import Lotos.TSD.Queue
 import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
+import Lotos.Zmq.Internal.HandoffQueueStats
 import Lotos.Zmq.Internal.Liveness
 import Lotos.Util
 
@@ -81,6 +82,9 @@ data TaskSchedulerData t s
       (TSWorkerStatusMap s) -- worker status map
       TSWorkerAliveMap -- worker liveness map
       (TSRingBuffer (Task t)) -- exhausted retry / garbage bin
+      HandoffQueueRegistry -- registered no-drop runtime queues exposed by info storage
+      HandoffQueueStatsVar -- accepted task queue stats
+      HandoffQueueStatsVar -- failed retry queue stats
 
 -- | Queue sizing knobs for broker-owned task storage.
 data TaskSchedulerConfig = TaskSchedulerConfig

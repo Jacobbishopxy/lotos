@@ -15,6 +15,7 @@ module Lotos.Zmq.LBS.TaskProcessor
 where
 
 import Control.Concurrent
+import Control.Concurrent.STM (atomically)
 import Control.Exception (SomeException, try)
 import Control.Monad (unless, when)
 import Control.Monad.RWS
@@ -28,6 +29,7 @@ import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
+import Lotos.Zmq.Internal.HandoffQueueStats
 import Lotos.Zmq.Internal.Liveness
 import Zmqx
 import Zmqx.EventLoop qualified as Zmqx.EventLoop
@@ -75,7 +77,9 @@ data TaskProcessor lb t w
   = (LoadBalancerAlgo lb t w) => TaskProcessor
   { taskProcessorEventLoop :: Zmqx.EventLoop.EventLoop,
     taskQueue :: TSQueue (Task t),
+    taskQueueStats :: HandoffQueueStatsVar,
     failedTaskQueue :: TSQueue (RetryTask t), -- backend put retryable failures with readiness metadata
+    failedTaskQueueStats :: HandoffQueueStatsVar,
     workerTasksMap :: TSWorkerTasksMap (TaskID, Task t, TaskStatus), -- backend modify map
     workerStatusMap :: TSWorkerStatusMap w, -- backend modify map
     workerAliveMap :: TSWorkerAliveMap, -- socket layer records worker heartbeat times
@@ -103,7 +107,7 @@ runTaskProcessor ::
   TaskSchedulerData t w ->
   lb ->
   LotosApp ThreadId
-runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm wsm wam gbb) loadBalancer = do
+runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm wsm wam gbb _ tqStats ftqStats) loadBalancer = do
   logApp INFO "runTaskProcessor"
 
   -- Init receiver Pair
@@ -135,7 +139,7 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
           Zmqx.EventLoop.withEventLoopIn context spec $ \loop ->
             runAppWithEnv appEnv $
               processorLoop config $
-                TaskProcessor loop tq ftq wtm wsm wam gbb loadBalancer tg 0
+                TaskProcessor loop tq tqStats ftq ftqStats wtm wsm wam gbb loadBalancer tg 0
     case (result :: Either SomeException ()) of
       Left exception -> logApp ERROR $ "TaskProcessor EventLoop stopped: " <> show exception
       Right () -> pure ()
@@ -159,14 +163,21 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
 
   -- 3. recover stale workers before taking the status snapshot used by the scheduler
   now <- liftIO getCurrentTime
-  staleWorkerIds <- liftIO $ recoverStaleWorkers now workerAliveMap workerStatusMap workerTasksMap failedTaskQueue garbageBin
+  (staleWorkerIds, recoveredFailedTasks) <- liftIO $ recoverStaleWorkers now workerAliveMap workerStatusMap workerTasksMap failedTaskQueue garbageBin
+  liftIO $ recordHandoffEnqueueN recoveredFailedTasks failedTaskQueueStats
   when (not $ null staleWorkerIds) $
     logApp WARN $ "processorLoop -> recovered stale workers: " <> show staleWorkerIds
+  logQueueWarning failedTaskQueueStats
   workerStatuses <- liftIO $ toListMap workerStatusMap
 
   -- 4. call `dequeueFirstN` from TaskQueue and FailedTaskQueue: [t]
-  tasks <- liftIO $ dequeueN' taskQueuePullNo taskQueue
-  retryTasks <- liftIO $ dequeueN' failedTaskQueuePullNo failedTaskQueue
+  (tasks, retryTasks) <- liftIO $
+    atomically $ do
+      tasks <- dequeueNSTM' taskQueuePullNo taskQueue
+      retryTasks <- dequeueNSTM' failedTaskQueuePullNo failedTaskQueue
+      recordHandoffDrainSTM (length tasks) taskQueueStats
+      recordHandoffDrainSTM (length retryTasks) failedTaskQueueStats
+      pure (tasks, retryTasks)
 
   -- 5. perform load-balancer algo: `[w] -> [t] -> ([(RoutingID, t)], [t])`
   let (eligibleRetryTasks, delayedRetryTasks) = partitionRetryTasks now retryTasks
@@ -188,8 +199,15 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   mapM_ (sendWorkerTask taskProcessorEventLoop) workerTasks
 
   -- 7. re-enqueue invalid tasks
-  liftIO $ enqueueTSs invalidTasks taskQueue
-  liftIO $ enqueueTSs (delayedRetryTasks <> invalidFailedRetryTasks) failedTaskQueue
+  let retryRequeues = delayedRetryTasks <> invalidFailedRetryTasks
+  liftIO $
+    atomically $ do
+      enqueueTSsSTM invalidTasks taskQueue
+      recordHandoffEnqueueNSTM (length invalidTasks) taskQueueStats
+      enqueueTSsSTM retryRequeues failedTaskQueue
+      recordHandoffEnqueueNSTM (length retryRequeues) failedTaskQueueStats
+  logQueueWarning taskQueueStats
+  logQueueWarning failedTaskQueueStats
 
   -- 8. loop
   processorLoop cfg tp {trigger = newTrigger, loadBalancer = newLoadBalancer}
@@ -206,6 +224,12 @@ receiveNotify taskProcessorLoop trigger triggerNow =
 sendWorkerTask :: (ToZmq t) => Zmqx.EventLoop.EventLoop -> RouterBackendOut t -> LotosApp ()
 sendWorkerTask taskProcessorLoop workerTask =
   zmqUnwrap $ Zmqx.EventLoop.sends taskProcessorLoop taskProcessorDispatchEndpoint $ toZmq workerTask
+
+logQueueWarning :: HandoffQueueStatsVar -> LotosApp ()
+logQueueWarning statsVar =
+  liftIO (takeHandoffQueueWarning statsVar) >>= \case
+    Nothing -> pure ()
+    Just stats -> logApp WARN $ "no-drop queue high-water crossed: " <> show stats
 
 ----------------------------------------------------------------------------------------------------
 

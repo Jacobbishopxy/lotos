@@ -95,6 +95,7 @@ module Lotos.Zmq
     InfoStorageConfig (..),
     LogIngestConfig (..),
     TaskSchedulerData (..),
+    HandoffQueueStats (..),
     defaultLogIngestConfig,
     defaultReliableLogIngestAddr,
 
@@ -137,6 +138,7 @@ import Lotos.Logger (LotosApp, LotosEnv (..), runApp, runAppWithContext, runZmqA
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error
+import Lotos.Zmq.Internal.HandoffQueueStats
 import Lotos.Zmq.LBC
 import Lotos.Zmq.LBS
 import Lotos.Zmq.LBS.SocketLayer (runSocketLayer)

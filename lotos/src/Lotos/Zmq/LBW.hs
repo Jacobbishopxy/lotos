@@ -25,7 +25,7 @@ module Lotos.Zmq.LBW
 where
 
 import Control.Concurrent (myThreadId)
-import Control.Concurrent.STM (TQueue, TVar, atomically, newTQueueIO, newTVarIO, orElse, readTQueue, readTVar, writeTQueue, writeTVar)
+import Control.Concurrent.STM (STM, TQueue, TVar, atomically, newTQueueIO, newTVarIO, orElse, readTQueue, readTVar, writeTQueue, writeTVar)
 import Control.Exception (SomeException, try)
 import Control.Monad (void, when)
 import Control.Monad.RWS
@@ -37,6 +37,7 @@ import Lotos.TSD.Queue
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
 import Lotos.Zmq.Error (ZmqError, zmqAppUnwrap, zmqUnwrap)
+import Lotos.Zmq.Internal.HandoffQueueStats
 import Lotos.Zmq.Internal.WorkerRuntime
 import Lotos.Zmq.LBW.LogTransport
 import Lotos.Zmq.Util (textToBS)
@@ -79,8 +80,10 @@ class TaskAcceptor ta t where
 
 -- | Read-only worker service facts passed to a 'StatusReporter'.
 data StatusReporterAPI = StatusReporterAPI
-  { srReportInfo :: WorkerInfo
+  { srReportInfo :: WorkerInfo,
     -- ^ Current queue/processing counts and configured capacity maintained by the worker service.
+    srHandoffQueueStats :: [HandoffQueueStats]
+    -- ^ No-drop worker handoff queue depth/high-water snapshots for custom heartbeat payloads.
   }
 
 -- | Application-defined status collector for worker heartbeat payloads.
@@ -114,12 +117,15 @@ data WorkerService ta sr t w
     acceptor :: ta,
     reporter :: sr,
     taskQueue :: TSQueue (Task t),
+    taskQueueStats :: HandoffQueueStatsVar,
     taskWakeSignal :: TaskWakeSignal,
     trigger :: EventTrigger,
     -- In-process, unbounded handoff from task execution callbacks to the backend
     -- socket-loop thread. Task/status traffic must not use bounded/drop mailbox
     -- semantics or block on an EventLoop-owned PAIR peer during shutdown.
     workerStatusFrames :: TQueue [ByteString.ByteString],
+    workerStatusFrameStats :: HandoffQueueStatsVar,
+    workerBackendFrameStats :: HandoffQueueStatsVar,
     -- False once the backend transport is terminal, so task callbacks can return
     -- a predictable failed delivery instead of writing to a dead queue.
     workerBackendRunning :: TVar Bool,
@@ -152,10 +158,13 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
 
   -- task queue, wake signal & trigger
   taskQueue <- liftIO $ mkTSQueue
+  taskQueueStats <- liftIO $ newHandoffQueueStats "worker.task.queue" 1000
   taskWakeSignal <- liftIO newTaskWakeSignal
   trigger <- liftIO $ mkTimeTrigger workerStatusReportIntervalSec
 
   workerStatusFrames <- liftIO newTQueueIO
+  workerStatusFrameStats <- liftIO $ newHandoffQueueStats "worker.status-frames" 1000
+  workerBackendFrameStats <- liftIO $ newHandoffQueueStats "worker.backend-frames" 1000
   workerBackendRunning <- liftIO $ newTVarIO True
 
   -- worker reliable log transport init. The ZMQ DEALER itself is opened by the
@@ -170,7 +179,7 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
           { taPubTaskLogging = \wl -> void $ enqueueWorkerLogging workerLogTransport wl,
             taSendTaskLog = enqueueWorkerLog workerLogTransport,
             taSendTaskStatus = \(tid, ts) -> do
-              sendResult <- queueTaskStatusForBackend workerBackendRunning workerStatusFrames tid ts
+              sendResult <- queueTaskStatusForBackend workerBackendRunning workerStatusFrames workerStatusFrameStats tid ts
               case sendResult of
                 Right () -> pure ()
                 Left err ->
@@ -186,9 +195,12 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
       ta
       sr
       taskQueue
+      taskQueueStats
       taskWakeSignal
       trigger
       workerStatusFrames
+      workerStatusFrameStats
+      workerBackendFrameStats
       workerBackendRunning
       workerLogTransport
       taskAcceptorAPI
@@ -233,7 +245,7 @@ runWorkerService ws WorkerServiceConfig {..} = do
         Zmqx.EventLoop.addTransceiver
           workerBackendDealerEndpoint
           wDealer
-          (Zmqx.EventLoop.Callback $ atomically . writeTQueue backendFrames)
+          (Zmqx.EventLoop.Callback $ enqueueWorkerBackendFrame (workerBackendFrameStats ws) backendFrames)
           Zmqx.EventLoop.emptySpec
   result <-
     liftIO $
@@ -248,6 +260,22 @@ runWorkerService ws WorkerServiceConfig {..} = do
     Left exception ->
       logApp ERROR $ "worker backend EventLoop stopped: " <> show exception
     Right () -> pure ()
+
+enqueueWorkerBackendFrame :: HandoffQueueStatsVar -> TQueue [ByteString.ByteString] -> [ByteString.ByteString] -> IO ()
+enqueueWorkerBackendFrame statsVar queue frames =
+  atomically $ do
+    recordHandoffEnqueueSTM statsVar
+    writeTQueue queue frames
+
+logWorkerQueueWarnings :: WorkerService ta sr t w -> LotosApp ()
+logWorkerQueueWarnings WorkerService {..} =
+  mapM_ logQueueWarning [taskQueueStats, workerBackendFrameStats, workerStatusFrameStats]
+
+logQueueWarning :: HandoffQueueStatsVar -> LotosApp ()
+logQueueWarning statsVar =
+  liftIO (takeHandoffQueueWarning statsVar) >>= \case
+    Nothing -> pure ()
+    Just stats -> logApp WARN $ "no-drop queue high-water crossed: " <> show stats
 
 workerBackendWaitSliceMs :: Int
 workerBackendWaitSliceMs = 50
@@ -279,7 +307,7 @@ socketLoop ws@WorkerService {..} backendLoop backendFrames statusFrames = do
   continueAfterWait <-
     if continueAfterDrain && not (processedQueued || shouldProcess)
       then do
-        waitWorkerBackendFrames backendFrames statusFrames (workerBackendTimeout newTrigger now) >>= \case
+        waitWorkerBackendFrames ws backendFrames statusFrames (workerBackendTimeout newTrigger now) >>= \case
           Nothing -> do
             logApp DEBUG $ "socketLoop -> none: " <> show now
             pure True
@@ -295,7 +323,8 @@ socketLoop ws@WorkerService {..} backendLoop backendFrames statusFrames = do
       then do
         -- 3. gather & send worker status (due to EventTrigger, it sends worker status periodically)
         wInfo <- liftIO $ readWorkerInfoVar workerInfo
-        let statusReporterAPI = StatusReporterAPI {srReportInfo = wInfo}
+        handoffStats <- liftIO $ traverse readHandoffQueueStats [taskQueueStats, workerBackendFrameStats, workerStatusFrameStats]
+        let statusReporterAPI = StatusReporterAPI {srReportInfo = wInfo, srHandoffQueueStats = handoffStats}
         (newReporter, workerStatus :: w) <- gatherStatus statusReporterAPI reporter
         -- construct `WorkerReportStatus`
         ack <- liftIO newAck
@@ -323,28 +352,54 @@ drainWorkerBackendFrames backendLoop ws backendFrames statusFrames = do
   let go processed remaining preferStatus
         | remaining <= 0 = pure (processed, True)
         | otherwise =
-            tryReadWorkerBackendFrames preferStatus backendFrames statusFrames >>= \case
+            tryReadWorkerBackendFramesWithStats preferStatus backendFrames (workerBackendFrameStats ws) statusFrames (workerStatusFrameStats ws) >>= \case
               Nothing -> pure (processed, True)
               Just frames -> do
+                runAppWithEnv appEnv $ logWorkerQueueWarnings ws
                 shouldContinue <- runAppWithEnv appEnv $ handleWorkerBackendFrames backendLoop ws frames
                 if shouldContinue
                   then go True (remaining - 1) (not preferStatus)
                   else pure (True, False)
   liftIO $ go False workerBackendDrainBatchLimit True
 
+readWorkerBackendFramesWithStats ::
+  TQueue backend ->
+  HandoffQueueStatsVar ->
+  TQueue status ->
+  HandoffQueueStatsVar ->
+  STM (WorkerBackendFrames backend status)
+readWorkerBackendFramesWithStats backendFrames backendStats statusFrames statusStats =
+  readStatusFrames `orElse` readBackendFrames
+  where
+    readStatusFrames = do
+      frames <- readTQueue statusFrames
+      recordHandoffDrainSTM 1 statusStats
+      pure $ InternalTaskStatusFrames frames
+
+    readBackendFrames = do
+      frames <- readTQueue backendFrames
+      recordHandoffDrainSTM 1 backendStats
+      pure $ BackendTaskFrames frames
+
 waitWorkerBackendFrames ::
+  WorkerService ta sr t w ->
   TQueue [ByteString.ByteString] ->
   TQueue [ByteString.ByteString] ->
   Int ->
   LotosApp (Maybe (WorkerBackendFrames [ByteString.ByteString] [ByteString.ByteString]))
-waitWorkerBackendFrames backendFrames statusFrames timeoutMs
-  | timeoutMs <= 0 = liftIO $ tryReadWorkerBackendFrames True backendFrames statusFrames
-  | otherwise =
-      liftIO $
-        timeout (timeoutMs * 1000) $
-          atomically $
-            (InternalTaskStatusFrames <$> readTQueue statusFrames)
-              `orElse` (BackendTaskFrames <$> readTQueue backendFrames)
+waitWorkerBackendFrames ws backendFrames statusFrames timeoutMs = do
+  maybeFrames <-
+    if timeoutMs <= 0
+      then liftIO $ tryReadWorkerBackendFramesWithStats True backendFrames (workerBackendFrameStats ws) statusFrames (workerStatusFrameStats ws)
+      else
+        liftIO $
+          timeout (timeoutMs * 1000) $
+            atomically $
+              readWorkerBackendFramesWithStats backendFrames (workerBackendFrameStats ws) statusFrames (workerStatusFrameStats ws)
+  case maybeFrames of
+    Nothing -> pure ()
+    Just _ -> logWorkerQueueWarnings ws
+  pure maybeFrames
 
 handleWorkerBackendFrames ::
   forall ta sr t w.
@@ -353,12 +408,14 @@ handleWorkerBackendFrames ::
   WorkerService ta sr t w ->
   WorkerBackendFrames [ByteString.ByteString] [ByteString.ByteString] ->
   LotosApp Bool
-handleWorkerBackendFrames backendLoop WorkerService {..} = \case
+handleWorkerBackendFrames backendLoop ws@WorkerService {..} = \case
   BackendTaskFrames frames -> do
     logApp DEBUG "socketLoop -> workerBackendDealer"
     case fromZmq @(Task t) frames of
       Left e -> logApp ERROR $ show e
-      Right task -> liftIO $ enqueueBackendTaskAndNotify task taskQueue taskWakeSignal
+      Right task -> do
+        liftIO $ enqueueBackendTaskAndNotifyWithStats task taskQueue taskQueueStats taskWakeSignal
+        logWorkerQueueWarnings ws
     pure True
   InternalTaskStatusFrames frames -> do
     logApp DEBUG "socketLoop -> workerBackendStatusPair"
@@ -378,17 +435,20 @@ sendWorkerBackendFramesOrStop operation backendRunning backendLoop frames = do
       logWorkerTransportSendFailure operation err
       pure False
 
-queueTaskStatusForBackend :: TVar Bool -> TQueue [ByteString.ByteString] -> TaskID -> TaskStatus -> IO (Either Zmqx.Error ())
-queueTaskStatusForBackend backendRunning statusFrames tid ts = do
+queueTaskStatusForBackend :: TVar Bool -> TQueue [ByteString.ByteString] -> HandoffQueueStatsVar -> TaskID -> TaskStatus -> IO (Either Zmqx.Error ())
+queueTaskStatusForBackend backendRunning statusFrames statusFrameStats tid ts = do
   ack <- newAck
   let frames = toZmq $ WorkerReportTaskStatus ack tid ts
-  atomically do
-    running <- readTVar backendRunning
-    if running
-      then do
-        writeTQueue statusFrames frames
-        pure $ Right ()
-      else pure $ Left $ workerBackendStoppedError "Lotos.Zmq.LBW.sendTaskStatus"
+  result <-
+    atomically do
+      running <- readTVar backendRunning
+      if running
+        then do
+          writeTQueue statusFrames frames
+          recordHandoffEnqueueSTM statusFrameStats
+          pure $ Right ()
+        else pure $ Left $ workerBackendStoppedError "Lotos.Zmq.LBW.sendTaskStatus"
+  pure result
 
 markWorkerBackendStopped :: TVar Bool -> IO ()
 markWorkerBackendStopped backendRunning =
@@ -430,7 +490,8 @@ tasksExecLoop ::
   LotosApp ()
 tasksExecLoop ws@WorkerService {..} = do
   logApp DEBUG "tasksExecLoop -> start dequeuing tasks..."
-  tasks <- liftIO $ dequeueOrWaitForTasks (parallelTasksNo conf) taskQueue taskWakeSignal
+  tasks <- liftIO $ dequeueOrWaitForTasksWithStats (parallelTasksNo conf) taskQueue taskQueueStats taskWakeSignal
+  logWorkerQueueWarnings ws
   -- number of tasks to be processed & number of tasks is waiting
   let tasksTodo = length tasks
   tasksRemain <- liftIO $ getQueueSize taskQueue
@@ -472,8 +533,9 @@ pubTaskLogging WorkerService {..} wl =
 
 -- | Send a task-status transition back to the broker backend.
 sendTaskStatus :: WorkerService ta sr t w -> TaskID -> TaskStatus -> LotosApp ()
-sendTaskStatus WorkerService {..} tid ts = do
-  sendResult <- liftIO $ queueTaskStatusForBackend workerBackendRunning workerStatusFrames tid ts
+sendTaskStatus ws@WorkerService {..} tid ts = do
+  sendResult <- liftIO $ queueTaskStatusForBackend workerBackendRunning workerStatusFrames workerStatusFrameStats tid ts
+  logWorkerQueueWarnings ws
   case sendResult of
     Right () -> pure ()
     Left err -> logWorkerTransportSendFailure "worker task status" err

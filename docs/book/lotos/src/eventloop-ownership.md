@@ -25,3 +25,5 @@ The public client request path remains direct: a caller-owned REQ socket sends o
 ## Queue semantics
 
 Task and status handoff queues are intentionally no-drop in the current architecture. Some notification paths use bounded wake mailboxes because they are hints and the trigger timeout remains the correctness fallback. Logging queues are bounded by design and must surface visible gap records when they drop low-priority records.
+
+No-drop handoff queues now maintain lightweight depth/high-water counters. Broker queue snapshots are exposed in `/info.runtimeQueueStats`; worker-side snapshots are made available to custom status reporters through `StatusReporterAPI.srHandoffQueueStats`. The counters and WARN logs are overload indicators, not backpressure: they make growth visible while preserving the invariant that protocol-critical task/status work is not silently dropped.

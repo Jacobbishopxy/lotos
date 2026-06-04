@@ -40,6 +40,18 @@ With default TaskSchedule config, useful endpoints include:
 
 Use `curl --noproxy '*'` for loopback probes in proxy-enabled environments.
 
+## Overload indicators
+
+`/SimpleServer/info` includes `runtimeQueueStats`, a small list of no-drop handoff queue snapshots. Each entry reports:
+
+- `name` — the broker queue being observed.
+- `currentDepth` — enqueue/dequeue-tracked depth at snapshot time.
+- `highWaterDepth` — highest observed depth since process start.
+- `totalEnqueued` / `totalDrained` — monotonic counters for diagnosis.
+- `warningThreshold` — depth that starts bounded WARN logging.
+
+These metrics are observability only: task/status handoff queues stay intentionally unbounded and non-dropping. Treat rising `currentDepth` or repeatedly increasing `highWaterDepth` as overload evidence, then inspect worker capacity, scheduler throughput, and downstream task execution time. `/logs/stats` remains LogIngest-specific rejected/drop accounting; do not interpret it as task/status queue loss.
+
 ## Logging operations
 
 Reliable logs are persisted through the broker LogIngest journal and exposed through `/logs/*`. Generated smoke runs should use isolated journal paths or remove stale generated state when proving current-run evidence, because stable worker ids can otherwise make old accepted sequences appear as duplicates.

@@ -21,9 +21,12 @@ module Lotos.Zmq.Internal.WorkerRuntime
     waitTaskWakeSignal,
     drainTaskWakeSignal,
     dequeueOrWaitForTasks,
+    dequeueOrWaitForTasksWithStats,
     WorkerBackendFrames (..),
     enqueueBackendTaskAndNotify,
+    enqueueBackendTaskAndNotifyWithStats,
     tryReadWorkerBackendFrames,
+    tryReadWorkerBackendFramesWithStats,
     drainWorkerBackendFramesWith,
     workerBackendDealerEndpoint,
     workerBackendStatusPairEndpoint,
@@ -37,6 +40,7 @@ import Control.Monad (void)
 import Data.ByteString qualified as ByteString
 import Data.Text qualified as Text
 import Lotos.TSD.Queue
+import Lotos.Zmq.Internal.HandoffQueueStats
 import Zmqx qualified
 import Zmqx.EventLoop qualified as Zmqx.EventLoop
 
@@ -111,6 +115,20 @@ dequeueOrWaitForTasks batchSize taskQueue taskWakeSignal = do
       drainTaskWakeSignal taskWakeSignal
       pure tasks
 
+dequeueOrWaitForTasksWithStats :: Int -> TSQueue task -> HandoffQueueStatsVar -> TaskWakeSignal -> IO [task]
+dequeueOrWaitForTasksWithStats batchSize taskQueue taskQueueStats taskWakeSignal = do
+  tasks <- atomically $ do
+    tasks <- dequeueNSTM' batchSize taskQueue
+    recordHandoffDrainSTM (length tasks) taskQueueStats
+    pure tasks
+  if null tasks
+    then do
+      waitTaskWakeSignal taskWakeSignal
+      dequeueOrWaitForTasksWithStats batchSize taskQueue taskQueueStats taskWakeSignal
+    else do
+      drainTaskWakeSignal taskWakeSignal
+      pure tasks
+
 -- | Frames handed from the worker backend EventLoop callbacks to the worker
 -- socket-loop thread. Keeping the source tag with the raw multipart frames lets
 -- the drain logic alternate fairly without parsing in the EventLoop callback.
@@ -124,6 +142,13 @@ data WorkerBackendFrames backend status
 enqueueBackendTaskAndNotify :: task -> TSQueue task -> TaskWakeSignal -> IO ()
 enqueueBackendTaskAndNotify task taskQueue taskWakeSignal = do
   enqueueTS task taskQueue
+  notifyTaskWakeSignal taskWakeSignal
+
+enqueueBackendTaskAndNotifyWithStats :: task -> TSQueue task -> HandoffQueueStatsVar -> TaskWakeSignal -> IO ()
+enqueueBackendTaskAndNotifyWithStats task taskQueue taskQueueStats taskWakeSignal = do
+  atomically $ do
+    enqueueTSSTM task taskQueue
+    recordHandoffEnqueueSTM taskQueueStats
   notifyTaskWakeSignal taskWakeSignal
 
 tryReadWorkerBackendFrames ::
@@ -146,6 +171,36 @@ tryReadWorkerBackendFrames preferStatus backendFrames statusFrames =
       tryReadTQueue backendFrames >>= \case
         Just frames -> pure $ Just $ BackendTaskFrames frames
         Nothing -> fmap InternalTaskStatusFrames <$> tryReadTQueue statusFrames
+
+tryReadWorkerBackendFramesWithStats ::
+  Bool ->
+  TQueue backend ->
+  HandoffQueueStatsVar ->
+  TQueue status ->
+  HandoffQueueStatsVar ->
+  IO (Maybe (WorkerBackendFrames backend status))
+tryReadWorkerBackendFramesWithStats preferStatus backendFrames backendStats statusFrames statusStats =
+  atomically $
+    if preferStatus
+      then readStatusThenBackend
+      else readBackendThenStatus
+  where
+    readStatusThenBackend =
+      tryReadTracked statusFrames statusStats InternalTaskStatusFrames >>= \case
+        Just frames -> pure $ Just frames
+        Nothing -> tryReadTracked backendFrames backendStats BackendTaskFrames
+
+    readBackendThenStatus =
+      tryReadTracked backendFrames backendStats BackendTaskFrames >>= \case
+        Just frames -> pure $ Just frames
+        Nothing -> tryReadTracked statusFrames statusStats InternalTaskStatusFrames
+
+    tryReadTracked queue statsVar wrap =
+      tryReadTQueue queue >>= \case
+        Nothing -> pure Nothing
+        Just frames -> do
+          recordHandoffDrainSTM 1 statsVar
+          pure $ Just $ wrap frames
 
 -- | Drain a bounded batch from the two EventLoop handoff queues while toggling
 -- preference after every processed frame. This protects internal task-status

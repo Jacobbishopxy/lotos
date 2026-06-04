@@ -5,7 +5,7 @@
 
 module Main where
 
-import Control.Concurrent (MVar, killThread, newEmptyMVar, putMVar, readMVar, threadDelay)
+import Control.Concurrent (MVar, forkIO, killThread, newEmptyMVar, putMVar, readMVar, threadDelay)
 import Control.Concurrent.STM (atomically, newTQueueIO, readTQueue, writeTQueue)
 import Control.Exception (finally)
 import Control.Monad (forM_, replicateM_, void, when)
@@ -13,9 +13,10 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Time (UTCTime (..), addUTCTime, fromGregorian)
 import Lotos.TSD.Map (insertMap, lookupMap, mkTSMap)
-import Lotos.TSD.Queue (TSQueue, mkTSQueue, readQueue')
+import Lotos.TSD.Queue (TSQueue, dequeueNSTM', mkTSQueue, readQueue')
 import Lotos.TSD.RingBuffer (TSRingBuffer, getBuffer', mkTSRingBuffer)
 import Lotos.Zmq
+import Lotos.Zmq.Internal.HandoffQueueStats
 import Lotos.Zmq.Internal.Liveness
 import Lotos.Zmq.Internal.Retry
   ( FailedTaskDisposition (..),
@@ -30,6 +31,7 @@ import Lotos.Zmq.Internal.WorkerRuntime
   ( WorkerBackendFrames (..),
     drainWorkerBackendFramesWith,
     enqueueBackendTaskAndNotify,
+    enqueueBackendTaskAndNotifyWithStats,
     newTaskWakeSignal,
     sendWorkerBackendDealerFrames,
     waitTaskWakeSignal,
@@ -362,6 +364,81 @@ workerBackendEnqueueNotifiesAfterTaskIsQueued = do
   wake <- timeout 100000 (waitTaskWakeSignal taskWakeSignal)
   expectJust "backend enqueue did not notify the worker wake signal" wake
 
+handoffQueueStatsConcurrentEnqueueDrainDoesNotDrift :: Assertion
+handoffQueueStatsConcurrentEnqueueDrainDoesNotDrift = do
+  taskQueue <- mkTSQueue
+  taskWakeSignal <- newTaskWakeSignal
+  taskQueueStats <- newHandoffQueueStats "worker-task-concurrent-depth-test" 1
+  start <- newEmptyMVar
+  producerDone <- newEmptyMVar
+  consumerDone <- newEmptyMVar
+  let totalTasks = 500 :: Int
+      drainOne = do
+        drained <- atomically $ do
+          drained <- dequeueNSTM' 1 taskQueue
+          recordHandoffDrainSTM (length drained) taskQueueStats
+          pure drained
+        when (null drained) $ do
+          threadDelay 10
+          drainOne
+  _ <- forkIO $ do
+    readMVar start
+    forM_ [1 .. totalTasks] $ \taskNo ->
+      enqueueBackendTaskAndNotifyWithStats taskNo taskQueue taskQueueStats taskWakeSignal
+    putMVar producerDone ()
+  _ <- forkIO $ do
+    readMVar start
+    replicateM_ totalTasks drainOne
+    putMVar consumerDone ()
+
+  putMVar start ()
+  expectJust "concurrent stats producer did not finish" =<< timeout 1000000 (readMVar producerDone)
+  expectJust "concurrent stats consumer did not finish" =<< timeout 1000000 (readMVar consumerDone)
+  remainingTasks <- readQueue' taskQueue
+  assertEmpty "expected concurrent stats queue to be empty after all drains" remainingTasks
+  finalStats <- readHandoffQueueStats taskQueueStats
+  hqsCurrentDepth finalStats @?= 0
+  hqsTotalEnqueued finalStats @?= totalTasks
+  hqsTotalDrained finalStats @?= totalTasks
+  assertBool "high-water should record at least one queued item" (hqsHighWaterDepth finalStats >= 1)
+
+workerBackendStatsAwareEnqueuePreservesOrderWakeAndMetrics :: Assertion
+workerBackendStatsAwareEnqueuePreservesOrderWakeAndMetrics = do
+  taskQueue <- mkTSQueue
+  taskWakeSignal <- newTaskWakeSignal
+  taskQueueStats <- newHandoffQueueStats "worker-task-queue-test" 2
+  task1 <- fillTaskID' (defaultTask :: Task ())
+  task2 <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1})
+
+  enqueueBackendTaskAndNotifyWithStats task1 taskQueue taskQueueStats taskWakeSignal
+  enqueueBackendTaskAndNotifyWithStats task2 taskQueue taskQueueStats taskWakeSignal
+
+  queuedTasks <- readQueue' taskQueue
+  (taskID <$> queuedTasks) @?= [taskID task1, taskID task2]
+  enqueuedStats <- readHandoffQueueStats taskQueueStats
+  hqsCurrentDepth enqueuedStats @?= 2
+  hqsHighWaterDepth enqueuedStats @?= 2
+  hqsTotalEnqueued enqueuedStats @?= 2
+  hqsTotalDrained enqueuedStats @?= 0
+  takeHandoffQueueWarning taskQueueStats >>= \case
+    Just warning -> hqsHighWaterDepth warning @?= 2
+    Nothing -> assertFailure "expected high-water warning at threshold 2"
+  wake <- timeout 100000 (waitTaskWakeSignal taskWakeSignal)
+  expectJust "stats-aware backend enqueue did not notify the worker wake signal" wake
+
+  drainedTasks <- atomically $ do
+    drainedTasks <- dequeueNSTM' 2 taskQueue
+    recordHandoffDrainSTM (length drainedTasks) taskQueueStats
+    pure drainedTasks
+  (taskID <$> drainedTasks) @?= [taskID task1, taskID task2]
+  remainingTasks <- readQueue' taskQueue
+  assertEmpty "expected stats-aware task queue to be empty after tracked drain" remainingTasks
+  drainedStats <- readHandoffQueueStats taskQueueStats
+  hqsCurrentDepth drainedStats @?= 0
+  hqsHighWaterDepth drainedStats @?= 2
+  hqsTotalEnqueued drainedStats @?= 2
+  hqsTotalDrained drainedStats @?= 2
+
 workerBackendEventLoopStoppedSendReturnsError :: Assertion
 workerBackendEventLoopStoppedSendReturnsError =
   runZmqContextIO do
@@ -429,11 +506,16 @@ brokerSocketLayerEventLoopPreservesBrokerTraffic =
       workerStatusMap <- liftIO (mkTSMap :: IO (TSWorkerStatusMap ()))
       workerAliveMap <- liftIO newTSWorkerAliveMap
       garbageBin <- liftIO (mkTSRingBuffer 10 :: IO (TSRingBuffer (Task ())))
+      queueRegistry <- liftIO newHandoffQueueRegistry
+      taskQueueStats <- liftIO $ newHandoffQueueStats "test.task.queue" 10
+      failedTaskQueueStats <- liftIO $ newHandoffQueueStats "test.failed-task.queue" 10
+      liftIO $ registerHandoffQueueStats queueRegistry taskQueueStats
+      liftIO $ registerHandoffQueueStats queueRegistry failedTaskQueueStats
       let frontendAddr = "inproc://tp039-broker-frontend"
           backendAddr = "inproc://tp039-broker-backend"
           taskProcessorSenderAddr = "inproc://taskProcessorSender"
           socketLayerSenderAddr = "inproc://socketLayerSender"
-          schedulerData = TaskSchedulerData taskQueue failedTaskQueue workerTasksMap workerStatusMap workerAliveMap garbageBin
+          schedulerData = TaskSchedulerData taskQueue failedTaskQueue workerTasksMap workerStatusMap workerAliveMap garbageBin queueRegistry taskQueueStats failedTaskQueueStats
       socketLayerTid <- runSocketLayer (SocketLayerConfig frontendAddr backendAddr) 60 schedulerData
 
       clientReq <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp039-client-req") :: LotosApp Zmqx.Req
@@ -582,9 +664,10 @@ staleWorkerRecoveryRequeuesRetryableTasksAndRemovesWorkerMaps = do
   insertMap testWorkerId () workerStatusMap
   insertTSWorkerTasks testWorkerId [(unsafeGetTaskID retryableTask, retryableTask, TaskProcessing)] workerTasksMap
 
-  staleWorkerIds <- recoverStaleWorkers staleAt workerAliveMap workerStatusMap workerTasksMap failedTaskQueue garbageBin
+  (staleWorkerIds, recoveredRetryCount) <- recoverStaleWorkers staleAt workerAliveMap workerStatusMap workerTasksMap failedTaskQueue garbageBin
 
   staleWorkerIds @?= [testWorkerId]
+  recoveredRetryCount @?= 1
   lookupMap testWorkerId workerAliveMap >>= assertNothing "expected stale worker liveness entry to be removed"
   lookupMap testWorkerId workerStatusMap >>= assertNothing "expected stale worker status entry to be removed"
   lookupTSWorkerTasks testWorkerId workerTasksMap >>= assertNothing "expected stale worker task bucket to be removed"
@@ -604,8 +687,9 @@ staleWorkerRecoveryMovesExhaustedTasksToGarbage = do
   exhaustedTask <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 0})
   insertTSWorkerTasks testWorkerId [(unsafeGetTaskID exhaustedTask, exhaustedTask, TaskFailed)] workerTasksMap
 
-  recoverStaleWorkerTasks fixedNow testWorkerId workerTasksMap failedTaskQueue garbageBin
+  recoveredRetryCount <- recoverStaleWorkerTasks fixedNow testWorkerId workerTasksMap failedTaskQueue garbageBin
 
+  recoveredRetryCount @?= 0
   readQueue' failedTaskQueue >>= assertEmpty "expected no queued retry for exhausted recovery"
   garbageTasks <- getBuffer' garbageBin
   case garbageTasks of
@@ -621,8 +705,9 @@ staleWorkerRecoveryDropsSucceededTasks = do
   succeededTask <- fillTaskID' ((defaultTask :: Task ()) {taskRetry = 1})
   insertTSWorkerTasks testWorkerId [(unsafeGetTaskID succeededTask, succeededTask, TaskSucceed)] workerTasksMap
 
-  recoverStaleWorkerTasks fixedNow testWorkerId workerTasksMap failedTaskQueue garbageBin
+  recoveredRetryCount <- recoverStaleWorkerTasks fixedNow testWorkerId workerTasksMap failedTaskQueue garbageBin
 
+  recoveredRetryCount @?= 0
   readQueue' failedTaskQueue >>= assertEmpty "expected no queued retry for succeeded task"
   getBuffer' garbageBin >>= assertEmpty "expected no garbage task for succeeded task"
   lookupTSWorkerTasks testWorkerId workerTasksMap >>= assertNothing "expected succeeded worker task bucket to be removed"
@@ -638,6 +723,8 @@ tests =
       TestLabel "worker backend EventLoop forwards task status and heartbeat frames" (TestCase workerBackendEventLoopForwardsStatusAndHeartbeatFrames),
       TestLabel "worker backend drain alternates status and backend queues" (TestCase workerBackendDrainAlternatesStatusAndBackendQueues),
       TestLabel "worker backend enqueue notifies after task is queued" (TestCase workerBackendEnqueueNotifiesAfterTaskIsQueued),
+      TestLabel "worker backend stats-aware enqueue preserves order, wake, and metrics" (TestCase workerBackendStatsAwareEnqueuePreservesOrderWakeAndMetrics),
+      TestLabel "handoff queue stats concurrent enqueue/drain does not drift" (TestCase handoffQueueStatsConcurrentEnqueueDrainDoesNotDrift),
       TestLabel "worker backend EventLoop stopped send returns error" (TestCase workerBackendEventLoopStoppedSendReturnsError),
       TestLabel "worker task-status callback returns after backend stopped" (TestCase workerTaskStatusCallbackReturnsAfterBackendStopped),
       TestLabel "forked LotosApp actions cancel before context teardown" (TestCase forkedAppActionsAreCancelledBeforeContextTeardown),

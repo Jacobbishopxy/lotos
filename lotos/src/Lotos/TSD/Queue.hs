@@ -11,9 +11,14 @@ module Lotos.TSD.Queue
     mkTSQueue,
     enqueueTS,
     enqueueTSs,
+    enqueueTSSTM,
+    enqueueTSsSTM,
     dequeueTS,
     dequeueN,
     dequeueN',
+    dequeueTSSTM,
+    dequeueNSTM,
+    dequeueNSTM',
     readQueue,
     readQueue',
     isEmptyQueue,
@@ -46,15 +51,32 @@ peekQueue' n (TSQueue t) = atomically $ toList . Seq.take n <$> readTVar t
 
 -- Enqueues an element into the thread-safe queue.
 enqueueTS :: a -> TSQueue a -> IO ()
-enqueueTS x (TSQueue t) = atomically $ modifyTVar' t (\s -> s Seq.|> x)
+enqueueTS x queue = atomically $ enqueueTSSTM x queue
 
 -- Enqueues a list of elements into the thread-safe queue.
 enqueueTSs :: [a] -> TSQueue a -> IO ()
-enqueueTSs xs (TSQueue t) = atomically $ modifyTVar' t (\s -> s Seq.>< Seq.fromList xs)
+enqueueTSs xs queue = atomically $ enqueueTSsSTM xs queue
+
+enqueueTSSTM :: a -> TSQueue a -> STM ()
+enqueueTSSTM x (TSQueue t) = modifyTVar' t (\s -> s Seq.|> x)
+
+enqueueTSsSTM :: [a] -> TSQueue a -> STM ()
+enqueueTSsSTM xs (TSQueue t) = modifyTVar' t (\s -> s Seq.>< Seq.fromList xs)
 
 -- Dequeues an element from the thread-safe queue. Returns Nothing if the queue is empty.
 dequeueTS :: TSQueue a -> IO (Maybe a)
-dequeueTS (TSQueue t) = atomically $ do
+dequeueTS queue = atomically $ dequeueTSSTM queue
+
+-- Dequeues the first N elements from the thread-safe queue.
+dequeueN :: Int -> TSQueue a -> IO (Seq.Seq a)
+dequeueN n queue = atomically $ dequeueNSTM n queue
+
+-- Dequeues the first N elements from the thread-safe queue.
+dequeueN' :: Int -> TSQueue a -> IO [a]
+dequeueN' n queue = atomically $ dequeueNSTM' n queue
+
+dequeueTSSTM :: TSQueue a -> STM (Maybe a)
+dequeueTSSTM (TSQueue t) = do
   s <- readTVar t
   case Seq.viewl s of
     Seq.EmptyL -> return Nothing
@@ -62,21 +84,15 @@ dequeueTS (TSQueue t) = atomically $ do
       writeTVar t xs
       return (Just x)
 
--- Dequeues the first N elements from the thread-safe queue.
-dequeueN :: Int -> TSQueue a -> IO (Seq.Seq a)
-dequeueN n (TSQueue t) = atomically $ do
+dequeueNSTM :: Int -> TSQueue a -> STM (Seq.Seq a)
+dequeueNSTM n (TSQueue t) = do
   s <- readTVar t
   let (taken, remaining) = Seq.splitAt n s
   writeTVar t remaining
   return taken
 
--- Dequeues the first N elements from the thread-safe queue.
-dequeueN' :: Int -> TSQueue a -> IO [a]
-dequeueN' n (TSQueue t) = atomically $ do
-  s <- readTVar t
-  let (taken, remaining) = Seq.splitAt n s
-  writeTVar t remaining
-  return (toList taken)
+dequeueNSTM' :: Int -> TSQueue a -> STM [a]
+dequeueNSTM' n queue = toList <$> dequeueNSTM n queue
 
 -- Reads the entire content of the queue without modifying it.
 readQueue :: TSQueue a -> IO (Seq.Seq a)

@@ -14,6 +14,7 @@ import Data.Time (UTCTime (..), fromGregorian)
 import Data.Word (Word64)
 import Lotos.Logger qualified as Logger
 import Lotos.Zmq
+import Lotos.Zmq.Internal.HandoffQueueStats
 import Lotos.Zmq.LBS.LogIngest
 import System.Directory (doesFileExist, getTemporaryDirectory, removeFile)
 import System.Exit (exitFailure)
@@ -297,6 +298,23 @@ queryAndStatsJsonExposeStableApiShape = withJournal $ \journalPath -> withTaskId
   assertBool "stats JSON exposes acceptedEvents" ("\"acceptedEvents\":1" `isInfixOf` statsJson)
   assertBool "stats JSON exposes acceptedThroughByWorker" ("\"acceptedThroughByWorker\"" `isInfixOf` statsJson)
 
+logIngestStatsRemainDistinctFromHandoffQueueStats :: Assertion
+logIngestStatsRemainDistinctFromHandoffQueueStats = withJournal $ \journalPath -> withTaskId $ \taskId -> do
+  state <- newLogIngestState $ testConfig journalPath
+  _ <- ingestLogBatch state $ mkBatch 1 [mkEvent taskId 1]
+  logStats <- readLogIngestStats state
+
+  handoffStatsVar <- newHandoffQueueStats "broker-task-queue-test" 1
+  recordHandoffEnqueue handoffStatsVar
+  handoffStats <- readHandoffQueueStats handoffStatsVar
+
+  let logStatsJson = LBS.unpack $ Aeson.encode logStats
+      handoffStatsJson = LBS.unpack $ Aeson.encode handoffStats
+  assertBool "LogIngest stats keep rejected/drop accounting" ("\"rejectedEvents\"" `isInfixOf` logStatsJson && "\"droppedEvents\"" `isInfixOf` logStatsJson)
+  assertBool "LogIngest stats do not expose no-drop queue depth" (not $ "\"currentDepth\"" `isInfixOf` logStatsJson)
+  assertBool "handoff stats expose no-drop queue depth" ("\"currentDepth\":1" `isInfixOf` handoffStatsJson)
+  assertBool "handoff stats do not expose LogIngest rejection/drop counters" (not $ "\"rejectedEvents\"" `isInfixOf` handoffStatsJson || "\"droppedEvents\"" `isInfixOf` handoffStatsJson)
+
 routerLoopReceivesBatchPersistsAndAcks :: Assertion
 routerLoopReceivesBatchPersistsAndAcks = withJournal $ \journalPath -> withTaskId $ \taskId -> do
   let endpoint = "inproc://tp023-log-ingest-router-loop"
@@ -392,6 +410,7 @@ tests =
       TestLabel "sequence gap accounting keeps ACK watermark contiguous" (TestCase sequenceGapAccountingKeepsAckAtContiguousWatermark),
       TestLabel "explicit drop events advance through visible dropped spans" (TestCase explicitDropEventAdvancesThroughVisibleDroppedSpan),
       TestLabel "query and stats JSON expose stable API shape" (TestCase queryAndStatsJsonExposeStableApiShape),
+      TestLabel "LogIngest stats remain distinct from no-drop handoff queue stats" (TestCase logIngestStatsRemainDistinctFromHandoffQueueStats),
       TestLabel "ROUTER loop receives LogBatch, persists, and ACKs" (TestCase routerLoopReceivesBatchPersistsAndAcks),
       TestLabel "ROUTER loop rejects mismatched envelope before mutation" (TestCase routerLoopRejectsMismatchedEnvelopeBeforeMutation),
       TestLabel "same legacy/log ingest address still starts LogIngest ROUTER" (TestCase sameAddressLogIngestRouterStartsNormally)

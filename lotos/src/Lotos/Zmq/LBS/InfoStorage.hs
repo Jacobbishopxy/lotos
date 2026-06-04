@@ -31,6 +31,7 @@ import Lotos.TSD.Queue
 import Lotos.TSD.RingBuffer
 import Lotos.Zmq.Adt
 import Lotos.Zmq.Config
+import Lotos.Zmq.Internal.HandoffQueueStats
 import Lotos.Zmq.LBS.LogIngest
 import Network.Wai.Handler.Warp qualified as Warp
 import Servant
@@ -46,7 +47,8 @@ data InfoStorage t w = InfoStorage
     tasksInFailedQueue :: [Task t],
     tasksInGarbageBin :: [Task t],
     workerTasksMap :: Map.Map RoutingID [Task t],
-    workerStatusMap :: Map.Map RoutingID w
+    workerStatusMap :: Map.Map RoutingID w,
+    runtimeQueueStats :: [HandoffQueueStats]
   }
   deriving (Show, Generic)
 
@@ -57,7 +59,8 @@ newInfoStorage =
       tasksInFailedQueue = [],
       tasksInGarbageBin = [],
       workerTasksMap = Map.empty,
-      workerStatusMap = Map.empty
+      workerStatusMap = Map.empty,
+      runtimeQueueStats = []
     }
 
 instance
@@ -292,12 +295,13 @@ infoLoop iss@InfoStorageServer {..} layer = do
 mkInfoStorage ::
   TaskSchedulerData t w ->
   LotosApp (InfoStorage t w)
-mkInfoStorage (TaskSchedulerData tq ftq wtm wsm _ gbb) = do
+mkInfoStorage (TaskSchedulerData tq ftq wtm wsm _ gbb queueRegistry _ _) = do
   tasksInQueue <- liftIO $ readQueue' tq
   tasksInFailedQueue <- liftIO $ fmap retryTaskPayload <$> readQueue' ftq
   workerTasksMap <- liftIO $ Map.map (map (\(_, task, _) -> task)) <$> toMapTSWorkerTasks wtm
   workerStatusMap <- liftIO $ toMap wsm
   tasksInGarbageBin <- liftIO $ getBuffer' gbb
+  runtimeQueueStats <- liftIO $ readHandoffQueueRegistry queueRegistry
 
   pure
     InfoStorage
@@ -305,5 +309,6 @@ mkInfoStorage (TaskSchedulerData tq ftq wtm wsm _ gbb) = do
         tasksInFailedQueue = tasksInFailedQueue,
         tasksInGarbageBin = tasksInGarbageBin,
         workerTasksMap = workerTasksMap,
-        workerStatusMap = workerStatusMap
+        workerStatusMap = workerStatusMap,
+        runtimeQueueStats = runtimeQueueStats
       }
