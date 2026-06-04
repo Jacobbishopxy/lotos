@@ -13,5 +13,6 @@
 - [TaskSchedule](task-schedule.md)
 - [TaskSchedule Demo](task-schedule-demo.md)
 - [Operations Runbook](operations.md)
+- [Runtime Failure Runbook](runtime-failures.md)
 - [Compatibility Notes](compatibility.md)
 - [Verification Guide](verification.md)

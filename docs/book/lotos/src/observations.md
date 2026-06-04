@@ -20,3 +20,5 @@ The recent TP-032 through TP-041 work moved long-running broker and worker socke
 ## Practical consequence for adopters
 
 Most application code should stay behind the `Lotos.Zmq` facade: implement serialization for payloads, implement one scheduler, implement worker accept/status callbacks, and wire the standard server/worker/client services. Avoid opening raw ZMQ sockets in application code unless you are intentionally extending the framework.
+
+For operator diagnosis of these invariants in a running TaskSchedule deployment, see the [Runtime Failure Runbook](runtime-failures.md).

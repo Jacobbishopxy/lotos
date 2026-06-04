@@ -86,6 +86,8 @@ Expected evidence includes client ACKs, worker stats, current-run task side effe
 
 ## Failure triage
 
+Use the [Runtime Failure Runbook](runtime-failures.md) for operator recovery steps after stuck workers, LogIngest backlog, broker handoff queue growth, stale heartbeat recovery, reservation underutilization, or smoke failures. The bullets below are quick pointers for identifying the failing verification surface.
+
 - CI build failure: rerun the failing component from `cabal build all --enable-tests` with `-v` if Cabal output does not identify the component.
 - CI regression failure: rerun the printed `cabal test <target>` command; `make ci-test` echoes each target before executing it.
 - Docs failure: run `make book-build` and inspect the mdBook source path reported by mdBook.

@@ -107,7 +107,7 @@ The client ACK means the broker accepted/enqueued the task; completion proof com
 
 ## Architecture and API book
 
-A lightweight mdBook collects the architecture observations, public API guide, ZMQ/EventLoop ownership notes, TaskSchedule runbook, compatibility notes, and verification checklist without duplicating all details in this README:
+A lightweight mdBook collects the architecture observations, public API guide, ZMQ/EventLoop ownership notes, TaskSchedule runbook, runtime failure runbook, compatibility notes, and verification checklist without duplicating all details in this README:
 
 ```bash
 make book-build
@@ -116,7 +116,7 @@ make book-serve
 make book-serve MDBOOK_HOST=0.0.0.0 MDBOOK_PORT=3003 MDBOOK_DIR=docs/book/lotos
 ```
 
-The book source is under [`docs/book/lotos`](docs/book/lotos/src/SUMMARY.md). Generated HTML is written to `docs/book/lotos/book/` by mdBook and should not be committed.
+The book source is under [`docs/book/lotos`](docs/book/lotos/src/SUMMARY.md). Start with the [Runtime Failure Runbook](docs/book/lotos/src/runtime-failures.md) when diagnosing stuck workers, LogIngest backlog, broker overload, stale heartbeats, capacity-reservation surprises, or smoke failures. Generated HTML is written to `docs/book/lotos/book/` by mdBook and should not be committed.
 
 ## Architecture overview
 

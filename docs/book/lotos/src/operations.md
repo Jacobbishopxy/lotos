@@ -22,6 +22,10 @@ scripts/task-schedule-multi-worker-smoke.sh
 
 The helpers generate run-local configs/evidence under `.tmp/`, start only the services they track, probe the HTTP info/log endpoints, verify worker marker files and current-run log events, assert `/info.runtimeQueueStats`, keep `/logs/stats` scoped to LogIngest accounting, and clean up tracked process groups. The multi-worker helper also captures a capacity/reservation snapshot from `/worker_stats` and `/worker_tasks` so generated capacity-1 workers are not over-assigned during burst dispatch.
 
+## Runtime failure response
+
+Use the [Runtime Failure Runbook](runtime-failures.md) when workers stop making progress, broker handoff queues grow, LogIngest falls behind, heartbeats go stale, capacity reservations look conservative, or smoke helpers fail. The safe default is to preserve `/info`, `/worker_stats`, `/worker_tasks`, `/logs/*`, process logs, and generated `.tmp/` smoke artifacts before restarting services. Do not recover overload by dropping task/status protocol frames, and treat LogIngest as at-least-once/idempotent rather than exactly-once.
+
 ## HTTP probes
 
 With default TaskSchedule config, useful endpoints include:

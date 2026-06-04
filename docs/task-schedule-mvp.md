@@ -262,7 +262,7 @@ Expected MVP observations:
 5. Failure absence for the happy path: `/SimpleServer/garbage` does not contain the demo task.
 6. Worker logging: `/SimpleServer/logs/worker/simpleWorker_1` contains stdout/stderr `LogEvent`s and a final `LogResult` event whose message includes `ExitSuccess`; `/SimpleServer/logs/stats` shows zero `droppedEvents`, `rejectedEvents`, and `sequenceGaps` for the happy path.
 
-ACK alone is not proof of completion; it only proves broker acceptance. Log delivery is at-least-once: workers retry unacked batches, LogIngest deduplicates accepted worker sequence coverage, and exactly-once delivery is not claimed.
+ACK alone is not proof of completion; it only proves broker acceptance. Log delivery is at-least-once: workers retry unacked batches, LogIngest deduplicates accepted worker sequence coverage, and exactly-once delivery is not claimed. For operator triage of stuck workers, stale heartbeats, LogIngest backlog, broker overload, capacity reservations, and smoke failures, see the mdBook [Runtime Failure Runbook](book/lotos/src/runtime-failures.md).
 
 ## End-to-end acceptance script
 

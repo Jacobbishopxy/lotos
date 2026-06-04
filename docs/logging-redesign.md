@@ -1,6 +1,6 @@
 # Worker Logging Redesign
 
-**Status:** The reliable logging migration is hardened through TP-029. Runtime workers enqueue bounded `LogEvent`s, send `LogBatch`es through a `Zmqx.EventLoop`-owned logging DEALER with configured socket HWM, and retry until broker LogIngest persists/rebuilds state and returns `LogAck`s. TaskSchedule smoke tests prove logs through `/logs/*`; `/info` is a lightweight scheduler snapshot and no longer carries worker log payloads.
+**Status:** The reliable logging migration is hardened through TP-029. Runtime workers enqueue bounded `LogEvent`s, send `LogBatch`es through a `Zmqx.EventLoop`-owned logging DEALER with configured socket HWM, and retry until broker LogIngest persists/rebuilds state and returns `LogAck`s. TaskSchedule smoke tests prove logs through `/logs/*`; `/info` is a lightweight scheduler snapshot and no longer carries worker log payloads. For operator recovery from LogIngest backlog or missing runtime logs, see the mdBook [Runtime Failure Runbook](book/lotos/src/runtime-failures.md).
 
 ## Decision
 
