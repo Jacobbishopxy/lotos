@@ -16,7 +16,7 @@ workerWakeProcessesQueuedBurstPromptlyAndRecordsCounts :: Assertion
 workerWakeProcessesQueuedBurstPromptlyAndRecordsCounts = do
   taskQueue <- mkTSQueue
   taskWakeSignal <- newTaskWakeSignal
-  workerInfo <- newWorkerInfoVar
+  workerInfo <- newWorkerInfoVar 2
   done <- newEmptyMVar
 
   _ <- forkIO $ do
@@ -41,11 +41,11 @@ workerWakeProcessesQueuedBurstPromptlyAndRecordsCounts = do
       tasksRemain @?= 1
 
   workerInfoDuringBatch <- readWorkerInfoVar workerInfo
-  workerInfoDuringBatch @?= WorkerInfo {wiProcessingTaskNum = 2, wiWaitingTaskNum = 1}
+  workerInfoDuringBatch @?= WorkerInfo {wiProcessingTaskNum = 2, wiWaitingTaskNum = 1, wiTaskCapacity = 2}
   tasksRemainAfter <- getQueueSize taskQueue
   recordWorkerBatchFinish workerInfo tasksRemainAfter
   workerInfoAfterBatch <- readWorkerInfoVar workerInfo
-  workerInfoAfterBatch @?= WorkerInfo {wiProcessingTaskNum = 0, wiWaitingTaskNum = 1}
+  workerInfoAfterBatch @?= WorkerInfo {wiProcessingTaskNum = 0, wiWaitingTaskNum = 1, wiTaskCapacity = 2}
 
 workerWakeSignalCoalescesNotifications :: Assertion
 workerWakeSignalCoalescesNotifications = do

@@ -12,16 +12,19 @@ import System.Exit (exitFailure)
 import Test.HUnit
 
 idleWorker :: WorkerState
-idleWorker = WorkerState 0.0 0.0 0.0 100.0 10.0 90.0 0 0
+idleWorker = WorkerState 0.0 0.0 0.0 100.0 10.0 90.0 0 0 1
 
 hotIdleWorker :: WorkerState
-hotIdleWorker = WorkerState 10.0 10.0 10.0 100.0 90.0 10.0 0 0
+hotIdleWorker = WorkerState 10.0 10.0 10.0 100.0 90.0 10.0 0 0 1
 
 busyWorker :: WorkerState
 busyWorker = idleWorker {processingTaskNum = 1}
 
 waitingWorker :: WorkerState
 waitingWorker = idleWorker {waitingTaskNum = 1}
+
+capacityWorker :: Int -> WorkerState
+capacityWorker capacity = idleWorker {taskCapacity = capacity}
 
 mkTask :: Int -> Task ClientTask
 mkTask n =
@@ -51,6 +54,31 @@ equalIdleWorkersSplitBurst = do
   assignmentSummary result @?= [("worker-a", "task-1"), ("worker-b", "task-2")]
   leftSummary result @?= ["task-3", "task-4"]
 
+capacityAwareWorkersUseAvailableSlotsInRounds :: Assertion
+capacityAwareWorkersUseAvailableSlotsInRounds = do
+  result <-
+    runSchedule
+      [("worker-a", capacityWorker 2), ("worker-b", capacityWorker 2)]
+      (mkTask <$> [1 .. 5])
+  assignmentSummary result
+    @?= [ ("worker-a", "task-1"),
+          ("worker-b", "task-2"),
+          ("worker-a", "task-3"),
+          ("worker-b", "task-4")
+        ]
+  leftSummary result @?= ["task-5"]
+
+partialCapacitySubtractsProcessingAndWaitingWork :: Assertion
+partialCapacitySubtractsProcessingAndWaitingWork = do
+  result <-
+    runSchedule
+      [ ("partial", (capacityWorker 4) {processingTaskNum = 1, waitingTaskNum = 1}),
+        ("full", (capacityWorker 2) {processingTaskNum = 1, waitingTaskNum = 1})
+      ]
+      (mkTask <$> [1 .. 3])
+  assignmentSummary result @?= [("partial", "task-1"), ("partial", "task-2")]
+  leftSummary result @?= ["task-3"]
+
 saturatedWorkersDoNotReceiveWork :: Assertion
 saturatedWorkersDoNotReceiveWork = do
   result <-
@@ -72,13 +100,28 @@ leastLoadedIdleWorkerPreferred = do
   assignmentSummary result @?= [("cool", "task-1"), ("hot", "task-2")]
   leftSummary result @?= []
 
+workerStateFramesAppendCapacityAndDecodeOldPayloads :: Assertion
+workerStateFramesAppendCapacityAndDecodeOldPayloads = do
+  let state = (capacityWorker 4) {processingTaskNum = 1, waitingTaskNum = 2}
+      frames = toZmq state
+      assertDecode label expected payload =
+        case fromZmq payload of
+          Right actual -> actual @?= expected
+          Left err -> assertFailure $ label <> " failed to decode: " <> show err
+  length frames @?= 9
+  assertDecode "new WorkerState payload" state frames
+  assertDecode "old WorkerState payload" (state {taskCapacity = 1}) (take 8 frames)
+
 tests :: Test
 tests =
   TestList
     [ TestLabel "equal idle workers split a burst and leave overflow queued" (TestCase equalIdleWorkersSplitBurst),
+      TestLabel "capacity-aware workers use available slots in rounds" (TestCase capacityAwareWorkersUseAvailableSlotsInRounds),
+      TestLabel "partial capacity subtracts processing and waiting work" (TestCase partialCapacitySubtractsProcessingAndWaitingWork),
       TestLabel "busy or waiting workers receive no new work" (TestCase saturatedWorkersDoNotReceiveWork),
       TestLabel "all saturated workers leave all tasks queued" (TestCase allSaturatedWorkersLeaveEverythingQueued),
-      TestLabel "lowest load idle worker receives the first task" (TestCase leastLoadedIdleWorkerPreferred)
+      TestLabel "lowest load idle worker receives the first task" (TestCase leastLoadedIdleWorkerPreferred),
+      TestLabel "WorkerState frames append capacity and decode old payloads" (TestCase workerStateFramesAppendCapacityAndDecodeOldPayloads)
     ]
 
 main :: IO ()

@@ -41,9 +41,10 @@ data WorkerState = WorkerState
     memUsed :: Double, -- In megabytes
     memAvailable :: Double, -- In megabytes
     processingTaskNum :: Int, -- Number of tasks currently being processed
-    waitingTaskNum :: Int -- Number of tasks waiting to be processed
+    waitingTaskNum :: Int, -- Number of tasks waiting to be processed
+    taskCapacity :: Int -- Configured maximum concurrent tasks for this worker
   }
-  deriving (Show, Generic, Aeson.ToJSON)
+  deriving (Show, Eq, Generic, Aeson.ToJSON)
 
 data OS = Linux | MacOS | Unknown deriving (Eq)
 
@@ -127,7 +128,7 @@ getWorkerState :: IO WorkerState
 getWorkerState = do
   (la1, la5, la15) <- getLoadAvg
   (total, used, available) <- getMemoryInfo
-  return $ WorkerState la1 la5 la15 total used available 0 0
+  return $ WorkerState la1 la5 la15 total used available 0 0 1
 
 instance ToZmq WorkerState where
   toZmq ws =
@@ -138,21 +139,32 @@ instance ToZmq WorkerState where
       doubleToBS (memUsed ws),
       doubleToBS (memAvailable ws),
       intToBS (processingTaskNum ws),
-      intToBS (waitingTaskNum ws)
+      intToBS (waitingTaskNum ws),
+      intToBS (taskCapacity ws)
     ]
 
 instance FromZmq WorkerState where
-  fromZmq [la1BS, la5BS, la15BS, totalBS, usedBS, availableBS, processingTaskNumBS, waitingTaskNumBS] = do
-    la1 <- doubleFromBS la1BS
-    la5 <- doubleFromBS la5BS
-    la15 <- doubleFromBS la15BS
-    total <- doubleFromBS totalBS
-    used <- doubleFromBS usedBS
-    available <- doubleFromBS availableBS
-    processingTaskNum <- intFromBS processingTaskNumBS
-    waitingTaskNum <- intFromBS waitingTaskNumBS
-    return $ WorkerState la1 la5 la15 total used available processingTaskNum waitingTaskNum
-  fromZmq _ = Left $ ZmqParsing "Invalid WorkerState format"
+  fromZmq frames =
+    case frames of
+      [la1BS, la5BS, la15BS, totalBS, usedBS, availableBS, processingTaskNumBS, waitingTaskNumBS, taskCapacityBS] ->
+        parseWorkerState la1BS la5BS la15BS totalBS usedBS availableBS processingTaskNumBS waitingTaskNumBS =<< intFromBS taskCapacityBS
+      [la1BS, la5BS, la15BS, totalBS, usedBS, availableBS, processingTaskNumBS, waitingTaskNumBS] ->
+        -- Backward-compatible decode for heartbeats emitted before task capacity
+        -- was appended to the WorkerState payload. Old workers are treated as
+        -- single-slot workers so scheduling remains conservative.
+        parseWorkerState la1BS la5BS la15BS totalBS usedBS availableBS processingTaskNumBS waitingTaskNumBS 1
+      _ -> Left $ ZmqParsing "Invalid WorkerState format"
+    where
+      parseWorkerState la1BS la5BS la15BS totalBS usedBS availableBS processingTaskNumBS waitingTaskNumBS taskCapacity = do
+        la1 <- doubleFromBS la1BS
+        la5 <- doubleFromBS la5BS
+        la15 <- doubleFromBS la15BS
+        total <- doubleFromBS totalBS
+        used <- doubleFromBS usedBS
+        available <- doubleFromBS availableBS
+        processingTaskNum <- intFromBS processingTaskNumBS
+        waitingTaskNum <- intFromBS waitingTaskNumBS
+        return $ WorkerState la1 la5 la15 total used available processingTaskNum waitingTaskNum taskCapacity
 
 ----------------------------------------------------------------------------------------------------
 -- ClientTask

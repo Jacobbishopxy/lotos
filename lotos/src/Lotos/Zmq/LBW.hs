@@ -80,7 +80,7 @@ class TaskAcceptor ta t where
 -- | Read-only worker service facts passed to a 'StatusReporter'.
 data StatusReporterAPI = StatusReporterAPI
   { srReportInfo :: WorkerInfo
-    -- ^ Current queue/processing counts maintained by the worker service.
+    -- ^ Current queue/processing counts and configured capacity maintained by the worker service.
   }
 
 -- | Application-defined status collector for worker heartbeat payloads.
@@ -178,7 +178,7 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
                     logWorkerTransportSendFailure "worker task status" err
           }
   -- init workerInfo
-  workerInfo <- liftIO newWorkerInfoVar
+  workerInfo <- liftIO $ newWorkerInfoVar parallelTasksNo
 
   return $
     WorkerService

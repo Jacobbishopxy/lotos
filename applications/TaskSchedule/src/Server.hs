@@ -26,18 +26,27 @@ data SimpleServer = SimpleServer
 instance LoadBalancerAlgo SimpleServer ClientTask WorkerState where
   scheduleTasks lb workers tasks = do
     logApp INFO $ "scheduleTasks: " ++ show workers ++ ", " ++ show tasks
-    let eligibleWorkers = filter (hasCapacity . snd) workers
-        sortedWorkers = sortBy (\(_, ws1) (_, ws2) -> compare (loadScore ws1) (loadScore ws2)) eligibleWorkers
-        (tasksToAssign, remaining) = splitAt (length sortedWorkers) tasks
-        assigned = zip (map fst sortedWorkers) tasksToAssign
+    let sortedWorkers = sortBy (\(_, ws1) (_, ws2) -> compare (loadScore ws1) (loadScore ws2)) workers
+        availableWorkerSlots = roundRobinAvailableSlots sortedWorkers
+        (tasksToAssign, remaining) = splitAt (length availableWorkerSlots) tasks
+        assigned = zip availableWorkerSlots tasksToAssign
     pure (lb, ScheduledResult assigned remaining)
     where
-      -- | Treat any reported in-flight or waiting work as this demo scheduler's
-      -- capacity limit. Worker heartbeats do not include the configured maximum
-      -- parallelism, so SimpleServer assigns at most one fresh task to an idle
-      -- worker during a scheduler pass and leaves overflow queued.
-      hasCapacity :: WorkerState -> Bool
-      hasCapacity ws = processingTaskNum ws == 0 && waitingTaskNum ws == 0
+      -- | Remaining assignment slots in this scheduler pass. The broker only
+      -- sees heartbeat snapshots, so subtract both tasks already processing and
+      -- tasks already queued locally on the worker before assigning more work.
+      availableSlots :: WorkerState -> Int
+      availableSlots ws = max 0 $ taskCapacity ws - processingTaskNum ws - waitingTaskNum ws
+
+      -- | Expand worker capacity in rounds so equal-load workers still split a
+      -- burst before either worker receives a second fresh task.
+      roundRobinAvailableSlots :: [(RoutingID, WorkerState)] -> [RoutingID]
+      roundRobinAvailableSlots sortedWorkers = go $ fmap (\(rid, ws) -> (rid, availableSlots ws)) sortedWorkers
+        where
+          go slots =
+            let currentRound = [rid | (rid, slotsLeft) <- slots, slotsLeft > 0]
+                nextRound = [(rid, slotsLeft - 1) | (rid, slotsLeft) <- slots, slotsLeft > 1]
+             in currentRound <> if null nextRound then [] else go nextRound
 
       -- | Calculate a worker's load score based on CPU and memory usage.
       -- Lower scores are preferred; stable sorting preserves snapshot order for

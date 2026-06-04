@@ -44,15 +44,23 @@ import Zmqx.EventLoop qualified as Zmqx.EventLoop
 data WorkerInfo = WorkerInfo
   { wiProcessingTaskNum :: Int,
     -- ^ Number of tasks currently handed to 'processTasks'.
-    wiWaitingTaskNum :: Int
+    wiWaitingTaskNum :: Int,
     -- ^ Number of tasks still waiting in the local worker queue.
+    wiTaskCapacity :: Int
+    -- ^ Configured maximum tasks the worker executor dequeues per batch.
   }
   deriving (Show, Eq)
 
 type WorkerInfoVar = TVar WorkerInfo
 
-newWorkerInfoVar :: IO WorkerInfoVar
-newWorkerInfoVar = newTVarIO WorkerInfo {wiProcessingTaskNum = 0, wiWaitingTaskNum = 0}
+newWorkerInfoVar :: Int -> IO WorkerInfoVar
+newWorkerInfoVar taskCapacity =
+  newTVarIO
+    WorkerInfo
+      { wiProcessingTaskNum = 0,
+        wiWaitingTaskNum = 0,
+        wiTaskCapacity = taskCapacity
+      }
 
 readWorkerInfoVar :: WorkerInfoVar -> IO WorkerInfo
 readWorkerInfoVar = readTVarIO

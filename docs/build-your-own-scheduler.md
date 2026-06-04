@@ -36,7 +36,7 @@ instance LoadBalancerAlgo MyScheduler MyTask MyWorkerStatus where
 
 Return assignments for tasks that should be sent to worker routing IDs now, and return deferred tasks when they should stay queued for a later scheduling pass. The broker owns UUID assignment; scheduler logic can assume scheduled/executing tasks have IDs. The `workers` list has already been filtered for broker-side liveness, so stale workers are removed before your algorithm sees the snapshot.
 
-TaskSchedule reference: `applications/TaskSchedule/src/Server.hs` assigns at most one new task to each idle worker per scheduler pass, prefers the lowest CPU/memory load score, and returns overflow as deferred work. Because `WorkerState` reports only current processing/waiting counts and not the configured `parallelTasksNo`, the demo scheduler treats any reported processing or waiting work as saturated; applications that need precise capacity should include that limit in their worker status payload and test the resulting assignment/deferred-task contract.
+TaskSchedule reference: `applications/TaskSchedule/src/Server.hs` prefers the lowest CPU/memory load score, subtracts reported processing/waiting counts from `WorkerState.taskCapacity`, assigns fresh tasks across remaining slots in stable load-sorted rounds, and returns overflow as deferred work. If your application needs precise capacity, include the relevant limit or remaining-slot value in your worker status payload and test the resulting assignment/deferred-task contract.
 
 ## 3. Implement worker execution and status reporting
 
@@ -53,7 +53,7 @@ instance TaskAcceptor MyWorker MyTask where
 
 instance StatusReporter MyWorker MyWorkerStatus where
   gatherStatus StatusReporterAPI{..} worker = do
-    -- include wiProcessingTaskNum/wiWaitingTaskNum from srReportInfo if useful
+    -- include wiProcessingTaskNum/wiWaitingTaskNum/wiTaskCapacity from srReportInfo if useful
     pure (worker, status)
 ```
 

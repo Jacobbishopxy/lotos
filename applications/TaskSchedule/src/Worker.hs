@@ -69,7 +69,8 @@ instance StatusReporter SimpleWorker WorkerState where
     let statusWithTaskNum =
           status
             { processingTaskNum = wiProcessingTaskNum srReportInfo,
-              waitingTaskNum = wiWaitingTaskNum srReportInfo
+              waitingTaskNum = wiWaitingTaskNum srReportInfo,
+              taskCapacity = wiTaskCapacity srReportInfo
             }
     logApp INFO $ "Worker status: " ++ show statusWithTaskNum
     return (r, statusWithTaskNum)

@@ -51,8 +51,8 @@ Lower-level `Lotos.Zmq.*` implementation modules are intentionally not part of t
 `TaskSchedule` demonstrates the library with concrete task and worker types:
 
 - `ClientTask`: a shell command plus timeout.
-- `WorkerState`: load average, memory usage, and task-count metrics.
-- `SimpleServer`: schedules at most one new task per idle worker per scheduler pass, preferring the least-loaded workers and leaving overflow queued as conservative demo backpressure.
+- `WorkerState`: load average, memory usage, task-count metrics, and configured task capacity.
+- `SimpleServer`: schedules by remaining worker capacity, preferring the least-loaded workers and leaving overflow queued when no capacity remains.
 - `SimpleWorker`: executes commands with `executeConcurrently` and reports task results.
 
 Executables:
@@ -128,7 +128,7 @@ For a new application, import `Lotos.Zmq` and provide application payloads plus 
 
 1. Define a task payload and worker-status payload with `ToZmq`/`FromZmq` instances. Their multipart frame order is the protocol contract; keep peer encoders/decoders and regression tests aligned.
 2. Define a `Task t` JSON shape for clients. New client tasks may leave `taskID = null`; the broker assigns the UUID before scheduling, and worker/scheduler code assumes a UUID is present before calling `unsafeGetTaskID`. `taskRetryInterval` is a retry delay in seconds for failed tasks with retries remaining; `0` or less retries immediately.
-3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current non-stale worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass. The TaskSchedule demo treats workers with any reported processing or waiting work as saturated, assigns at most one fresh task to each idle worker per pass, and sorts eligible workers by CPU/memory load.
+3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current non-stale worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass. The TaskSchedule demo reports configured worker capacity in `WorkerState.taskCapacity`, subtracts reported processing/waiting work, assigns fresh tasks across remaining slots in load-sorted rounds, and leaves overflow queued.
 4. Implement `TaskAcceptor` for workers. Process each task batch, enqueue structured task logs with `taSendTaskLog` (or the compatibility `taPubTaskLogging` wrapper), and report `TaskProcessing`, `TaskSucceed`, or `TaskFailed` with `taSendTaskStatus`.
 5. Implement `StatusReporter` for workers. Combine `StatusReporterAPI.srReportInfo` queue/processing counts with app-specific metrics such as CPU or memory load.
 6. Keep config endpoints aligned: clients use the broker `frontendAddr`, workers use the broker `backendAddr`, and worker log DEALER sockets connect to the broker `logIngest.logIngestAddr` / worker `workerLogging.logIngestAddr`. Legacy `infoStorage.loggingAddr` and `loadBalancerLoggingAddr` fields remain only for old JSON/default derivation. The current reliable logging design is documented in [`docs/logging-redesign.md`](docs/logging-redesign.md).
@@ -276,7 +276,7 @@ The `/info` response is intentionally a lightweight scheduler snapshot; worker l
 - Worker DEALER routing ids and reliable worker log DEALER routing ids both use `workerId`; custom configs must align client/frontend, worker/backend, and LogIngest endpoints.
 - Failed tasks retry while `taskRetry > 0`; positive `taskRetryInterval` values delay eligibility until the interval has elapsed, while `0` or less preserves immediate retry.
 - Worker status heartbeats drive broker liveness. When a worker is stale for `taskProcessor.workerStaleTimeoutSec`, the broker removes it from scheduling/info maps and recovers its non-succeeded in-flight tasks through the same retry/garbage path.
-- TaskSchedule's demo scheduler derives capacity from `WorkerState.processingTaskNum` and `WorkerState.waitingTaskNum` because heartbeats do not report configured `parallelTasksNo`: only idle workers receive one new task per pass, busy/waiting workers receive none, and overflow stays queued for a later scheduler pass.
+- TaskSchedule's demo scheduler uses `WorkerState.taskCapacity - processingTaskNum - waitingTaskNum` as remaining capacity. The capacity field is appended to the worker-status payload; decoders still accept the older payload shape as a conservative single-slot worker status.
 - Safe verification commands are `cabal build all --enable-tests` for compilation, `cabal test all` for bounded regression suites, `scripts/task-schedule-smoke.sh` for the intentional single-worker end-to-end demo smoke, and `scripts/task-schedule-multi-worker-smoke.sh` for bounded multi-worker scheduling smoke after building.
 
 ## Development notes
