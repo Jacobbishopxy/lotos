@@ -2,11 +2,11 @@
 
 ## Protocol frames
 
-All ZeroMQ payloads use positional multipart frames. Preserve frame order for `Task`, client ACK, backend worker status/task-status, and logging frames unless a task explicitly scopes a protocol migration with tests for both peers.
+All ZeroMQ payloads use positional multipart frames. Preserve frame order for `Task`, client ACK, backend worker status/task-status, and logging frames unless a task explicitly scopes a protocol migration with tests for both peers. The full append-only policy, WorkerState example, break criteria, and version-tag guidance live in [Protocol Compatibility and Versioning](protocol-compatibility.md).
 
 ## Worker status capacity
 
-TaskSchedule's `WorkerState` now appends `taskCapacity` to the status payload. The decoder accepts both the new nine-frame shape and the older eight-frame shape. Older workers are treated as conservative single-slot workers.
+TaskSchedule's `WorkerState` now appends `taskCapacity` to the status payload. The decoder accepts both the new nine-frame shape and the older eight-frame shape. Older workers are treated as conservative single-slot workers. See [TaskSchedule](task-schedule.md) for how the demo scheduler combines this field with broker-side capacity reservations, and [Protocol Compatibility and Versioning](protocol-compatibility.md#compatibility-policy) for why appended fields need old-frame fallback tests.
 
 ## Logging names
 
@@ -19,7 +19,7 @@ Several legacy names remain for configuration/source compatibility, but new JSON
 | `loadBalancerLoggingAddr` | `workerLogging.logIngestAddr` or top-level `logIngestDefaultAddr` for derivation-only configs | Old key remains accepted; explicit `workerLogging` defines the runtime endpoint. |
 | `taPubTaskLogging` | `taSendTaskLog` | Old callback remains a wrapper for stdout/info `LogEvent` enqueueing. |
 
-Runtime ingestion uses `logIngest.logIngestAddr`, `workerLogging.logIngestAddr`, and `taSendTaskLog`. Partial explicit LogIngest blocks inherit defaults from the selected derivation address; old-only JSON keeps deriving the demo split endpoint from `5557` to `5558`.
+Runtime ingestion uses `logIngest.logIngestAddr`, `workerLogging.logIngestAddr`, and `taSendTaskLog`. Partial explicit LogIngest blocks inherit defaults from the selected derivation address; old-only JSON keeps deriving the demo split endpoint from `5557` to `5558`. See the [Public API Guide](public-api.md#logging-configuration-compatibility) for adopter-facing configuration examples and the source-level design notes in [`docs/logging-redesign.md`](../../../logging-redesign.md). Log ingestion remains at-least-once with idempotent broker handling; exactly-once delivery is not claimed.
 
 ## Client ACK semantics
 
@@ -31,4 +31,4 @@ Registered EventLoop sockets are worker-owned. Do not reintroduce direct raw sen
 
 ## Public facade stability
 
-Application code should import `Lotos.Zmq`. Lower-level modules exist for implementation and tests, but public adopter examples should stay on the facade unless they intentionally test an internal behavior.
+Application code should import `Lotos.Zmq`. Lower-level modules exist for implementation and tests, but public adopter examples should stay on the facade unless they intentionally test an internal behavior. When an incompatible wire change is unavoidable, prefer a new discriminator, endpoint, or versioned payload rather than silently widening facade examples around internal modules; see [Deliberate compatibility breaks](protocol-compatibility.md#deliberate-compatibility-breaks).

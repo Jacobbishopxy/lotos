@@ -32,11 +32,21 @@ instance LoadBalancerAlgo MyScheduler MyTask MyWorkerStatus where
     -- workers :: [(RoutingID, MyWorkerStatus)]
     -- tasks   :: [Task MyTask]
     pure (scheduler, ScheduledResult assignments deferred)
+
+  -- Optional capacity hooks. Leave the defaults when your status payload does
+  -- not model occupied slots.
+  applyCapacityReservations _ _ reservedSlots status =
+    status { myWaitingOrReservedSlots = myWaitingOrReservedSlots status + reservedSlots }
+
+  workerOccupiedSlots _ _ status =
+    Just (myProcessingSlots status + myWaitingOrReservedSlots status)
 ```
 
 Return assignments for tasks that should be sent to worker routing IDs now, and return deferred tasks when they should stay queued for a later scheduling pass. The broker owns UUID assignment; scheduler logic can assume scheduled/executing tasks have IDs. The `workers` list has already been filtered for broker-side liveness, so stale workers are removed before your algorithm sees the snapshot.
 
-TaskSchedule reference: `applications/TaskSchedule/src/Server.hs` prefers the lowest CPU/memory load score, subtracts reported processing/waiting counts from `WorkerState.taskCapacity`, assigns fresh tasks across remaining slots in stable load-sorted rounds, and returns overflow as deferred work. If your application needs precise capacity, include the relevant limit or remaining-slot value in your worker status payload and test the resulting assignment/deferred-task contract.
+If your worker status reports capacity or occupied-slot counts, implement the two optional hooks instead of importing broker internals. `applyCapacityReservations` overlays broker-known reservations onto the status passed to `scheduleTasks`, preventing repeated scheduler passes from over-assigning while worker heartbeats lag. `workerOccupiedSlots` lets the broker conservatively reconcile reservations once later heartbeats demonstrably include them.
+
+TaskSchedule reference: `applications/TaskSchedule/src/Server.hs` prefers the lowest CPU/memory load score, overlays reservations onto `WorkerState.waitingTaskNum`, subtracts processing/waiting counts from `WorkerState.taskCapacity`, assigns fresh tasks across remaining slots in stable load-sorted rounds, and returns overflow as deferred work. If your application needs precise capacity, include the relevant limit or remaining-slot value in your worker status payload and test the resulting assignment/deferred-task contract.
 
 ## 3. Implement worker execution and status reporting
 
@@ -57,7 +67,7 @@ instance StatusReporter MyWorker MyWorkerStatus where
     pure (worker, status)
 ```
 
-TaskSchedule reference: `applications/TaskSchedule/src/Worker.hs` executes shell commands with `Lotos.Proc`, sends stdout/stderr and final command results through `taSendTaskLog`, reports `TaskProcessing`, and maps command results to `TaskSucceed` or `TaskFailed`. Reliable logging uses a separate LogIngest DEALER/ROUTER subsystem described in [`logging-redesign.md`](logging-redesign.md).
+TaskSchedule reference: `applications/TaskSchedule/src/Worker.hs` executes shell commands with `Lotos.Proc`, sends stdout/stderr and final command results through `taSendTaskLog`, reports `TaskProcessing`, and maps command results to `TaskSucceed` or `TaskFailed`. Reliable logging uses a separate LogIngest DEALER/ROUTER subsystem described in [`logging-redesign.md`](logging-redesign.md). Delivery is at-least-once with broker-side deduplication, so downstream log consumers should be idempotent and docs/tests must not assert exactly-once delivery.
 
 ## 4. Wire server, worker, and client services
 
@@ -107,16 +117,17 @@ If a worker stops reporting status beyond `taskProcessor.workerStaleTimeoutSec`,
 
 ## 6. Verify with bounded tests and intentional smokes
 
-Recommended gates from the repository root:
+Recommended gates from the repository root follow the TP-049 CI/local profile:
 
 ```bash
-cabal build all --enable-tests
-cabal test all
-scripts/task-schedule-smoke.sh
-scripts/task-schedule-multi-worker-smoke.sh
+make ci-check        # cabal build all --enable-tests + explicit bounded tests + mdBook
+make ci-test         # rerun only the explicit bounded regression target list
+make book-build      # docs-only gate
+make smoke-single    # intentional end-to-end demo after the build gate
+make smoke-multi     # intentional multi-worker/capacity smoke after the build gate
 ```
 
-`cabal test all` is reserved for bounded assertion-based suites. Long-running or no-assertion demos are Cabal `demo-*` executables and should be run intentionally, usually with `timeout`.
+Avoid using `cabal test all` as the default gate for this workspace. The safe regression list is encoded in `Makefile` as `CI_TEST_TARGETS`, while long-running or no-assertion demos are Cabal `demo-*` executables and should be run intentionally, usually with `timeout`.
 
 For a new application, add bounded tests for:
 

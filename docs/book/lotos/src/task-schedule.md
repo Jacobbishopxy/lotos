@@ -24,7 +24,7 @@ Default loopback endpoints:
 
 ## Scheduler behavior
 
-`SimpleServer` sorts workers by combined CPU/memory load, computes remaining slots from reported status payloads, assigns tasks to available worker slots, and returns overflow to the broker queue. Before `scheduleTasks` runs, the broker overlays its capacity reservations onto each `WorkerState` by adding reserved slots to `waitingTaskNum`; this prevents repeated scheduler passes from assigning past `taskCapacity` while worker heartbeat counts have not caught up. Older eight-frame worker status payloads still decode as single-slot workers, preserving compatibility with workers that do not report capacity.
+`SimpleServer` sorts workers by combined CPU/memory load, computes remaining slots from reported status payloads, assigns tasks to available worker slots, and returns overflow to the broker queue. Its `LoadBalancerAlgo` instance implements the public capacity hooks described in the [Public API Guide](public-api.md#server-scheduler): before `scheduleTasks` runs, the broker overlays capacity reservations onto each `WorkerState` by adding reserved slots to `waitingTaskNum`; after later heartbeats include those occupied slots, `workerOccupiedSlots` lets the broker reconcile the reservations conservatively. This prevents repeated scheduler passes from assigning past `taskCapacity` while worker heartbeat counts have not caught up. Older eight-frame worker status payloads still decode as single-slot workers, preserving compatibility with workers that do not report capacity.
 
 ## Worker behavior
 
@@ -34,4 +34,4 @@ Default loopback endpoints:
 
 A client ACK only proves broker acceptance. For task completion, check a worker side effect, worker task/status state, `/logs/worker/<workerId>`, `/logs/task/<taskUuid>`, or the smoke-script evidence directories.
 
-See [`docs/task-schedule-mvp.md`](../../../task-schedule-mvp.md) for the full product-facing runtime contract.
+Use `make smoke-single` / `scripts/task-schedule-smoke.sh` for the single-worker path and `make smoke-multi` / `scripts/task-schedule-multi-worker-smoke.sh` for capacity-aware multi-worker dispatch after `make ci-check` or at least `make ci-build` has passed. The smoke expectations are summarized in the [Verification Guide](verification.md#task-schedule-smoke-checks), and the full product-facing runtime contract remains in [`docs/task-schedule-mvp.md`](../../../task-schedule-mvp.md).

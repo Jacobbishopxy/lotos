@@ -71,14 +71,22 @@ cabal update
 make ci-check
 ```
 
-`make ci-check` compiles every workspace component with tests enabled, runs the bounded regression test targets explicitly, and builds the mdBook. Then run one of the intentional end-to-end demo smokes from the repository root:
+`make ci-check` is the routine TP-049 gate: it compiles every workspace component with tests enabled, runs the explicit bounded regression target list, and builds the mdBook. Use the narrower targets when iterating locally:
 
 ```bash
-scripts/task-schedule-smoke.sh
-scripts/task-schedule-multi-worker-smoke.sh
+make ci-build      # cabal build all --enable-tests
+make ci-test       # explicit bounded regression suites only
+make book-build    # mdBook only
 ```
 
-For a manual single-machine demo, start the server and worker in separate terminals, then submit the checked-in sample task from a third terminal:
+Then run one of the intentional end-to-end demo smokes from the repository root after the build/test gate is green:
+
+```bash
+make smoke-single  # or scripts/task-schedule-smoke.sh
+make smoke-multi   # or scripts/task-schedule-multi-worker-smoke.sh
+```
+
+For a manual single-machine demo, start the server and worker in separate terminals, then submit the checked-in sample task from a third terminal. The checked-in JSON files make the default loopback topology explicit: `broker.json` owns the frontend/backend/LogIngest/info endpoints, `worker.json` points at the backend plus worker logging endpoint, `client.json` points at the frontend and ACK timeout, and `task-demo.json` is the submitted `Task ClientTask` payload.
 
 ```bash
 mkdir -p logs .tmp
@@ -141,7 +149,7 @@ For a new application, import `Lotos.Zmq` and provide application payloads plus 
 
 1. Define a task payload and worker-status payload with `ToZmq`/`FromZmq` instances. Their multipart frame order is the protocol contract; keep peer encoders/decoders and regression tests aligned. Compatible wire changes are append-only at the payload tail and must keep old-frame decoder coverage.
 2. Define a `Task t` JSON shape for clients. New client tasks may leave `taskID = null`; the broker assigns the UUID before scheduling, and worker/scheduler code assumes a UUID is present before calling `unsafeGetTaskID`. `taskRetryInterval` is a retry delay in seconds for failed tasks with retries remaining; `0` or less retries immediately.
-3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current non-stale worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass. The TaskSchedule demo reports configured worker capacity in `WorkerState.taskCapacity`, subtracts reported processing/waiting work, assigns fresh tasks across remaining slots in load-sorted rounds, and leaves overflow queued.
+3. Implement `LoadBalancerAlgo` for the server. `scheduleTasks` receives current non-stale worker snapshots and a bounded batch of queued/retryable tasks; return `ScheduledResult` assignments plus any tasks to leave queued for a later pass. If your worker status models capacity, implement the optional `applyCapacityReservations` and `workerOccupiedSlots` hooks so the broker can overlay dispatch reservations between heartbeats without exposing internal maps. The TaskSchedule demo reports configured worker capacity in `WorkerState.taskCapacity`, overlays reservations onto waiting work, subtracts reported processing/waiting work, assigns fresh tasks across remaining slots in load-sorted rounds, and leaves overflow queued.
 4. Implement `TaskAcceptor` for workers. Process each task batch, enqueue structured task logs with `taSendTaskLog` (or the compatibility `taPubTaskLogging` wrapper), and report `TaskProcessing`, `TaskSucceed`, or `TaskFailed` with `taSendTaskStatus`.
 5. Implement `StatusReporter` for workers. Combine `StatusReporterAPI.srReportInfo` queue/processing counts with app-specific metrics such as CPU or memory load.
 6. Keep config endpoints aligned: clients use the broker `frontendAddr`, workers use the broker `backendAddr`, and worker log DEALER sockets connect to the broker `logIngest.logIngestAddr` / worker `workerLogging.logIngestAddr`. New JSON should prefer `infoStorage.logIngestDefaultAddr` / `logIngestDefaultBufferSize` only as broker derivation hints and explicit `workerLogging.logIngestAddr` for workers; legacy `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` remain accepted for old JSON/default derivation. The current reliable logging design is documented in [`docs/logging-redesign.md`](docs/logging-redesign.md).
@@ -285,7 +293,7 @@ The `/info` response is intentionally a lightweight scheduler snapshot; worker l
 
 ## Protocol and verification invariants
 
-- `ToZmq` and `FromZmq` instances define positional multipart wire formats. Treat them as a stable wire ABI: compatible changes append payload frames at the tail, keep old-frame decoder fallbacks, and update bounded frame tests; route/envelope/discriminator changes require an explicit protocol migration.
+- `ToZmq` and `FromZmq` instances define positional multipart wire formats. Treat them as a stable wire ABI: compatible changes append payload frames at the tail, keep old-frame decoder fallbacks, and update bounded frame tests; route/envelope/discriminator changes require an explicit protocol migration. The mdBook [Protocol Compatibility and Versioning](docs/book/lotos/src/protocol-compatibility.md) chapter has the full break/version-tag policy.
 - Client ACKs mean accepted/enqueued by the broker, not worker completion. Completion evidence comes from worker side effects, worker task/status state, logs, or smoke artifacts.
 - The broker owns UUID assignment. Client task JSON may set `taskID` to `null`, but scheduled/executing tasks must have IDs before `unsafeGetTaskID` is used.
 - Worker DEALER routing ids and reliable worker log DEALER routing ids both use `workerId`; custom configs must align client/frontend, worker/backend, and LogIngest endpoints.
