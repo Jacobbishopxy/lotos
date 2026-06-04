@@ -23,8 +23,11 @@ where
 import Control.Applicative ((<|>))
 import Control.Concurrent (ThreadId)
 import Control.Concurrent.MVar
+import Control.Concurrent.STM (TBQueue, TVar, atomically, isFullTBQueue, modifyTVar', newTBQueueIO, newTVarIO, readTBQueue, readTVarIO, writeTBQueue)
+import Control.Exception (AsyncException (ThreadKilled), SomeException, fromException, try)
 import Control.Monad (forever, when)
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Reader (ask)
 import Data.Aeson ((.=))
 import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as ByteString
@@ -47,12 +50,14 @@ import Lotos.Zmq.Util
 import System.Directory (createDirectoryIfMissing, doesFileExist, renameFile)
 import System.FilePath (takeDirectory)
 import Zmqx
+import Zmqx.EventLoop qualified as Zmqx.EventLoop
 import Zmqx.Monad qualified as ZmqxM
 
 -- | Mutable LogIngest state shared by the ROUTER loop and HTTP query handlers.
 data LogIngestState = LogIngestState
   { logIngestStateConfig :: LogIngestConfig,
-    logIngestStateStore :: MVar LogStore
+    logIngestStateStore :: MVar LogStore,
+    logIngestStateDispatchRejected :: TVar Int
   }
 
 -- | Public stats snapshot for `/logs/stats`.
@@ -226,7 +231,7 @@ instance Aeson.FromJSON JournalEntry where
 newLogIngestState :: LogIngestConfig -> IO LogIngestState
 newLogIngestState cfg = do
   store <- loadJournal cfg
-  LogIngestState cfg <$> newMVar store
+  LogIngestState cfg <$> newMVar store <*> newTVarIO 0
 
 -- | Persist/cache one decoded worker log batch and return the ACK to send.
 --
@@ -249,8 +254,27 @@ runLogIngest cfg@LogIngestConfig {..} state = do
   router <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "logIngestRouter"
   liftIO $ applySocketHWM router logIngestSocketHWM
   zmqUnwrap $ ZmqxM.bind router logIngestAddr
-  Logger.logApp Logger.INFO $ "LogIngest ROUTER started at " <> Text.unpack logIngestAddr
-  Logger.forkApp $ logIngestLoop cfg state router
+  context <- ZmqxM.askContext
+  appEnv <- ask
+  inboundFrames <- liftIO $ newTBQueueIO $ fromIntegral $ logIngestDispatchCapacity cfg
+  let spec =
+        Zmqx.EventLoop.addTransceiver
+          logIngestEventLoopEndpoint
+          router
+          (Zmqx.EventLoop.Callback $ enqueueLogIngestFrames state inboundFrames)
+          Zmqx.EventLoop.emptySpec
+  Logger.logApp Logger.INFO $ "LogIngest ROUTER EventLoop started at " <> Text.unpack logIngestAddr
+  Logger.forkApp $ do
+    result <-
+      liftIO $
+        try $
+          Zmqx.EventLoop.withEventLoopIn context spec $ \loop ->
+            Logger.runAppWithEnv appEnv $ logIngestLoop cfg state loop inboundFrames
+    case (result :: Either SomeException ()) of
+      Left exception
+        | Just ThreadKilled <- fromException exception -> pure ()
+        | otherwise -> Logger.logApp Logger.ERROR $ "LogIngest EventLoop stopped: " <> show exception
+      Right () -> pure ()
 
 queryRecentLogs :: LogIngestState -> IO LogQueryResult
 queryRecentLogs LogIngestState {..} = do
@@ -273,30 +297,62 @@ queryWorkerTaskLogs LogIngestState {..} workerId taskId = do
   pure $ mkQueryResult $ Map.findWithDefault Seq.empty (workerId, taskId) (storeByWorkerTask store)
 
 readLogIngestStats :: LogIngestState -> IO LogIngestStats
-readLogIngestStats LogIngestState {..} = storeStats <$> readMVar logIngestStateStore
+readLogIngestStats LogIngestState {..} = do
+  stats <- storeStats <$> readMVar logIngestStateStore
+  dispatchRejected <- readTVarIO logIngestStateDispatchRejected
+  pure $ addDispatchRejected dispatchRejected stats
 
 currentAcceptedThrough :: LogIngestState -> RoutingID -> IO Word64
 currentAcceptedThrough LogIngestState {..} workerId = acceptedThroughFor workerId <$> readMVar logIngestStateStore
 
-logIngestLoop :: LogIngestConfig -> LogIngestState -> Zmqx.Router -> Logger.LotosApp ()
-logIngestLoop _cfg state router = forever $ do
-  frames <- zmqUnwrap $ ZmqxM.receives router
+recordRejectedFrames :: LogIngestState -> Int -> IO ()
+recordRejectedFrames LogIngestState {..} rejectedCount =
+  modifyMVar_ logIngestStateStore $ pure . incrementRejected rejectedCount
+
+logIngestEventLoopEndpoint :: Text.Text
+logIngestEventLoopEndpoint =
+  "logIngestRouter"
+
+logIngestDispatchCapacity :: LogIngestConfig -> Int
+logIngestDispatchCapacity LogIngestConfig {..} =
+  max 1 logIngestSocketHWM
+
+enqueueLogIngestFrames :: LogIngestState -> TBQueue [ByteString.ByteString] -> [ByteString.ByteString] -> IO ()
+enqueueLogIngestFrames LogIngestState {..} inboundFrames frames = do
+  enqueued <- atomically $ do
+    full <- isFullTBQueue inboundFrames
+    if full
+      then pure False
+      else writeTBQueue inboundFrames frames >> pure True
+  when (not enqueued) $
+    atomically $ modifyTVar' logIngestStateDispatchRejected (+ 1)
+
+logIngestLoop :: LogIngestConfig -> LogIngestState -> Zmqx.EventLoop.EventLoop -> TBQueue [ByteString.ByteString] -> Logger.LotosApp ()
+logIngestLoop _cfg state loop inboundFrames = forever $ do
+  frames <- liftIO $ atomically $ readTBQueue inboundFrames
   case frames of
     routingFrame : batchFrames ->
       case (textFromBS routingFrame, fromZmq batchFrames) of
-        (Left err, _) -> Logger.logApp Logger.ERROR $ "LogIngest routing id decode failed: " <> show err
-        (_, Left err) -> Logger.logApp Logger.ERROR $ "LogIngest batch decode failed: " <> show err
+        (Left err, _) -> do
+          liftIO $ recordRejectedFrames state 1
+          Logger.logApp Logger.ERROR $ "LogIngest routing id decode failed: " <> show err
+        (_, Left err) -> do
+          liftIO $ recordRejectedFrames state 1
+          Logger.logApp Logger.ERROR $ "LogIngest batch decode failed: " <> show err
         (Right routingId, Right batch) ->
           if routingId == logBatchWorkerId batch
             then do
               ack <- liftIO $ ingestLogBatch state batch
-              zmqUnwrap $ ZmqxM.sends router $ routingFrame : toZmq ack
+              zmqUnwrap $ Zmqx.EventLoop.sends loop logIngestEventLoopEndpoint $ routingFrame : toZmq ack
             else do
+              liftIO $ recordRejectedFrames state 1
               Logger.logApp Logger.ERROR $ "LogIngest routing id mismatch: envelope=" <> Text.unpack routingId <> ", batch=" <> Text.unpack (logBatchWorkerId batch)
               acceptedThrough <- liftIO $ currentAcceptedThrough state (logBatchWorkerId batch)
               let ack = LogAck (logBatchAck batch) (logBatchWorkerId batch) acceptedThrough ["routing id mismatch"]
-              zmqUnwrap $ ZmqxM.sends router $ routingFrame : toZmq ack
-    [] -> Logger.logApp Logger.ERROR "LogIngest received an empty ROUTER frame set"
+              zmqUnwrap $ Zmqx.EventLoop.sends loop logIngestEventLoopEndpoint $ routingFrame : toZmq ack
+    [] -> do
+      liftIO $ recordRejectedFrames state 1
+      Logger.logApp Logger.ERROR "LogIngest received an empty ROUTER frame set"
 
 applyBatch :: LogIngestConfig -> LogStore -> LogBatch -> (LogStore, [LogEvent], LogAck)
 applyBatch cfg store batch@LogBatch {..} =
@@ -496,6 +552,10 @@ mkQueryResult :: Seq LogEvent -> LogQueryResult
 mkQueryResult events =
   let asList = Foldable.toList events
    in LogQueryResult (length asList) asList
+
+addDispatchRejected :: Int -> LogIngestStats -> LogIngestStats
+addDispatchRejected dispatchRejected stats@LogIngestStats {..} =
+  stats {logStatsRejectedEvents = logStatsRejectedEvents + dispatchRejected}
 
 storeStats :: LogStore -> LogIngestStats
 storeStats LogStore {..} =

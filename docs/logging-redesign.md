@@ -38,9 +38,9 @@ Use DEALER/ROUTER rather than PUB/SUB:
 
 1. The worker opens a dedicated logging DEALER socket with a stable routing id derived from `workerId`.
 2. The worker registers that DEALER as a `Zmqx.EventLoop` transceiver under the stable endpoint name `worker-log-dealer`; after registration, the logging loop sends through `Zmqx.EventLoop.sends` and receives ACKs from an EventLoop mailbox rather than touching the raw socket.
-3. The broker opens a dedicated LogIngest ROUTER socket on a new logging endpoint.
+3. The broker registers its dedicated LogIngest ROUTER as a `Zmqx.EventLoop` transceiver under the stable endpoint name `logIngestRouter`; the EventLoop callback only dispatches complete multipart frame sets into LogIngest's bounded STM queue, so decode, journal writes, retention, and ACK construction stay off the EventLoop worker thread.
 4. Workers send `LogBatch` messages containing one or more ordered `LogEvent`s.
-5. LogIngest writes the records to append-only persistence, updates its bounded read cache, then sends `LogAck` to the worker routing id.
+5. LogIngest writes the records to append-only persistence, updates its bounded read cache, then sends `LogAck` back through `Zmqx.EventLoop.sends` to the worker routing id.
 6. The ACK includes the batch id and the highest contiguous sequence number durably accepted for that worker.
 
 Sketch of the target message shapes, preserving the project's positional multipart style:
@@ -95,7 +95,7 @@ Logging must be bounded at every layer:
 
 When the worker pending-log queue is full, prefer preserving task lifecycle/result logs over verbose stdout/stderr. The worker may coalesce or drop low-priority records, but it must emit an explicit synthetic gap `LogEvent` with `logEventDroppedFrom`, `logEventDroppedThrough`, and a reason in `logEventMessage` so downstream users can see the loss. Silent drops and hidden sequence gaps are forbidden.
 
-If LogIngest cannot persist records, it must withhold the ACK. Workers retry with backoff until their bounded pending queue forces the visible drop policy above. Logging retry pressure must not stop task status reporting; task status still uses the worker backend DEALER path.
+If LogIngest cannot persist records, it must withhold the ACK. Workers retry with backoff until their bounded pending queue forces the visible drop policy above. If the broker-side EventLoop dispatch queue is full, LogIngest increments observable rejected-batch accounting and does not ACK frames that were not handed to the ingestion loop; this preserves at-least-once retry behavior instead of silently treating a dropped dispatch as accepted. Logging retry pressure must not stop task status reporting; task status still uses the worker backend DEALER path.
 
 ## Persistence and read cache plan
 
@@ -185,7 +185,7 @@ TP-024 introduces `Lotos.Zmq.LBW.LogTransport` and rewires `TaskAcceptorAPI` wit
 Runtime caveats:
 
 - `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` remain in config for compatibility/default derivation, but InfoStorage no longer binds a worker-log socket or retains full worker logs.
-- Delivery remains at-least-once. Workers retry unacked batches, and LogIngest deduplicates accepted sequence coverage across restart/compaction; exactly-once delivery is not claimed.
+- Delivery remains at-least-once. Workers retry unacked batches, and LogIngest deduplicates accepted sequence coverage across restart/compaction; exactly-once delivery is not claimed. EventLoop ownership does not change this contract: ACKs are still sent only after accepted records reach the journal/cache state, and un-enqueued broker dispatch frames receive no ACK.
 - TaskSchedule smoke scripts reuse stable worker IDs. If a generated `logs/worker-logs.journal` from an earlier run is intentionally preserved, LogIngest may classify restarted worker sequences as duplicates; use an isolated journal path or remove stale generated smoke state when proving current-run `/logs/*` evidence.
 
 ## TP-023 implementation notes

@@ -347,6 +347,8 @@ routerLoopRejectsMismatchedEnvelopeBeforeMutation = withJournal $ \journalPath -
 
   claimedLogs <- queryWorkerLogs state claimedWorkerId
   logQueryEvents claimedLogs @?= []
+  stats <- readLogIngestStats state
+  logStatsRejectedEvents stats @?= 1
   lines' <- readJournalLines journalPath
   lines' @?= []
 
