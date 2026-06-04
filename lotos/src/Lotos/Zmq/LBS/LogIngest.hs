@@ -248,7 +248,7 @@ runLogIngest :: LogIngestConfig -> LogIngestState -> Logger.LotosApp ThreadId
 runLogIngest cfg@LogIngestConfig {..} state = do
   router <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "logIngestRouter"
   liftIO $ applySocketHWM router logIngestSocketHWM
-  zmqUnwrap $ Zmqx.bind router logIngestAddr
+  zmqUnwrap $ ZmqxM.bind router logIngestAddr
   Logger.logApp Logger.INFO $ "LogIngest ROUTER started at " <> Text.unpack logIngestAddr
   Logger.forkApp $ logIngestLoop cfg state router
 
@@ -280,7 +280,7 @@ currentAcceptedThrough LogIngestState {..} workerId = acceptedThroughFor workerI
 
 logIngestLoop :: LogIngestConfig -> LogIngestState -> Zmqx.Router -> Logger.LotosApp ()
 logIngestLoop _cfg state router = forever $ do
-  frames <- zmqUnwrap $ Zmqx.receives router
+  frames <- zmqUnwrap $ ZmqxM.receives router
   case frames of
     routingFrame : batchFrames ->
       case (textFromBS routingFrame, fromZmq batchFrames) of
@@ -290,12 +290,12 @@ logIngestLoop _cfg state router = forever $ do
           if routingId == logBatchWorkerId batch
             then do
               ack <- liftIO $ ingestLogBatch state batch
-              zmqUnwrap $ Zmqx.sends router $ routingFrame : toZmq ack
+              zmqUnwrap $ ZmqxM.sends router $ routingFrame : toZmq ack
             else do
               Logger.logApp Logger.ERROR $ "LogIngest routing id mismatch: envelope=" <> Text.unpack routingId <> ", batch=" <> Text.unpack (logBatchWorkerId batch)
               acceptedThrough <- liftIO $ currentAcceptedThrough state (logBatchWorkerId batch)
               let ack = LogAck (logBatchAck batch) (logBatchWorkerId batch) acceptedThrough ["routing id mismatch"]
-              zmqUnwrap $ Zmqx.sends router $ routingFrame : toZmq ack
+              zmqUnwrap $ ZmqxM.sends router $ routingFrame : toZmq ack
     [] -> Logger.logApp Logger.ERROR "LogIngest received an empty ROUTER frame set"
 
 applyBatch :: LogIngestConfig -> LogStore -> LogBatch -> (LogStore, [LogEvent], LogAck)

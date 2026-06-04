@@ -66,19 +66,19 @@ runSocketLayer SocketLayerConfig {..} staleTimeoutSec (TaskSchedulerData tq ftq 
 
   -- Init frontend Router
   frontend <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "frontend"
-  zmqUnwrap $ Zmqx.bind frontend frontendAddr
+  zmqUnwrap $ ZmqxM.bind frontend frontendAddr
   -- Init backend Router
   backend <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "backend"
-  zmqUnwrap $ Zmqx.bind backend backendAddr
+  zmqUnwrap $ ZmqxM.bind backend backendAddr
   -- Init receiver Pair
   receiverPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "slReceiver"
-  zmqUnwrap $ Zmqx.bind receiverPair taskProcessorSenderAddr
+  zmqUnwrap $ ZmqxM.bind receiverPair taskProcessorSenderAddr
   -- Init sender Pair
   senderPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "slSender"
-  zmqUnwrap $ Zmqx.bind senderPair socketLayerSenderAddr -- Fixed to use connect
+  zmqUnwrap $ ZmqxM.bind senderPair socketLayerSenderAddr -- Fixed to use connect
 
   -- pollItems & socketLayer cst
-  let pollItems = Zmqx.pollIn frontend & Zmqx.pollInAlso backend & Zmqx.pollInAlso receiverPair
+  let pollItems = ZmqxM.pollIn frontend & ZmqxM.pollInAlso backend & ZmqxM.pollInAlso receiverPair
       socketLayer = SocketLayer frontend backend receiverPair senderPair tq ftq wtm wsm wam gbb staleTimeoutSec
 
   -- Start the direct socket poll loop in a separate thread
@@ -91,7 +91,7 @@ layerLoop ::
   SocketLayer t w ->
   LotosApp ()
 layerLoop pollItems layer =
-  zmqUnwrap (Zmqx.poll pollItems) >>= \ready -> do
+  zmqUnwrap (ZmqxM.poll pollItems) >>= \ready -> do
     handleFrontend layer ready
     handleBackend layer ready
     layerLoop pollItems layer -- Recursive direct poll loop
@@ -107,13 +107,13 @@ handleFrontend SocketLayer {..} (Zmqx.Ready ready) =
   -- 📩 receive message from a client
   when (ready frontendRouter) $ do
     logApp DEBUG "handleFrontend: recv client request"
-    fromZmq @(RouterFrontendIn t) <$> zmqUnwrap (Zmqx.receives frontendRouter) >>= \case
+    fromZmq @(RouterFrontendIn t) <$> zmqUnwrap (ZmqxM.receives frontendRouter) >>= \case
       Left e -> logApp ERROR $ "handleFrontend: unable to parse client request; no ACK sent: " <> show e
       Right (ClientRequest clientID clientReqID task) -> do
         filledTask <- liftIO $ fillTaskID' task
         liftIO $ enqueueTS filledTask taskQueue -- Ensure proper enqueueing
         ack <- liftIO newAck
-        zmqUnwrap $ Zmqx.sends frontendRouter $ toZmq (ClientAck clientID clientReqID ack)
+        zmqUnwrap $ ZmqxM.sends frontendRouter $ toZmq (ClientAck clientID clientReqID ack)
         logApp DEBUG $ "handleFrontend: sent client ACK after enqueue: " <> show clientID <> " " <> show ack
 
 -- ⭐⭐ handle message from load-balancer or workers
@@ -142,11 +142,11 @@ handleLoadBalancerMessage ::
   LotosApp ()
 handleLoadBalancerMessage SocketLayer {..} = do
   logApp DEBUG "handleBackend: recv load-balancer request"
-  fromZmq @(RouterBackendOut t) <$> zmqUnwrap (Zmqx.receives backendReceiver) >>= \case
+  fromZmq @(RouterBackendOut t) <$> zmqUnwrap (ZmqxM.receives backendReceiver) >>= \case
     Left e -> logApp ERROR $ show e
     Right wt@(WorkerTask wID task) -> do
       -- send to worker first
-      zmqUnwrap $ Zmqx.sends backendRouter $ toZmq wt
+      zmqUnwrap $ ZmqxM.sends backendRouter $ toZmq wt
       -- update worker tasks map, we are pretty sure that task has a UUID (handleFrontend has done it)
       let uuid = unwrapOption (taskID task)
       liftIO $ appendTSWorkerTasks wID (uuid, task, TaskInit) workerTasksMap
@@ -159,7 +159,7 @@ handleWorkerMessage ::
   LotosApp ()
 handleWorkerMessage layer@SocketLayer {..} = do
   logApp DEBUG "handleBackend: recv worker request"
-  fromZmq @(RouterBackendIn w) <$> zmqUnwrap (Zmqx.receives backendRouter) >>= \case
+  fromZmq @(RouterBackendIn w) <$> zmqUnwrap (ZmqxM.receives backendRouter) >>= \case
     Left e -> logApp ERROR $ show e
     -- 💾 worker status changed
     Right (WorkerStatus wID mt a st) ->
@@ -290,4 +290,4 @@ handleOtherTaskStatus TaskContext {..} wID uuid status = do
 notifyLoadBalancer :: Zmqx.Pair -> LotosApp ()
 notifyLoadBalancer backendSender = do
   ack <- liftIO $ newAck
-  zmqUnwrap $ Zmqx.sends backendSender $ toZmq (Notify ack)
+  zmqUnwrap $ ZmqxM.sends backendSender $ toZmq (Notify ack)

@@ -149,7 +149,7 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
 
   -- worker Dealer Pair init
   wDealerPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "workerDealerPair"
-  zmqUnwrap $ Zmqx.bind wDealerPair workerDealerPairAddr
+  zmqUnwrap $ ZmqxM.bind wDealerPair workerDealerPairAddr
 
   -- worker reliable log transport init. The ZMQ DEALER itself is opened by the
   -- logging loop in runWorkerService so task callbacks only touch bounded memory.
@@ -162,7 +162,7 @@ mkWorkerService ws@WorkerServiceConfig {..} ta sr = do
             taSendTaskLog = enqueueWorkerLog workerLogTransport,
             taSendTaskStatus = \(tid, ts) -> do
               ack <- newAck
-              zmqThrow $ Zmqx.sends wDealerPair $ toZmq $ WorkerReportTaskStatus ack tid ts
+              zmqThrow $ ZmqxM.sends wDealerPair $ toZmq $ WorkerReportTaskStatus ack tid ts
           }
   -- init workerInfo
   workerInfo <- liftIO newWorkerInfoVar
@@ -203,16 +203,16 @@ runWorkerService ws WorkerServiceConfig {..} = do
   -- worker Dealer init in a separate thread
   wDealer <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "workerDealer"
   liftIO $ Zmqx.setSocketOpt wDealer (Zmqx.Z_RoutingId $ textToBS workerId)
-  zmqUnwrap $ Zmqx.connect wDealer loadBalancerBackendAddr
+  zmqUnwrap $ ZmqxM.connect wDealer loadBalancerBackendAddr
   -- worker Dealer Pair init in a separate thread
   wDealerPair' <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "workerDealerPair'"
-  zmqUnwrap $ Zmqx.connect wDealerPair' workerDealerPairAddr
+  zmqUnwrap $ ZmqxM.connect wDealerPair' workerDealerPairAddr
 
   -- start the reliable logging loop on its own DEALER channel.
   tLog <- runWorkerLogTransport (workerLogTransport ws)
   logApp INFO $ "workerLogTransport threadID: " <> show tLog
 
-  let pollItems = Zmqx.pollIn wDealer & Zmqx.pollInAlso wDealerPair'
+  let pollItems = ZmqxM.pollIn wDealer & ZmqxM.pollInAlso wDealerPair'
 
   -- start the socket loop
   socketLoop pollItems ws wDealer wDealerPair'
@@ -241,14 +241,14 @@ socketLoop
     (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger now
     logApp DEBUG $ "socketLoop -> start, now: " <> show now <> ", shouldProcess: " <> show shouldProcess
 
-    rdy <- zmqUnwrap (Zmqx.pollFor pollItems $ timeoutInterval newTrigger now)
+    rdy <- zmqUnwrap (ZmqxM.pollFor pollItems $ timeoutInterval newTrigger now)
 
     case rdy of
       Just (Zmqx.Ready ready) -> do
         -- receive message from external
         when (ready workerDealer) do
           logApp DEBUG $ "socketLoop -> workerDealer: " <> show now
-          fromZmq @(Task t) <$> zmqUnwrap (Zmqx.receives workerDealer) >>= \case
+          fromZmq @(Task t) <$> zmqUnwrap (ZmqxM.receives workerDealer) >>= \case
             Left e -> logApp ERROR $ show e
             Right task -> liftIO $ do
               enqueueTS task taskQueue
@@ -256,10 +256,10 @@ socketLoop
         -- receive message from internal
         when (ready workerDealerPair') do
           logApp DEBUG $ "socketLoop -> workerDealerPair: " <> show now
-          zmqUnwrap (Zmqx.receives workerDealerPair') >>= \msg ->
+          zmqUnwrap (ZmqxM.receives workerDealerPair') >>= \msg ->
             case (fromZmq msg :: Either ZmqError WorkerReportTaskStatus) of
               Left e -> logApp ERROR $ show e
-              Right _ -> zmqUnwrap $ Zmqx.sends workerDealer msg
+              Right _ -> zmqUnwrap $ ZmqxM.sends workerDealer msg
       Nothing -> logApp DEBUG $ "socketLoop -> none: " <> show now
 
     -- 2. when the trigger is inactivated, enter into a new loop
@@ -271,7 +271,7 @@ socketLoop
     (newReporter, workerStatus :: w) <- gatherStatus statusReporterAPI reporter
     -- construct `WorkerReportStatus`
     ack <- liftIO newAck
-    zmqUnwrap $ Zmqx.sends workerDealer $ toZmq $ WorkerReportStatus ack workerStatus
+    zmqUnwrap $ ZmqxM.sends workerDealer $ toZmq $ WorkerReportStatus ack workerStatus
 
     -- loop
     socketLoop pollItems (ws {trigger = newTrigger, reporter = newReporter} :: WorkerService ta sr t w) workerDealer workerDealerPair'
@@ -334,4 +334,4 @@ pubTaskLogging WorkerService {..} wl =
 sendTaskStatus :: WorkerService ta sr t w -> TaskID -> TaskStatus -> LotosApp ()
 sendTaskStatus WorkerService {..} tid ts = do
   ack <- liftIO newAck
-  zmqUnwrap $ Zmqx.sends workerDealerPair $ toZmq $ WorkerReportTaskStatus ack tid ts
+  zmqUnwrap $ ZmqxM.sends workerDealerPair $ toZmq $ WorkerReportTaskStatus ack tid ts

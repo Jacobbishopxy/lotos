@@ -36,10 +36,10 @@ setupSubAndPair = do
     -- declare in a separate thread
     sub <- unwrapApp $ ZmqxM.open (Zmqx.name "sub")
     liftIO $ unwrap $ Zmqx.Sub.subscribe sub (C.pack "")
-    liftIO $ unwrap $ Zmqx.connect sub "tcp://127.0.0.1:5555"
+    unwrapApp $ ZmqxM.connect sub "tcp://127.0.0.1:5555"
 
     pair2 <- unwrapApp $ ZmqxM.open $ Zmqx.name "pair2"
-    liftIO $ unwrap $ Zmqx.connect pair2 "inproc://pair-test"
+    unwrapApp $ ZmqxM.connect pair2 "inproc://pair-test"
 
     return (sub, pair2)
 
@@ -49,11 +49,11 @@ receiveLoop sub pair2 = do
   logApp INFO $ "$$$ 3 > " <> show tid
   logApp INFO "Waiting for messages..."
 
-  result <- liftIO $ Zmqx.receivesFor sub 2000
+  result <- ZmqxM.receivesFor sub 2000
   case result of
     Right (Just msgs) -> do
       logApp INFO $ "Received: " ++ show msgs
-      _ <- liftIO $ Zmqx.sends pair2 msgs
+      _ <- unwrapApp $ ZmqxM.sends pair2 msgs
       receiveLoop sub pair2
     Right Nothing -> do
       logApp INFO "Timeout occurred"
@@ -64,12 +64,12 @@ receiveLoop sub pair2 = do
 
 publisherLoop :: Zmqx.Pub -> LotosApp ()
 publisherLoop pub = void $ forever do
-    liftIO $ unwrap $ Zmqx.send pub (C.pack "Hello from PUB")
+    unwrapApp $ ZmqxM.send pub (C.pack "Hello from PUB")
     liftIO $ threadDelay $ 5 * 1_000_000  -- 5s between publishes
 
 receivePairMessages :: Zmqx.Pair -> LotosApp ()
 receivePairMessages pair1 = void $ forever do
-    result <- liftIO $ Zmqx.receives pair1
+    result <- ZmqxM.receives pair1
     case result of
         Right msgs -> logApp INFO $ "Received from pair1: " ++ show msgs
         Left err -> logApp INFO $ "Error: " ++ show err
@@ -82,7 +82,7 @@ main = do
     tid <- liftIO myThreadId
     logApp INFO $ "$$$ 1 > " <> show tid
     pair1 <- unwrapApp $ ZmqxM.open $ Zmqx.name "pair1"
-    liftIO $ unwrap $ Zmqx.bind pair1 "inproc://pair-test"
+    unwrapApp $ ZmqxM.bind pair1 "inproc://pair-test"
 
     t1 <- forkApp do
       (sub, pair2) <- setupSubAndPair
@@ -92,7 +92,7 @@ main = do
 
     t2 <- forkApp do
       pub <- unwrapApp $ ZmqxM.open $ Zmqx.name "pub"
-      liftIO $ unwrap $ Zmqx.bind pub "tcp://127.0.0.1:5555"
+      unwrapApp $ ZmqxM.bind pub "tcp://127.0.0.1:5555"
       publisherLoop pub
     logApp INFO $ "t2: " <> show t2
 

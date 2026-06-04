@@ -29,6 +29,7 @@ import Data.UUID qualified as UUID
 import GHC.Natural (Natural)
 import Lotos.Zmq.Error
 import Zmqx
+import Zmqx.Monad qualified as ZmqxM
 
 -- String <-> ByteString
 stringToBS :: String -> B.ByteString
@@ -84,10 +85,10 @@ uuidOptFromBS bs
 
 ----------------------------------------------------------------------------------------------------
 
-runZmqContextIO :: IO a -> IO a
-runZmqContextIO action = do
-  Zmqx.run Zmqx.defaultOptions action
+runZmqContextIO :: ZmqxM.ZmqxT IO a -> IO a
+runZmqContextIO =
+  ZmqxM.runZmqx Zmqx.defaultOptions
 
-runZmqContextWithThreadIO :: Natural -> IO a -> IO a
-runZmqContextWithThreadIO threadNum action = do
-  Zmqx.run (Zmqx.ioThreads threadNum) action
+runZmqContextWithThreadIO :: Natural -> ZmqxM.ZmqxT IO a -> IO a
+runZmqContextWithThreadIO threadNum =
+  ZmqxM.runZmqx (Zmqx.ioThreads threadNum)

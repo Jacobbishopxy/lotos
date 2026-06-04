@@ -5,6 +5,7 @@ module Main where
 
 import Control.Concurrent (threadDelay)
 import Control.Monad (forM_, when)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Time (UTCTime (..), addUTCTime, fromGregorian)
 import Lotos.TSD.Map (insertMap, lookupMap, mkTSMap)
 import Lotos.TSD.Queue (mkTSQueue, readQueue')
@@ -22,8 +23,7 @@ import Lotos.Zmq.Internal.Retry
 import System.Exit (exitFailure)
 import Test.HUnit
 import Zmqx qualified
-import Zmqx.Dealer qualified
-import Zmqx.Router qualified
+import Zmqx.Monad qualified as ZmqxM
 
 testWorkerId :: RoutingID
 testWorkerId = "simpleWorker_1"
@@ -33,6 +33,9 @@ fixedNow = UTCTime (fromGregorian 2026 1 1) 0
 
 unwrap :: (Show e) => IO (Either e a) -> IO a
 unwrap action = action >>= either (ioError . userError . show) pure
+
+unwrapM :: (Show e, MonadIO m) => m (Either e a) -> m a
+unwrapM action = action >>= either (liftIO . ioError . userError . show) pure
 
 expectJust :: String -> Maybe a -> IO a
 expectJust message = maybe (ioError $ userError message) pure
@@ -58,58 +61,58 @@ workerStatusFramesUseConfiguredDealerRoutingId :: Assertion
 workerStatusFramesUseConfiguredDealerRoutingId =
   runZmqContextIO do
     let endpoint = "inproc://tp007-worker-status-routing-id"
-    router <- unwrap $ Zmqx.Router.open $ Zmqx.name "tp007-worker-status-router"
-    dealer <- unwrap $ Zmqx.Dealer.open $ Zmqx.name "tp007-worker-status-dealer"
+    router <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp007-worker-status-router") :: ZmqxM.ZmqxT IO Zmqx.Router
+    dealer <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp007-worker-status-dealer") :: ZmqxM.ZmqxT IO Zmqx.Dealer
 
-    Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
-    unwrap $ Zmqx.bind router endpoint
-    unwrap $ Zmqx.connect dealer endpoint
-    threadDelay 100000
+    liftIO $ Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
+    unwrapM $ ZmqxM.bind router endpoint
+    unwrapM $ ZmqxM.connect dealer endpoint
+    liftIO $ threadDelay 100000
 
-    ack <- newAck
+    ack <- liftIO newAck
     let report = WorkerReportStatus ack ()
         expectedFrames = textToBS testWorkerId : toZmq report
-    unwrap $ Zmqx.sends dealer $ toZmq report
-    frames <- expectJust "backend ROUTER did not receive worker status frames" =<< unwrap (Zmqx.receivesFor router 1000)
+    unwrapM $ ZmqxM.sends dealer $ toZmq report
+    frames <- liftIO . expectJust "backend ROUTER did not receive worker status frames" =<< unwrapM (ZmqxM.receivesFor router 1000)
 
-    frames @?= expectedFrames
+    liftIO $ frames @?= expectedFrames
     case fromZmq frames :: Either ZmqError (RouterBackendIn ()) of
       Right (WorkerStatus decodedWorkerId decodedType _ ()) -> do
-        decodedWorkerId @?= testWorkerId
-        decodedType @?= WorkerStatusT
-      Right (WorkerTaskStatus _ _ _ _ _) -> assertFailure "expected WorkerStatus, decoded WorkerTaskStatus"
-      Left err -> assertFailure $ "worker status frames did not decode: " <> show err
+        liftIO $ decodedWorkerId @?= testWorkerId
+        liftIO $ decodedType @?= WorkerStatusT
+      Right (WorkerTaskStatus _ _ _ _ _) -> liftIO $ assertFailure "expected WorkerStatus, decoded WorkerTaskStatus"
+      Left err -> liftIO $ assertFailure $ "worker status frames did not decode: " <> show err
 
 workerTaskStatusFramesUseConfiguredDealerRoutingId :: Assertion
 workerTaskStatusFramesUseConfiguredDealerRoutingId =
   runZmqContextIO do
     let endpoint = "inproc://tp011-worker-task-status-routing-id"
-    router <- unwrap $ Zmqx.Router.open $ Zmqx.name "tp011-worker-task-status-router"
-    dealer <- unwrap $ Zmqx.Dealer.open $ Zmqx.name "tp011-worker-task-status-dealer"
+    router <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp011-worker-task-status-router") :: ZmqxM.ZmqxT IO Zmqx.Router
+    dealer <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp011-worker-task-status-dealer") :: ZmqxM.ZmqxT IO Zmqx.Dealer
 
-    Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
-    unwrap $ Zmqx.bind router endpoint
-    unwrap $ Zmqx.connect dealer endpoint
-    threadDelay 100000
+    liftIO $ Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
+    unwrapM $ ZmqxM.bind router endpoint
+    unwrapM $ ZmqxM.connect dealer endpoint
+    liftIO $ threadDelay 100000
 
-    ack <- newAck
-    task <- fillTaskID' (defaultTask :: Task ())
+    ack <- liftIO newAck
+    task <- liftIO $ fillTaskID' (defaultTask :: Task ())
     let taskId = unsafeGetTaskID task
         report = WorkerReportTaskStatus ack taskId TaskFailed
         expectedFrames = textToBS testWorkerId : toZmq report
-    unwrap $ Zmqx.sends dealer $ toZmq report
-    frames <- expectJust "backend ROUTER did not receive worker task status frames" =<< unwrap (Zmqx.receivesFor router 1000)
+    unwrapM $ ZmqxM.sends dealer $ toZmq report
+    frames <- liftIO . expectJust "backend ROUTER did not receive worker task status frames" =<< unwrapM (ZmqxM.receivesFor router 1000)
 
-    frames @?= expectedFrames
+    liftIO $ frames @?= expectedFrames
     case fromZmq frames :: Either ZmqError (RouterBackendIn ()) of
       Right (WorkerTaskStatus decodedWorkerId decodedType decodedAck decodedTaskId decodedStatus) -> do
-        decodedWorkerId @?= testWorkerId
-        decodedType @?= WorkerTaskStatusT
-        toZmq decodedAck @?= toZmq ack
-        decodedTaskId @?= taskId
-        decodedStatus @?= TaskFailed
-      Right (WorkerStatus _ _ _ _) -> assertFailure "expected WorkerTaskStatus, decoded WorkerStatus"
-      Left err -> assertFailure $ "worker task status frames did not decode: " <> show err
+        liftIO $ decodedWorkerId @?= testWorkerId
+        liftIO $ decodedType @?= WorkerTaskStatusT
+        liftIO $ toZmq decodedAck @?= toZmq ack
+        liftIO $ decodedTaskId @?= taskId
+        liftIO $ decodedStatus @?= TaskFailed
+      Right (WorkerStatus _ _ _ _) -> liftIO $ assertFailure "expected WorkerTaskStatus, decoded WorkerStatus"
+      Left err -> liftIO $ assertFailure $ "worker task status frames did not decode: " <> show err
 
 workerReportTaskStatusPayloadsRoundTrip :: Assertion
 workerReportTaskStatusPayloadsRoundTrip = do
@@ -130,26 +133,26 @@ scheduledWorkerTaskFramesStripRouterEnvelope :: Assertion
 scheduledWorkerTaskFramesStripRouterEnvelope =
   runZmqContextIO do
     let endpoint = "inproc://tp011-scheduled-worker-task"
-    router <- unwrap $ Zmqx.Router.open $ Zmqx.name "tp011-scheduled-worker-task-router"
-    dealer <- unwrap $ Zmqx.Dealer.open $ Zmqx.name "tp011-scheduled-worker-task-dealer"
+    router <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp011-scheduled-worker-task-router") :: ZmqxM.ZmqxT IO Zmqx.Router
+    dealer <- (unwrapM $ ZmqxM.open $ Zmqx.name "tp011-scheduled-worker-task-dealer") :: ZmqxM.ZmqxT IO Zmqx.Dealer
 
-    Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
-    unwrap $ Zmqx.bind router endpoint
-    unwrap $ Zmqx.connect dealer endpoint
-    threadDelay 100000
+    liftIO $ Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS testWorkerId)
+    unwrapM $ ZmqxM.bind router endpoint
+    unwrapM $ ZmqxM.connect dealer endpoint
+    liftIO $ threadDelay 100000
 
-    registrationAck <- newAck
-    unwrap $ Zmqx.sends dealer $ toZmq $ WorkerReportStatus registrationAck ()
-    _ <- expectJust "backend ROUTER did not receive worker registration before task send" =<< unwrap (Zmqx.receivesFor router 1000)
+    registrationAck <- liftIO newAck
+    unwrapM $ ZmqxM.sends dealer $ toZmq $ WorkerReportStatus registrationAck ()
+    _ <- liftIO . expectJust "backend ROUTER did not receive worker registration before task send" =<< unwrapM (ZmqxM.receivesFor router 1000)
 
-    task <- fillTaskID' (defaultTask :: Task ())
-    unwrap $ Zmqx.sends router $ toZmq $ WorkerTask testWorkerId task
-    frames <- expectJust "worker DEALER did not receive scheduled task frames" =<< unwrap (Zmqx.receivesFor dealer 1000)
+    task <- liftIO $ fillTaskID' (defaultTask :: Task ())
+    unwrapM $ ZmqxM.sends router $ toZmq $ WorkerTask testWorkerId task
+    frames <- liftIO . expectJust "worker DEALER did not receive scheduled task frames" =<< unwrapM (ZmqxM.receivesFor dealer 1000)
 
-    frames @?= toZmq task
+    liftIO $ frames @?= toZmq task
     case fromZmq frames :: Either ZmqError (Task ()) of
-      Right decodedTask -> assertTaskMatches task decodedTask
-      Left err -> assertFailure $ "scheduled worker task frames did not decode: " <> show err
+      Right decodedTask -> liftIO $ assertTaskMatches task decodedTask
+      Left err -> liftIO $ assertFailure $ "scheduled worker task frames did not decode: " <> show err
 
 failedTaskWithRemainingRetryRequeuesWithDecrementedRetry :: Assertion
 failedTaskWithRemainingRetryRequeuesWithDecrementedRetry = do

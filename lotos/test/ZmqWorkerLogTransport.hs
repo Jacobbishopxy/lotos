@@ -170,7 +170,7 @@ eventLoopDelayedAckClearsBeforeRetry = withTaskId $ \taskId ->
     ackResult <- newEmptyMVar
     Logger.runZmqApp env $ do
       router <- (unwrapApp $ ZmqxM.open $ Zmqx.name "tp029-worker-log-router") :: Logger.LotosApp Zmqx.Router
-      liftIO $ unwrap $ Zmqx.bind router endpoint
+      unwrapApp $ ZmqxM.bind router endpoint
       ackTid <- liftIO $ forkIO $ do
         result <- try (delayedAckRouter logCfg router) :: IO (Either SomeException (LogBatch, Maybe [ByteString.ByteString]))
         putMVar ackResult result
@@ -197,7 +197,7 @@ eventLoopDelayedAckClearsBeforeRetry = withTaskId $ \taskId ->
 -- duplicate batch.
 delayedAckRouter :: LogIngestConfig -> Zmqx.Router -> IO (LogBatch, Maybe [ByteString.ByteString])
 delayedAckRouter logCfg router = do
-  frames <- unwrap $ Zmqx.receives router
+  frames <- unwrap $ ZmqxM.receives router
   (routingFrame, batch) <- case frames of
     routingFrame : batchFrames ->
       case fromZmq batchFrames of
@@ -207,8 +207,8 @@ delayedAckRouter logCfg router = do
   threadDelay $ logIngestAckTimeoutMicros logCfg + 40000
   let acceptedThrough = maximum $ logEventSeq <$> logBatchEvents batch
       ack = LogAck (logBatchAck batch) (logBatchWorkerId batch) acceptedThrough []
-  unwrap $ Zmqx.sends router $ routingFrame : toZmq ack
-  duplicateFrames <- unwrap $ Zmqx.receivesFor router 300
+  unwrap $ ZmqxM.sends router $ routingFrame : toZmq ack
+  duplicateFrames <- unwrap $ ZmqxM.receivesFor router 300
   pure (batch, duplicateFrames)
 
 tests :: Test

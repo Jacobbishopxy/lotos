@@ -36,7 +36,7 @@ mkClientService cs@ClientServiceConfig {..} = do
   cReq <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "clientReq"
   liftIO $ Zmqx.setSocketOpt cReq (Zmqx.Z_RoutingId $ textToBS clientId)
   liftIO $ Zmqx.setSocketOpt cReq (Zmqx.Z_RcvTimeO $ fromIntegral $ secondsToMilliseconds reqTimeoutSec)
-  zmqUnwrap $ Zmqx.connect cReq loadBalancerFrontendAddr
+  zmqUnwrap $ ZmqxM.connect cReq loadBalancerFrontendAddr
   return $ ClientService cs cReq 0
 
 secondsToMilliseconds :: Int -> Int
@@ -45,8 +45,8 @@ secondsToMilliseconds seconds = seconds * 1000
 sendTaskRequest :: (ToZmq t) => ClientService -> Task t -> LotosApp (Maybe Ack)
 sendTaskRequest ClientService {..} t = do
   -- send task
-  zmqUnwrap $ Zmqx.sends clientReq $ toZmq t
+  zmqUnwrap $ ZmqxM.sends clientReq $ toZmq t
   -- recv ack
-  fromZmq @Ack <$> zmqUnwrap (Zmqx.receives clientReq) >>= \case
+  fromZmq @Ack <$> zmqUnwrap (ZmqxM.receives clientReq) >>= \case
     Left e -> logApp ERROR (show e) >> pure Nothing
     Right ack -> logApp INFO ("recv ack from load-balancer: " <> show ack) >> return (Just ack)

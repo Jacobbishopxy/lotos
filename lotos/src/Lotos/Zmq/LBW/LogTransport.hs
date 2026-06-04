@@ -142,7 +142,7 @@ runWorkerLogTransport transport@WorkerLogTransport {workerLogTransportConfig = W
   dealer <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "workerLogDealer"
   liftIO $ Zmqx.setSocketOpt dealer (Zmqx.Z_RoutingId $ textToBS workerId)
   liftIO $ applySocketHWM dealer (logIngestSocketHWM workerLogging)
-  zmqUnwrap $ Zmqx.connect dealer (logIngestAddr workerLogging)
+  zmqUnwrap $ ZmqxM.connect dealer (logIngestAddr workerLogging)
   Logger.logApp Logger.INFO $ "worker LogIngest DEALER connected to " <> Text.unpack (logIngestAddr workerLogging)
   Logger.forkApp $ runWorkerLogEventLoop transport dealer
 

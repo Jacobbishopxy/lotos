@@ -97,10 +97,10 @@ runTaskProcessor config@TaskProcessorConfig {..} (TaskSchedulerData tq ftq wtm w
 
   -- Init receiver Pair
   receiverPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "tpReceiver"
-  zmqUnwrap $ Zmqx.connect receiverPair socketLayerSenderAddr
+  zmqUnwrap $ ZmqxM.connect receiverPair socketLayerSenderAddr
   -- Init sender Pair
   senderPair <- zmqAppUnwrap $ ZmqxM.open $ Zmqx.name "tpSender"
-  zmqUnwrap $ Zmqx.connect senderPair taskProcessorSenderAddr
+  zmqUnwrap $ ZmqxM.connect senderPair taskProcessorSenderAddr
 
   -- task processor cst
   tg <- liftIO $ mkCombinedTrigger triggerAlgoMaxNotifyCount triggerAlgoMaxWaitSec
@@ -120,7 +120,7 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
   (newTrigger, shouldProcess) <- liftIO $ callTrigger trigger triggerNow
 
   -- 1. receiving notification (BLOCKING !!!)
-  zmqUnwrap (Zmqx.receivesFor lbReceiver $ timeoutInterval newTrigger triggerNow) >>= \case
+  zmqUnwrap (ZmqxM.receivesFor lbReceiver $ timeoutInterval newTrigger triggerNow) >>= \case
     Just bs ->
       case (fromZmq bs) of
         Left e -> logApp ERROR $ show e
@@ -158,7 +158,7 @@ processorLoop cfg@TaskProcessorConfig {..} tp@TaskProcessor {..} = do
       "processorLoop.leftTasks: " <> show errLen
 
   -- 6. send to backend router
-  mapM_ (zmqUnwrap . Zmqx.sends lbSender . toZmq) workerTasks
+  mapM_ (zmqUnwrap . ZmqxM.sends lbSender . toZmq) workerTasks
 
   -- 7. re-enqueue invalid tasks
   liftIO $ enqueueTSs invalidTasks taskQueue
