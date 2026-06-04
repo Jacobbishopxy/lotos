@@ -151,9 +151,9 @@ workerLogEventLoopEndpoint = "worker-log-dealer"
 
 runWorkerLogEventLoop :: WorkerLogTransport -> Zmqx.Dealer -> Logger.LotosApp ()
 runWorkerLogEventLoop transport@WorkerLogTransport {workerLogTransportConfig = WorkerServiceConfig {..}} dealer = do
+  context <- ZmqxM.askContext
   appEnv <- ask
-  let context = Logger.lotosZmqContext appEnv
-      ackMailboxCapacity = max 1 $ logIngestSocketHWM workerLogging
+  let ackMailboxCapacity = max 1 $ logIngestSocketHWM workerLogging
       spec =
         Zmqx.EventLoop.addTransceiver
           workerLogEventLoopEndpoint
@@ -163,6 +163,9 @@ runWorkerLogEventLoop transport@WorkerLogTransport {workerLogTransportConfig = W
   result <-
     liftIO $
       try $
+        -- The DEALER was opened through MonadZmqx in runWorkerLogTransport;
+        -- start the EventLoop with that same explicit context instead of the
+        -- active-global-context fallback.
         Zmqx.EventLoop.withEventLoopIn context spec $ \loop ->
           Logger.runAppWithEnv appEnv $ workerLogLoop transport loop
   case (result :: Either SomeException ()) of
