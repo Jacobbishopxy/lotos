@@ -14,6 +14,12 @@ to a specific domain area are created here.
 Taskplane is configured and ready for task execution. Use `/orch all` for
 parallel batch execution or `/orch <path/to/PROMPT.md>` for a single task.
 
+TP-042 added a lightweight mdBook under `docs/book/lotos/` for architecture
+observations, public API guidance, ZMQ/EventLoop ownership notes, TaskSchedule
+operations, compatibility, and verification. From the repository root use
+`make book-build` or `make book-serve`; override `MDBOOK_DIR`, `MDBOOK_HOST`,
+and `MDBOOK_PORT` when needed.
+
 ---
 
 ## Key Files

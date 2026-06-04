@@ -22,6 +22,7 @@ Lotos is a Haskell/Cabal workspace for experimenting with a ZeroMQ-backed task l
 │   ├── app/                              # ts-server, ts-worker, ts-client entry points
 │   └── src/                              # scheduler, worker, client task types
 ├── docs/lb_sys.drawio                    # Architecture sketch
+├── docs/book/lotos/                      # mdBook architecture/API/runbook docs
 ├── docs/task-schedule-mvp.md             # TaskSchedule runtime contract and smoke evidence
 ├── docs/build-your-own-scheduler.md      # Concise guide for new library adopters
 ├── scripts/                              # Small shell scripts used by demos/tests
@@ -96,6 +97,19 @@ cat .tmp/task-schedule-demo.out
 ```
 
 The client ACK means the broker accepted/enqueued the task; completion proof comes from the worker marker file, worker logs, or the info API. Client request submission remains a direct synchronous REQ/ACK exchange, and `ClientServiceConfig.reqTimeoutSec` bounds how long `sendTaskRequest` waits for that ACK before returning `Nothing`. To build a new scheduler on top of `lotos`, start with [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md), then use the TaskSchedule source files as the concrete reference implementation.
+
+## Architecture and API book
+
+A lightweight mdBook collects the architecture observations, public API guide, ZMQ/EventLoop ownership notes, TaskSchedule runbook, compatibility notes, and verification checklist without duplicating all details in this README:
+
+```bash
+make book-build
+make book-serve
+# optional overrides
+make book-serve MDBOOK_HOST=0.0.0.0 MDBOOK_PORT=3003 MDBOOK_DIR=docs/book/lotos
+```
+
+The book source is under [`docs/book/lotos`](docs/book/lotos/src/SUMMARY.md). Generated HTML is written to `docs/book/lotos/book/` by mdBook and should not be committed.
 
 ## Architecture overview
 

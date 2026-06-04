@@ -1,0 +1,14 @@
+[book]
+authors = ["Lotos contributors"]
+language = "en"
+src = "src"
+title = "Lotos Architecture and API Runbook"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/Jacobbishopxy/lotos"
+edit-url-template = "https://github.com/Jacobbishopxy/lotos/edit/main/{path}"
+site-url = "/lotos/"
