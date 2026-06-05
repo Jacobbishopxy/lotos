@@ -228,6 +228,12 @@ info_has_runtime_queue_stats() {
   for queue_name in broker.task.queue broker.failed-task.queue broker.socketlayer.frontend-frames broker.socketlayer.backend-frames broker.socketlayer.taskprocessor-frames; do
     grep -F "\"name\":\"$queue_name\"" "$file" >/dev/null 2>&1 || return 1
   done
+  grep -F '"workerLivenessMap":{' "$file" >/dev/null 2>&1 || return 1
+  grep -F '"workerReservationMap":{' "$file" >/dev/null 2>&1 || return 1
+  grep -F "\"$WORKER_ID\"" "$file" >/dev/null 2>&1 || return 1
+  for field in lastSeen staleTimeoutSec heartbeatAgeSec stale; do
+    grep -F "\"$field\"" "$file" >/dev/null 2>&1 || return 1
+  done
   return 0
 }
 
@@ -242,13 +248,13 @@ wait_for_runtime_queue_stats() {
     if snapshot_endpoint "info" "$info_file"; then
       rm -f "$info_file.err"
       if info_has_runtime_queue_stats "$info_file"; then
-        log "runtime queue stats found in /info without requiring nonzero backlog"
+        log "runtime queue stats, worker liveness, and reservation maps found in /info without requiring nonzero backlog"
         return 0
       fi
     fi
     sleep 1
   done
-  log "runtime queue stats timed out after ${RUNTIME_STATS_TIMEOUT_SEC}s"
+  log "runtime diagnostics timed out after ${RUNTIME_STATS_TIMEOUT_SEC}s"
   return 1
 }
 
@@ -474,7 +480,7 @@ main() {
   start_tracked "worker" "$WORKER_STDIO_LOG" cabal run TaskSchedule:exe:ts-worker -- "$WORKER_CONFIG"
   local worker_pid="${PROCESS_PIDS[1]}"
   wait_for_worker "$server_pid" "$worker_pid" || fail_hard "worker did not register"
-  wait_for_runtime_queue_stats "$server_pid" "$worker_pid" || fail_hard "/info.runtimeQueueStats did not expose broker handoff queue fields"
+  wait_for_runtime_queue_stats "$server_pid" "$worker_pid" || fail_hard "/info did not expose runtimeQueueStats, workerLivenessMap, and workerReservationMap"
   snapshot_all "ready"
 
   CLIENT_EXIT=0
@@ -502,8 +508,8 @@ main() {
   fi
 
   if [ "$CLIENT_EXIT" -eq 0 ]; then
-    log "PASS: client received ACK, worker wrote fresh marker, /info exposed runtimeQueueStats, and worker logging reached LogIngest /logs"
-    write_result "PASS" "$CLIENT_EXIT" "client ACK plus fresh marker proof plus /info.runtimeQueueStats plus LogIngest-only /logs worker/stdout/result/stats evidence"
+    log "PASS: client received ACK, worker wrote fresh marker, /info exposed runtimeQueueStats/liveness/reservations, and worker logging reached LogIngest /logs"
+    write_result "PASS" "$CLIENT_EXIT" "client ACK plus fresh marker proof plus /info runtimeQueueStats/workerLivenessMap/workerReservationMap plus LogIngest-only /logs worker/stdout/result/stats evidence"
     return 0
   fi
 

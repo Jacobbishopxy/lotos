@@ -248,13 +248,21 @@ snapshot_all() {
 
 info_has_runtime_queue_stats() {
   local file="$1"
-  local field queue_name
+  local field queue_name wid
   grep -F '"runtimeQueueStats":[' "$file" >/dev/null 2>&1 || return 1
   for field in name currentDepth highWaterDepth totalEnqueued totalDrained warningThreshold; do
     grep -F "\"$field\"" "$file" >/dev/null 2>&1 || return 1
   done
   for queue_name in broker.task.queue broker.failed-task.queue broker.socketlayer.frontend-frames broker.socketlayer.backend-frames broker.socketlayer.taskprocessor-frames; do
     grep -F "\"name\":\"$queue_name\"" "$file" >/dev/null 2>&1 || return 1
+  done
+  grep -F '"workerLivenessMap":{' "$file" >/dev/null 2>&1 || return 1
+  grep -F '"workerReservationMap":{' "$file" >/dev/null 2>&1 || return 1
+  for field in lastSeen staleTimeoutSec heartbeatAgeSec stale; do
+    grep -F "\"$field\"" "$file" >/dev/null 2>&1 || return 1
+  done
+  for wid in "${WORKER_IDS[@]}"; do
+    grep -F "\"$wid\"" "$file" >/dev/null 2>&1 || return 1
   done
   return 0
 }
@@ -267,13 +275,13 @@ wait_for_runtime_queue_stats() {
     if snapshot_endpoint "info" "$info_file"; then
       rm -f "$info_file.err"
       if info_has_runtime_queue_stats "$info_file"; then
-        log "runtime queue stats found in /info without requiring nonzero backlog"
+        log "runtime queue stats, worker liveness, and reservation maps found in /info without requiring nonzero backlog"
         return 0
       fi
     fi
     sleep 1
   done
-  log "runtime queue stats timed out after ${RUNTIME_STATS_TIMEOUT_SEC}s"
+  log "runtime diagnostics timed out after ${RUNTIME_STATS_TIMEOUT_SEC}s"
   return 1
 }
 
@@ -471,7 +479,7 @@ start_server_and_workers() {
   done
 
   wait_for_workers "$server_pid" "$server_log" || fail_hard "not all workers registered"
-  wait_for_runtime_queue_stats || fail_hard "/info.runtimeQueueStats did not expose broker handoff queue fields"
+  wait_for_runtime_queue_stats || fail_hard "/info did not expose runtimeQueueStats, workerLivenessMap, and workerReservationMap"
   snapshot_all "ready"
 }
 
@@ -533,14 +541,15 @@ worker_stats_have_configured_capacity() {
 wait_for_capacity_reservation_snapshot() {
   local tasks_file="$EVIDENCE_DIR/capacity-worker_tasks.json"
   local stats_file="$EVIDENCE_DIR/capacity-worker_stats.json"
+  local info_file="$EVIDENCE_DIR/capacity-info.json"
   local expected_inflight=$((TASK_COUNT < WORKER_COUNT * WORKER_CAPACITY ? TASK_COUNT : WORKER_COUNT * WORKER_CAPACITY))
   local deadline=$((SECONDS + WORKER_EVIDENCE_TIMEOUT_SEC))
   local wid count total over_capacity
   while [ "$SECONDS" -le "$deadline" ]; do
     all_workers_alive || return 1
-    if snapshot_endpoint "worker_stats" "$stats_file" && snapshot_endpoint "worker_tasks" "$tasks_file"; then
-      rm -f "$stats_file.err" "$tasks_file.err"
-      if worker_stats_have_configured_capacity "$stats_file"; then
+    if snapshot_endpoint "worker_stats" "$stats_file" && snapshot_endpoint "worker_tasks" "$tasks_file" && snapshot_endpoint "info" "$info_file"; then
+      rm -f "$stats_file.err" "$tasks_file.err" "$info_file.err"
+      if worker_stats_have_configured_capacity "$stats_file" && grep -F '"workerReservationMap":{' "$info_file" >/dev/null 2>&1; then
         total=0
         over_capacity=0
         for wid in "${WORKER_IDS[@]}"; do
@@ -714,8 +723,8 @@ main() {
     fail_hard "current run appeared in garbage or garbage endpoint was unavailable"
   fi
 
-  log "PASS: $TASK_COUNT tasks ACKed, ${#WORKER_IDS[@]} workers registered, capacity/reservations stayed within configured worker slots, all markers are fresh, /info exposed runtimeQueueStats, and worker logging reached LogIngest /logs"
-  write_result "PASS" "multi-worker ACK plus per-worker execution evidence plus capacity/reservation snapshot plus fresh marker proof plus /info.runtimeQueueStats plus LogIngest-only /logs worker/stdout/result/stats evidence"
+  log "PASS: $TASK_COUNT tasks ACKed, ${#WORKER_IDS[@]} workers registered, capacity/reservations stayed within configured worker slots, all markers are fresh, /info exposed runtimeQueueStats/liveness/reservations, and worker logging reached LogIngest /logs"
+  write_result "PASS" "multi-worker ACK plus per-worker execution evidence plus capacity/reservation snapshot plus fresh marker proof plus /info runtimeQueueStats/workerLivenessMap/workerReservationMap plus LogIngest-only /logs worker/stdout/result/stats evidence"
   return 0
 }
 

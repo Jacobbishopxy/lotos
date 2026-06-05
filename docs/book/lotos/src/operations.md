@@ -44,6 +44,26 @@ With default TaskSchedule config, useful endpoints include:
 
 Use `curl --noproxy '*'` for loopback probes in proxy-enabled environments.
 
+Common `jq` probes:
+
+```bash
+# heartbeat age and stale threshold per worker
+curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/info \
+  | jq '.workerLivenessMap'
+
+# active broker-side capacity reservations per worker
+curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/info \
+  | jq '.workerReservationMap'
+
+# queue overload status summary
+curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/info \
+  | jq '.runtimeQueueStats[] | {name, currentDepth, highWaterDepth, overloadStatus}'
+
+# TaskSchedule capacity view from latest worker status payloads
+curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/worker_stats \
+  | jq '.stats | to_entries[] | {worker: .key, processing: .value.processingTaskNum, waiting: .value.waitingTaskNum, capacity: .value.taskCapacity}'
+```
+
 ## Overload indicators
 
 `/SimpleServer/info` includes lightweight runtime observability beyond the raw task queues:

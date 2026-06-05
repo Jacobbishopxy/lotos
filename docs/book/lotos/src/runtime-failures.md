@@ -86,7 +86,8 @@ Do not invent recovery evidence that the runtime does not currently expose. When
 
 1. Inspect `runtimeQueueStats` from `/info` and identify which queue name has a rising `currentDepth`, repeatedly increasing `highWaterDepth`, or active `overloadStatus`:
    ```bash
-   curl --noproxy '*' http://127.0.0.1:8081/SimpleServer/info | jq '.runtimeQueueStats'
+   curl --noproxy '*' http://127.0.0.1:8081/SimpleServer/info \
+     | jq '.runtimeQueueStats[] | {name, currentDepth, highWaterDepth, totalEnqueued, totalDrained, overloadStatus}'
    ```
 2. Classify the response from the status and counters:
    - `nominal`: keep the snapshot as a baseline; no overload action is implied.
@@ -107,6 +108,12 @@ Do not invent recovery evidence that the runtime does not currently expose. When
 TaskSchedule capacity is heartbeat-based, while the broker also keeps conservative reservations for tasks it has assigned but may not yet see reflected in the next worker status snapshot. This prevents burst over-assignment, but it can look like temporary underutilization. Non-terminal task-status frames (`TaskPending`/`TaskProcessing`) refresh only active reservations; once heartbeat reconciliation has safely accounted for an assignment and removed its reservation, a duplicate or late non-terminal status does not recreate hidden reserved capacity.
 
 1. Compare `/worker_stats`, `/worker_tasks`, and `/info.workerReservationMap`. If `processingTaskNum + waitingTaskNum` is below `taskCapacity` but `/worker_tasks` and `workerReservationMap.<worker>.reservedSlots` already show recent assignments for that worker, reservations may be protecting those slots until a heartbeat catches up.
+   ```bash
+   curl --noproxy '*' http://127.0.0.1:8081/SimpleServer/info \
+     | jq '{liveness: .workerLivenessMap, reservations: .workerReservationMap, workerTasks: .workerTasksMap}'
+   curl --noproxy '*' http://127.0.0.1:8081/SimpleServer/worker_stats \
+     | jq '.stats | to_entries[] | {worker: .key, processing: .value.processingTaskNum, waiting: .value.waitingTaskNum, capacity: .value.taskCapacity}'
+   ```
 2. Wait at least one heartbeat/status refresh interval before declaring capacity lost, unless worker logs show the worker is down or not accepting tasks. After a heartbeat has reflected the occupied slot, later duplicate `TaskPending`/`TaskProcessing` reports should not by themselves keep that slot reserved.
 3. Use the multi-worker smoke evidence as a known-good model: capacity-1 generated workers should not receive more in-flight work than their configured slots during burst dispatch.
 4. If underutilization persists across multiple heartbeat intervals, inspect scheduler logic, worker acceptor behavior, and task execution duration. Do not manually edit broker state; restart an affected worker only when its process is unhealthy, and let stale recovery/retry handling reconcile its tasks.
