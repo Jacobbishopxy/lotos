@@ -21,6 +21,7 @@ Lotos is a Haskell/Cabal workspace for experimenting with a ZeroMQ-backed task l
 │   ├── TaskSchedule.cabal
 │   ├── app/                              # ts-server, ts-worker, ts-client entry points
 │   └── src/                              # scheduler, worker, client task types
+├── examples/minimal-scheduler/           # Tiny public-API-only scheduler package
 ├── docs/lb_sys.drawio                    # Architecture sketch
 ├── docs/book/lotos/                      # mdBook architecture/API/runbook docs
 ├── docs/task-schedule-mvp.md             # TaskSchedule runtime contract and smoke evidence
@@ -61,6 +62,10 @@ Executables:
 - `TaskSchedule:exe:ts-server` — starts the load balancer and info API.
 - `TaskSchedule:exe:ts-worker` — starts one command-executing worker.
 - `TaskSchedule:exe:ts-client` — submits a task JSON file to the load balancer frontend and waits for an ACK.
+
+### `examples/minimal-scheduler`
+
+`lotos-minimal-scheduler-example` is a deliberately small external-style package. It imports the public `Lotos.Zmq` facade, defines one task payload and one worker-status payload, adds a tiny `sendTaskRequest` client helper, implements `LoadBalancerAlgo`, `TaskAcceptor`, and `StatusReporter`, and ships a bounded HUnit fixture. It does not import TaskSchedule or lower-level implementation modules, so it is the quickest proof that a first user can build a custom scheduler from the public API alone.
 
 ## Quickstart for new adopters
 
@@ -103,7 +108,7 @@ sleep 5
 cat .tmp/task-schedule-demo.out
 ```
 
-The client ACK means the broker accepted/enqueued the task; completion proof comes from the worker marker file, worker logs, or the info API. Client request submission remains a direct synchronous REQ/ACK exchange, and `ClientServiceConfig.reqTimeoutSec` bounds how long `sendTaskRequest` waits for that ACK before returning `Nothing`. To build a new scheduler on top of `lotos`, start with [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md), then use the TaskSchedule source files as the concrete reference implementation.
+The client ACK means the broker accepted/enqueued the task; completion proof comes from the worker marker file, worker logs, or the info API. Client request submission remains a direct synchronous REQ/ACK exchange, and `ClientServiceConfig.reqTimeoutSec` bounds how long `sendTaskRequest` waits for that ACK before returning `Nothing`. To build a new scheduler on top of `lotos`, start with [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md), skim `examples/minimal-scheduler/src/MinimalSchedulerExample.hs` for the smallest public-API-only implementation, then use the TaskSchedule source files as the full runtime reference implementation.
 
 ## Architecture and API book
 
@@ -154,7 +159,7 @@ For a new application, import `Lotos.Zmq` and provide application payloads plus 
 5. Implement `StatusReporter` for workers. Combine `StatusReporterAPI.srReportInfo` queue/processing counts with app-specific metrics such as CPU or memory load.
 6. Keep config endpoints aligned: clients use the broker `frontendAddr`, workers use the broker `backendAddr`, and worker log DEALER sockets connect to the broker `logIngest.logIngestAddr` / worker `workerLogging.logIngestAddr`. New JSON should prefer `infoStorage.logIngestDefaultAddr` / `logIngestDefaultBufferSize` only as broker derivation hints and explicit `workerLogging.logIngestAddr` for workers; legacy `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` remain accepted for old JSON/default derivation. The current reliable logging design is documented in [`docs/logging-redesign.md`](docs/logging-redesign.md).
 
-Concrete examples live in the TaskSchedule demo: `applications/TaskSchedule/src/Adt.hs` defines task/status payload frames, `applications/TaskSchedule/src/Server.hs` implements `LoadBalancerAlgo`, and `applications/TaskSchedule/src/Worker.hs` implements both worker typeclasses. The concise adopter checklist is [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md); the full demo runtime contract and smoke path remain in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
+Concrete examples live at two sizes. `examples/minimal-scheduler/src/MinimalSchedulerExample.hs` is the smallest public-API-only fixture for a custom scheduler, client submission helper, acceptor, and status reporter. The TaskSchedule demo is the full runtime example: `applications/TaskSchedule/src/Adt.hs` defines task/status payload frames, `applications/TaskSchedule/src/Server.hs` implements `LoadBalancerAlgo`, and `applications/TaskSchedule/src/Worker.hs` implements both worker typeclasses. The concise adopter checklist is [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md); the full demo runtime contract and smoke path remain in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
 
 ## Prerequisites
 
@@ -213,6 +218,7 @@ Current bounded regression test suites:
 - `lotos:test:test-zmq-worker-log-transport` checks worker-side bounded buffering, drop markers, ACK retry clearing, and wire-rounded ACK matching.
 - `TaskSchedule:test:test-worker-lifecycle` checks TaskSchedule command-result status/log mapping and worker lifecycle callbacks.
 - `TaskSchedule:test:test-scheduler` checks SimpleServer multi-worker fairness, derived backpressure, all-saturated deferral, and least-loaded worker preference.
+- `lotos-minimal-scheduler-example:test:test-minimal-scheduler-example` checks the external minimal scheduler package's payload frames, capacity/reservation hooks, and assignment/deferred-task behavior.
 
 Current `lotos` demo executables:
 

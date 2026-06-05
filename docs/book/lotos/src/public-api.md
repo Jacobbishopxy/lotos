@@ -18,6 +18,8 @@ A minimal application usually has three executables that all import `Lotos.Zmq`:
 - worker: read `WorkerServiceConfig` (for example `applications/TaskSchedule/config/worker.json`), build `mkWorkerService workerConfig acceptor reporter`, then call `runWorkerService`,
 - client: read `ClientServiceConfig` when overriding the frontend or ACK timeout (for example `applications/TaskSchedule/config/client.json`), then call `mkClientService` and `sendTaskRequest` with a `Task t` JSON payload.
 
+For the smallest complete extension-point example, see `examples/minimal-scheduler/src/MinimalSchedulerExample.hs`. That package intentionally imports the public `Lotos.Zmq` facade instead of TaskSchedule or internal modules, and its test suite proves payload frames, a client `sendTaskRequest` helper, assignment/deferral, capacity reservation hooks, and `WorkerInfo` status derivation.
+
 ## Task payloads
 
 Define a task payload type and implement:
@@ -46,7 +48,7 @@ instance LoadBalancerAlgo MyScheduler MyTask MyWorkerStatus where
     Just (myProcessingSlots status + myWaitingOrReservedSlots status)
 ```
 
-`workers` has already been filtered for liveness and, when the optional capacity hooks are implemented, adjusted for broker-side reservations from tasks already dispatched but not yet reflected in heartbeats. Return `(RoutingID, Task MyTask)` assignments for immediate dispatch and return deferred tasks for later scheduling. Do not mutate ZMQ sockets from scheduler code.
+`workers` has already been filtered for liveness and, when the optional capacity hooks are implemented, adjusted for broker-side reservations from tasks already dispatched but not yet reflected in heartbeats. Return `(RoutingID, Task MyTask)` assignments for immediate dispatch and return deferred tasks for later scheduling. Do not mutate ZMQ sockets from scheduler code. `examples/minimal-scheduler` keeps this pure with `planMiniAssignments`, making assignment and overflow behavior easy to regression-test without running a broker.
 
 ## Worker execution and status
 
@@ -65,7 +67,7 @@ instance StatusReporter MyWorker MyStatus where
     pure (worker, status)
 ```
 
-`StatusReporterAPI.srReportInfo` exposes framework-maintained processing, waiting, and configured capacity counts. Include these in your payload if scheduler decisions depend on them. `StatusReporterAPI.srHandoffQueueStats` exposes worker-side no-drop handoff queue snapshots; use `classifyHandoffQueueStats` or the JSON `overloadStatus` field when surfacing operator diagnostics, but do not treat these observability signals as task/status frame drops or automatic backpressure.
+`StatusReporterAPI.srReportInfo` exposes framework-maintained processing, waiting, and configured capacity counts. Include these in your payload if scheduler decisions depend on them; the minimal example's `miniStatusFromWorkerInfo` maps these counters into occupied capacity. `StatusReporterAPI.srHandoffQueueStats` exposes worker-side no-drop handoff queue snapshots; use `classifyHandoffQueueStats` or the JSON `overloadStatus` field when surfacing operator diagnostics, but do not treat these observability signals as task/status frame drops or automatic backpressure.
 
 ## Logging configuration compatibility
 

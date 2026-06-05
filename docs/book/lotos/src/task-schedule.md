@@ -1,6 +1,6 @@
 # TaskSchedule
 
-`applications/TaskSchedule` is the checked-in example application. It schedules shell-command tasks across one or more workers and exposes HTTP state for local verification.
+`applications/TaskSchedule` is the checked-in full runtime example application. It schedules shell-command tasks across one or more workers and exposes HTTP state for local verification. For the smallest public-API-only extension-point sample, use `examples/minimal-scheduler/`; TaskSchedule is intentionally richer because it demonstrates configs, process execution, reliable logs, and smoke evidence.
 
 ## Executables
 

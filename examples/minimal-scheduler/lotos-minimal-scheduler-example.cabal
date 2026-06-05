@@ -1,0 +1,38 @@
+cabal-version:   3.14
+name:            lotos-minimal-scheduler-example
+version:         0.1.0.0
+synopsis:        Minimal public-API scheduler example for lotos
+description:     Tiny example package that implements lotos scheduler, worker acceptor, and status reporter extension points without depending on TaskSchedule or internal modules.
+license:         BSD-3-Clause
+author:          jacob
+maintainer:      jacobbishopxy@gmail.com
+category:        Distributed Computing
+build-type:      Simple
+tested-with:     GHC == 9.14.1
+extra-doc-files: README.md
+
+common shared-properties
+  default-language:   GHC2024
+  build-depends:      base >=4 && <5
+  ghc-options:        -Wall
+  default-extensions: OverloadedStrings
+
+library
+  import:          shared-properties
+  exposed-modules: MinimalSchedulerExample
+  hs-source-dirs:  src
+  build-depends:
+    , lotos <0.2
+    , text <2.2
+
+test-suite test-minimal-scheduler-example
+  import:         shared-properties
+  type:           exitcode-stdio-1.0
+  main-is:        MinimalSchedulerExampleTest.hs
+  hs-source-dirs: test
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , HUnit
+    , lotos
+    , lotos-minimal-scheduler-example
+    , text

@@ -65,6 +65,7 @@ lotos:test:test-zmq-log-ingest
 lotos:test:test-zmq-worker-log-transport
 TaskSchedule:test:test-worker-lifecycle
 TaskSchedule:test:test-scheduler
+lotos-minimal-scheduler-example:test:test-minimal-scheduler-example
 ```
 
 Run targeted suites when changing a narrow area. Examples:
@@ -73,9 +74,10 @@ Run targeted suites when changing a narrow area. Examples:
 cabal test lotos:test:test-conc-executor
 cabal test lotos:test:test-zmq-client-ack-frames
 cabal test TaskSchedule:test:test-scheduler
+cabal test lotos-minimal-scheduler-example:test:test-minimal-scheduler-example
 ```
 
-Use frame tests whenever a `ToZmq`/`FromZmq` instance changes. Override `CI_TEST_TARGETS` for a narrower local pass when needed:
+Use frame tests whenever a `ToZmq`/`FromZmq` instance changes. The minimal scheduler example is a good first-user fixture because it compiles outside the TaskSchedule package and still tests public-facade payload frames, reservation hooks, and assignment/deferral behavior. Override `CI_TEST_TARGETS` for a narrower local pass when needed:
 
 ```bash
 make ci-test CI_TEST_TARGETS="lotos:test:test-zmq-worker-frames TaskSchedule:test:test-scheduler"

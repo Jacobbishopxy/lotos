@@ -1,6 +1,6 @@
 # Build your own scheduler with `lotos`
 
-This guide is the short path for turning the `lotos` load-balancer library into an application-specific scheduler. Keep the full demo runtime details in [`docs/task-schedule-mvp.md`](task-schedule-mvp.md) and use the TaskSchedule source as the concrete example.
+This guide is the short path for turning the `lotos` load-balancer library into an application-specific scheduler. Start with the tiny public-API-only package in `examples/minimal-scheduler/`, then use the TaskSchedule source and [`docs/task-schedule-mvp.md`](task-schedule-mvp.md) for full runtime details.
 
 ## 1. Model your task and worker status payloads
 
@@ -17,10 +17,11 @@ Define:
 - `ToJSON`/`FromJSON` instances for client task files when you want JSON submission,
 - `ToZmq`/`FromZmq` instances for every payload that crosses ZeroMQ.
 
-`ToZmq`/`FromZmq` frame order is the wire contract. Update both peers and bounded frame tests whenever you change it. TaskSchedule's examples are:
+`ToZmq`/`FromZmq` frame order is the wire contract. Update both peers and bounded frame tests whenever you change it. Examples:
 
-- `applications/TaskSchedule/src/Adt.hs` — `ClientTask`, `WorkerState`, and their ZMQ/JSON shapes.
-- `lotos/test/ZmqWorkerFrames.hs` and `lotos/test/ZmqClientAckFrames.hs` — frame-regression test patterns.
+- `examples/minimal-scheduler/src/MinimalSchedulerExample.hs` — `MiniTask`, `submitMiniTask`, and `MiniWorkerStatus`, implemented through the public `Lotos.Zmq` facade only.
+- `applications/TaskSchedule/src/Adt.hs` — richer `ClientTask`, `WorkerState`, and their ZMQ/JSON shapes.
+- `examples/minimal-scheduler/test/MinimalSchedulerExampleTest.hs`, `lotos/test/ZmqWorkerFrames.hs`, and `lotos/test/ZmqClientAckFrames.hs` — frame-regression test patterns at different sizes.
 
 ## 2. Implement the server scheduler
 
@@ -46,7 +47,7 @@ Return assignments for tasks that should be sent to worker routing IDs now, and 
 
 If your worker status reports capacity or occupied-slot counts, implement the two optional hooks instead of importing broker internals. `applyCapacityReservations` overlays broker-known reservations onto the status passed to `scheduleTasks`, preventing repeated scheduler passes from over-assigning while worker heartbeats lag. `workerOccupiedSlots` lets the broker conservatively reconcile reservations once later heartbeats demonstrably include them.
 
-TaskSchedule reference: `applications/TaskSchedule/src/Server.hs` prefers the lowest CPU/memory load score, overlays reservations onto `WorkerState.waitingTaskNum`, subtracts processing/waiting counts from `WorkerState.taskCapacity`, assigns fresh tasks across remaining slots in stable load-sorted rounds, and returns overflow as deferred work. If your application needs precise capacity, include the relevant limit or remaining-slot value in your worker status payload and test the resulting assignment/deferred-task contract.
+Minimal reference: `examples/minimal-scheduler/src/MinimalSchedulerExample.hs` sorts ready workers by routing id, expands each available capacity slot, assigns overflow as deferred work, overlays reservations onto `miniWorkerOccupied`, and exposes `workerOccupiedSlots` for reconciliation. TaskSchedule reference: `applications/TaskSchedule/src/Server.hs` prefers the lowest CPU/memory load score, overlays reservations onto `WorkerState.waitingTaskNum`, subtracts processing/waiting counts from `WorkerState.taskCapacity`, assigns fresh tasks across remaining slots in stable load-sorted rounds, and returns overflow as deferred work. If your application needs precise capacity, include the relevant limit or remaining-slot value in your worker status payload and test the resulting assignment/deferred-task contract.
 
 ## 3. Implement worker execution and status reporting
 
@@ -67,7 +68,7 @@ instance StatusReporter MyWorker MyWorkerStatus where
     pure (worker, status)
 ```
 
-TaskSchedule reference: `applications/TaskSchedule/src/Worker.hs` executes shell commands with `Lotos.Proc`, sends stdout/stderr and final command results through `taSendTaskLog`, reports `TaskProcessing`, and maps command results to `TaskSucceed` or `TaskFailed`. Reliable logging uses a separate LogIngest DEALER/ROUTER subsystem described in [`logging-redesign.md`](logging-redesign.md). Delivery is at-least-once with broker-side deduplication, so downstream log consumers should be idempotent and docs/tests must not assert exactly-once delivery.
+Minimal reference: `examples/minimal-scheduler/src/MinimalSchedulerExample.hs` exposes `submitMiniTask` as the client submission helper, reports `TaskProcessing`, enqueues one stdout/info log event, and reports `TaskSucceed` without opening sockets directly. TaskSchedule reference: `applications/TaskSchedule/src/Worker.hs` executes shell commands with `Lotos.Proc`, sends stdout/stderr and final command results through `taSendTaskLog`, reports `TaskProcessing`, and maps command results to `TaskSucceed` or `TaskFailed`. Reliable logging uses a separate LogIngest DEALER/ROUTER subsystem described in [`logging-redesign.md`](logging-redesign.md). Delivery is at-least-once with broker-side deduplication, so downstream log consumers should be idempotent and docs/tests must not assert exactly-once delivery.
 
 ## 4. Wire server, worker, and client services
 
@@ -129,7 +130,7 @@ make smoke-multi     # intentional multi-worker/capacity smoke after the build g
 
 Avoid using `cabal test all` as the default gate for this workspace. The safe regression list is encoded in `Makefile` as `CI_TEST_TARGETS`, while long-running or no-assertion demos are Cabal `demo-*` executables and should be run intentionally, usually with `timeout`.
 
-For a new application, add bounded tests for:
+For a new application, add bounded tests like `examples/minimal-scheduler/test/MinimalSchedulerExampleTest.hs` for:
 
 - payload `ToZmq`/`FromZmq` frame order,
 - scheduler assignment/deferred-task decisions, including backpressure when workers report no remaining capacity,

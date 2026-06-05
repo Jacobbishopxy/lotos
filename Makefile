@@ -18,7 +18,8 @@ CI_TEST_TARGETS ?= \
 	lotos:test:test-zmq-log-ingest \
 	lotos:test:test-zmq-worker-log-transport \
 	TaskSchedule:test:test-worker-lifecycle \
-	TaskSchedule:test:test-scheduler
+	TaskSchedule:test:test-scheduler \
+	lotos-minimal-scheduler-example:test:test-minimal-scheduler-example
 
 .PHONY: tree clean update build ci-build ci-test ci-docs ci-check book-build book-serve docs-build docs-serve smoke-single smoke-multi hie
 
