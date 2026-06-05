@@ -4,6 +4,7 @@ Lotos is a Haskell/Cabal workspace for experimenting with a ZeroMQ-backed task l
 
 - `lotos`: a reusable library with logging, STM-backed data structures, concurrent process execution, and a ZMQ client/server/worker framework.
 - `TaskSchedule`: an example application that schedules shell-command tasks onto workers based on reported CPU and memory load.
+- `applications/dashboard`: a Vite + TypeScript dashboard foundation for a light, read-only runtime overview using static sample data.
 
 ## Repository layout
 
@@ -21,6 +22,7 @@ Lotos is a Haskell/Cabal workspace for experimenting with a ZeroMQ-backed task l
 │   ├── TaskSchedule.cabal
 │   ├── app/                              # ts-server, ts-worker, ts-client entry points
 │   └── src/                              # scheduler, worker, client task types
+├── applications/dashboard/               # Static light dashboard foundation (Vite + TypeScript)
 ├── examples/minimal-scheduler/           # Tiny public-API-only scheduler package
 ├── docs/lb_sys.drawio                    # Architecture sketch
 ├── docs/book/lotos/                      # mdBook architecture/API/runbook docs
@@ -63,6 +65,19 @@ Executables:
 - `TaskSchedule:exe:ts-worker` — starts one command-executing worker.
 - `TaskSchedule:exe:ts-client` — submits a task JSON file to the load balancer frontend and waits for an ACK.
 
+### `applications/dashboard`
+
+The dashboard is a static Vite + TypeScript foundation under `applications/dashboard/`. TP-056 keeps it independent of a live broker: sample data renders the intended runtime shapes for endpoint health, worker capacity, queue depth/reservations, and recent log/status panels. The visual direction is light and Linear-inspired: near-white canvas, quiet gray hierarchy, hairline borders, restrained cards, and one lavender-blue primary accent.
+
+Use the root Make targets to install dependencies, build, develop, or preview the app:
+
+```bash
+make dashboard-install
+make dashboard-build
+make dashboard-dev
+make dashboard-preview
+```
+
 ### `examples/minimal-scheduler`
 
 `lotos-minimal-scheduler-example` is a deliberately small external-style package. It imports the public `Lotos.Zmq` facade, defines one task payload and one worker-status payload, adds a tiny `sendTaskRequest` client helper, implements `LoadBalancerAlgo`, `TaskAcceptor`, and `StatusReporter`, and ships a bounded HUnit fixture plus `make example-minimal` assignment preview. It does not import TaskSchedule or lower-level implementation modules, so it is the quickest proof that a first user can build a custom scheduler from the public API alone.
@@ -79,9 +94,10 @@ make ci-check
 `make ci-check` is the routine TP-049 gate: it compiles every workspace component with tests enabled, runs the explicit bounded regression target list, and builds the mdBook. Use the narrower targets when iterating locally:
 
 ```bash
-make ci-build      # cabal build all --enable-tests
-make ci-test       # explicit bounded regression suites only
-make book-build    # mdBook only
+make ci-build        # cabal build all --enable-tests
+make ci-test         # explicit bounded regression suites only
+make book-build      # mdBook only
+make dashboard-build # static dashboard Vite build
 ```
 
 Then run one of the intentional end-to-end demo smokes from the repository root after the build/test gate is green:
