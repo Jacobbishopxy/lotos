@@ -108,7 +108,17 @@ sleep 5
 cat .tmp/task-schedule-demo.out
 ```
 
-The client ACK means the broker accepted/enqueued the task; completion proof comes from the worker marker file, worker logs, or the info API. Client request submission remains a direct synchronous REQ/ACK exchange, and `ClientServiceConfig.reqTimeoutSec` bounds how long `sendTaskRequest` waits for that ACK before returning `Nothing`. To build a new scheduler on top of `lotos`, start with [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md), skim `examples/minimal-scheduler/src/MinimalSchedulerExample.hs` for the smallest public-API-only implementation, then use the TaskSchedule source files as the full runtime reference implementation.
+The client ACK means the broker accepted/enqueued the task; completion proof comes from the worker marker file, worker logs, or the info API. Client request submission remains a direct synchronous REQ/ACK exchange, and `ClientServiceConfig.reqTimeoutSec` bounds how long `sendTaskRequest` waits for that ACK before returning `Nothing`.
+
+Useful manual probes while the demo is running:
+
+```bash
+curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/info | jq '.workerLivenessMap'
+curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/info | jq '.workerReservationMap'
+curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/info | jq '.runtimeQueueStats[] | {name,currentDepth,overloadStatus}'
+```
+
+To build a new scheduler on top of `lotos`, start with [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md), skim `examples/minimal-scheduler/src/MinimalSchedulerExample.hs` for the smallest public-API-only implementation, then use the TaskSchedule source files as the full runtime reference implementation.
 
 ## Architecture and API book
 

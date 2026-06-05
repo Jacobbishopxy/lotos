@@ -23,6 +23,10 @@ import Data.List (sortOn)
 import Data.Text qualified as Text
 import Lotos.Zmq
 
+--------------------------------------------------------------------------------
+-- Payloads
+--------------------------------------------------------------------------------
+
 -- | Application task payload. Real applications would add fields relevant to
 -- their work; the example keeps only the target queue name so the wire contract
 -- is easy to see and test.
@@ -78,6 +82,10 @@ instance FromZmq MiniWorkerStatus where
         }
   fromZmq _ = Left $ ZmqParsing "MiniWorkerStatus expects exactly three frames"
 
+--------------------------------------------------------------------------------
+-- Scheduler
+--------------------------------------------------------------------------------
+
 -- | Stateless scheduler state. A real app can keep rolling metrics or policy
 -- knobs here; the example's deterministic policy assigns ready workers by
 -- routing id and leaves overflow queued.
@@ -108,6 +116,10 @@ instance LoadBalancerAlgo MiniScheduler MiniTask MiniWorkerStatus where
     status {miniWorkerOccupied = miniWorkerOccupied status + reservedSlots}
 
   workerOccupiedSlots _ _ = Just . miniWorkerOccupied
+
+--------------------------------------------------------------------------------
+-- Worker and client helpers
+--------------------------------------------------------------------------------
 
 -- | Minimal worker implementation. It does not perform external IO beyond the
 -- framework callbacks, which keeps this package safe for the default test gate.

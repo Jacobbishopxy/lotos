@@ -1,3 +1,5 @@
+{-# LANGUAGE RecordWildCards #-}
+
 -- file: TaskScheduleClient.hs
 -- author: Jacob Xie
 -- date: 2025/04/16 14:05:15 Wednesday
@@ -8,8 +10,9 @@ module Main where
 import Adt (ClientTask)
 import Client (readTaskFromFile)
 import Control.Exception (SomeException, try)
+import Data.Text qualified as Text
 import Lotos.Logger (LogLevel (DEBUG), runZmqApp, withLocalTimeLogger)
-import Lotos.Zmq (Ack, ClientServiceConfig (..), Task, mkClientService, readClientConfig, sendTaskRequest)
+import Lotos.Zmq (Ack, ClientServiceConfig (..), Task (..), mkClientService, readClientConfig, sendTaskRequest)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
@@ -58,10 +61,24 @@ submitClientTask clientConfig task =
       service <- mkClientService clientConfig
       sendTaskRequest service task
 
+describeClientRun :: ClientArgs -> ClientServiceConfig -> Task ClientTask -> String
+describeClientRun ClientArgs {..} clientConfig task =
+  unlines
+    [ "ts-client submission:",
+      "  client id: " <> Text.unpack (clientId clientConfig),
+      "  frontend: " <> Text.unpack (loadBalancerFrontendAddr clientConfig),
+      "  ACK timeout: " <> show (reqTimeoutSec clientConfig) <> "s",
+      "  config: " <> maybe "<default>" id clientConfigPath,
+      "  task file: " <> clientTaskPath,
+      "  task content: " <> Text.unpack (taskContent task),
+      "  task timeout: " <> show (taskTimeout task) <> "s"
+    ]
+
 runClient :: ClientArgs -> IO (Maybe Ack)
 runClient clientArgs = do
   clientConfig <- loadClientConfig clientArgs
   task <- readClientTask clientArgs
+  putStr $ describeClientRun clientArgs clientConfig task
   submitClientTask clientConfig task
 
 dieWith :: String -> IO a
