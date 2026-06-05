@@ -1,194 +1,16 @@
 import './style.css'
-
-type Health = 'healthy' | 'warning' | 'idle'
-
-type EndpointStatus = {
-  label: string
-  url: string
-  state: Health
-  detail: string
-}
-
-type WorkerSnapshot = {
-  id: string
-  role: string
-  state: Health
-  capacity: number
-  running: number
-  queued: number
-  cpuLoad: number
-  memoryLoad: number
-  heartbeat: string
-}
-
-type QueueSnapshot = {
-  name: string
-  currentDepth: number
-  highWater: number
-  threshold: number
-  state: Health
-  detail: string
-}
-
-type LogEntry = {
-  time: string
-  source: string
-  message: string
-  state: Health
-}
-
-type StatusNote = {
-  title: string
-  body: string
-  stat: string
-  state: Health
-}
-
-const endpoints: EndpointStatus[] = [
-  {
-    label: 'Info API',
-    url: 'http://127.0.0.1:8081/SimpleServer/info',
-    state: 'healthy',
-    detail: 'sample snapshot loaded',
-  },
-  {
-    label: 'Broker frontend',
-    url: 'tcp://127.0.0.1:5555',
-    state: 'healthy',
-    detail: 'accepting client tasks',
-  },
-  {
-    label: 'Worker backend',
-    url: 'tcp://127.0.0.1:5556',
-    state: 'warning',
-    detail: 'reservation overlay active',
-  },
-  {
-    label: 'LogIngest',
-    url: 'tcp://127.0.0.1:5557',
-    state: 'idle',
-    detail: 'no rejected batches',
-  },
-]
-
-const workers: WorkerSnapshot[] = [
-  {
-    id: 'simpleWorker_1',
-    role: 'command executor',
-    state: 'healthy',
-    capacity: 4,
-    running: 2,
-    queued: 1,
-    cpuLoad: 0.38,
-    memoryLoad: 0.42,
-    heartbeat: '4s ago',
-  },
-  {
-    id: 'simpleWorker_2',
-    role: 'capacity reserve',
-    state: 'healthy',
-    capacity: 3,
-    running: 1,
-    queued: 0,
-    cpuLoad: 0.22,
-    memoryLoad: 0.31,
-    heartbeat: '7s ago',
-  },
-  {
-    id: 'batchWorker_a',
-    role: 'retry lane',
-    state: 'warning',
-    capacity: 2,
-    running: 2,
-    queued: 2,
-    cpuLoad: 0.71,
-    memoryLoad: 0.64,
-    heartbeat: '19s ago',
-  },
-]
-
-const queues: QueueSnapshot[] = [
-  {
-    name: 'broker.frontend.handoff',
-    currentDepth: 2,
-    highWater: 12,
-    threshold: 128,
-    state: 'healthy',
-    detail: 'client ACKs are current',
-  },
-  {
-    name: 'taskProcessor.notify',
-    currentDepth: 8,
-    highWater: 31,
-    threshold: 128,
-    state: 'healthy',
-    detail: 'wake hints draining',
-  },
-  {
-    name: 'worker.status.reports',
-    currentDepth: 44,
-    highWater: 96,
-    threshold: 100,
-    state: 'warning',
-    detail: 'approaching warning threshold',
-  },
-  {
-    name: 'reservation.overlay',
-    currentDepth: 3,
-    highWater: 5,
-    threshold: 12,
-    state: 'idle',
-    detail: 'slots held between heartbeats',
-  },
-]
-
-const logs: LogEntry[] = [
-  {
-    time: '12:34:19',
-    source: 'broker',
-    message: 'Accepted task request and assigned UUID before scheduling.',
-    state: 'healthy',
-  },
-  {
-    time: '12:34:23',
-    source: 'processor',
-    message: 'Overlayed capacity reservations onto scheduler snapshot.',
-    state: 'healthy',
-  },
-  {
-    time: '12:34:29',
-    source: 'worker.status',
-    message: 'Status queue depth crossed 80% of warning threshold.',
-    state: 'warning',
-  },
-  {
-    time: '12:34:34',
-    source: 'log-ingest',
-    message: 'No rejected batches; retry journal remains quiet.',
-    state: 'idle',
-  },
-]
-
-const statusNotes: StatusNote[] = [
-  {
-    title: 'Runtime mode',
-    body: 'Static preview using representative TaskSchedule fields. Future wiring should stay read-only.',
-    stat: 'sample',
-    state: 'idle',
-  },
-  {
-    title: 'Queue posture',
-    body: 'No-drop task/status handoff queues surface depth and overload status rather than applying backpressure.',
-    stat: 'observed',
-    state: 'healthy',
-  },
-  {
-    title: 'Operator cue',
-    body: 'A single warning accent calls out queues nearing thresholds without changing backend behavior.',
-    stat: 'warn',
-    state: 'warning',
-  },
-]
+import { DEFAULT_DASHBOARD_POLL_INTERVAL_MS, loadDashboardData, type DashboardDataResult } from './dashboardData'
+import { SAMPLE_DASHBOARD_API_SNAPSHOT } from './sampleData'
+import {
+  buildDashboardViewModel,
+  type DashboardViewModel,
+  type EndpointStatus,
+  type Health,
+  type LogEntry,
+  type QueueSnapshot,
+  type StatusNote,
+  type WorkerSnapshot,
+} from './viewModel'
 
 const escapeHtml = (value: string): string =>
   value.replace(/[&<>'"]/g, (character) => {
@@ -203,7 +25,7 @@ const escapeHtml = (value: string): string =>
     return entities[character] ?? character
   })
 
-const percentage = (value: number): string => `${Math.round(value * 100)}%`
+const percentage = (value: number): string => `${Math.round(Math.max(0, Math.min(value, 1)) * 100)}%`
 
 const statusLabel = (state: Health): string => {
   switch (state) {
@@ -247,8 +69,8 @@ const renderMeter = (label: string, value: number): string => `
 `
 
 const renderWorker = (worker: WorkerSnapshot): string => {
-  const activeSlots = worker.running + worker.queued
-  const capacityRatio = Math.min(activeSlots / worker.capacity, 1)
+  const activeSlots = worker.running + worker.queued + worker.reserved
+  const capacityRatio = worker.capacity > 0 ? Math.min(activeSlots / worker.capacity, 1) : 0
 
   return `
     <article class="worker-card worker-card--${worker.state}">
@@ -259,14 +81,18 @@ const renderWorker = (worker: WorkerSnapshot): string => {
         </div>
         ${renderPill(worker.state)}
       </div>
-      <div class="metric-grid">
+      <div class="metric-grid metric-grid--workers">
         <div>
           <span>Running</span>
           <strong>${worker.running}</strong>
         </div>
         <div>
-          <span>Queued</span>
+          <span>Waiting</span>
           <strong>${worker.queued}</strong>
+        </div>
+        <div>
+          <span>Reserved</span>
+          <strong>${worker.reserved}</strong>
         </div>
         <div>
           <span>Capacity</span>
@@ -276,13 +102,14 @@ const renderWorker = (worker: WorkerSnapshot): string => {
       ${renderMeter('Slot pressure', capacityRatio)}
       ${renderMeter('CPU load', worker.cpuLoad)}
       ${renderMeter('Memory load', worker.memoryLoad)}
-      <footer>Last heartbeat ${escapeHtml(worker.heartbeat)}</footer>
+      <footer>${worker.assigned} broker tasks · Last heartbeat ${escapeHtml(worker.heartbeat)}</footer>
     </article>
   `
 }
 
 const renderQueue = (queue: QueueSnapshot): string => {
-  const depthRatio = Math.min(queue.currentDepth / queue.threshold, 1)
+  const depthRatio = queue.threshold > 0 ? Math.min(queue.currentDepth / queue.threshold, 1) : 0
+  const thresholdLabel = queue.threshold > 0 ? 'Warning threshold' : 'Depth baseline unavailable'
 
   return `
     <article class="queue-card queue-card--${queue.state}">
@@ -296,7 +123,7 @@ const renderQueue = (queue: QueueSnapshot): string => {
         <strong>${queue.highWater}</strong>
         <span>high water</span>
       </div>
-      ${renderMeter('Warning threshold', depthRatio)}
+      ${renderMeter(thresholdLabel, depthRatio)}
       <p>${escapeHtml(queue.detail)}</p>
     </article>
   `
@@ -318,81 +145,140 @@ const renderStatusNote = (note: StatusNote): string => `
   </article>
 `
 
-const app = document.querySelector<HTMLDivElement>('#app')
+const renderStatusBanner = (viewModel: DashboardViewModel, isRefreshing: boolean): string => `
+  <section class="status-banner status-banner--${viewModel.statusState}" aria-live="polite">
+    <div>
+      ${renderPill(viewModel.statusState, viewModel.statusLabel)}
+      <strong>${isRefreshing ? 'Refreshing read-only endpoints' : 'Dashboard data source'}</strong>
+    </div>
+    <p>${escapeHtml(viewModel.statusDetail)}</p>
+  </section>
+`
 
-if (!app) {
-  throw new Error('Dashboard root element #app was not found')
-}
-
-app.innerHTML = `
+const renderDashboard = (viewModel: DashboardViewModel, isRefreshing: boolean): string => `
   <main class="shell">
     <header class="hero">
       <nav class="topbar" aria-label="Dashboard overview">
         <div class="brand-mark" aria-hidden="true">L</div>
         <div>
           <p class="eyebrow">Lotos / TaskSchedule</p>
-          <h1>Runtime dashboard foundation</h1>
+          <h1>Runtime dashboard</h1>
         </div>
         <div class="topbar__status">
-          ${renderPill('idle', 'Static data')}
-          <span>Build-ready Vite preview</span>
+          ${renderPill(viewModel.statusState, viewModel.statusLabel)}
+          <span>Polls every ${Math.round(DEFAULT_DASHBOARD_POLL_INTERVAL_MS / 1000)}s</span>
         </div>
       </nav>
       <section class="hero__content">
         <div>
-          <span class="eyebrow">Light operations surface</span>
-          <h2>Quiet, precise monitoring for queues, workers, reservations, and logs.</h2>
+          <span class="eyebrow">Read-only live operations surface</span>
+          <h2>Queues, workers, reservations, and LogIngest state from TaskSchedule.</h2>
         </div>
         <p>
-          This TP-056 shell uses sample data only and keeps the visual foundation independent
-          from a live broker while matching the runtime vocabulary exposed by current info endpoints.
+          The dashboard polls existing read-only HTTP endpoints and falls back to the same useful
+          sample state when a local server is unavailable. No task control or broker mutation is exposed.
         </p>
       </section>
     </header>
 
+    ${renderStatusBanner(viewModel, isRefreshing)}
+
     <section class="endpoint-strip" aria-label="Endpoint status strip">
-      ${endpoints.map(renderEndpoint).join('')}
+      ${viewModel.endpoints.map(renderEndpoint).join('')}
     </section>
 
     <section class="section-heading">
       <div>
         <span class="eyebrow">Worker fleet</span>
-        <h2>Capacity and heartbeat overview</h2>
+        <h2>Capacity, heartbeat, assignments, and reservations</h2>
       </div>
-      <p>Sample worker cards visualize configured capacity, running work, queued work, and resource load.</p>
+      <p>Worker cards combine /worker_stats capacity with /worker_tasks assignments, liveness, and broker reservation overlays.</p>
     </section>
 
     <section class="worker-grid" aria-label="Worker cards">
-      ${workers.map(renderWorker).join('')}
+      ${viewModel.workers.map(renderWorker).join('')}
     </section>
 
     <section class="dashboard-grid">
       <div>
         <section class="section-heading section-heading--compact">
           <div>
-            <span class="eyebrow">Queues & reservations</span>
+            <span class="eyebrow">Queues & overload</span>
             <h2>No-drop runtime signals</h2>
           </div>
         </section>
-        <div class="queue-grid" aria-label="Queue and reservation cards">
-          ${queues.map(renderQueue).join('')}
+        <div class="queue-grid" aria-label="Runtime queue cards">
+          ${viewModel.queues.map(renderQueue).join('')}
         </div>
       </div>
 
       <aside class="side-panel" aria-label="Log and status panels">
         <section class="panel">
           <div class="panel__header">
-            <span class="eyebrow">Recent events</span>
-            ${renderPill('healthy', 'Live-ready')}
+            <span class="eyebrow">Derived diagnostics</span>
+            ${renderPill(viewModel.mode === 'live' ? 'healthy' : 'warning', viewModel.mode === 'live' ? 'Live' : 'Sample')}
           </div>
           <ul class="log-list">
-            ${logs.map(renderLog).join('')}
+            ${viewModel.logs.map(renderLog).join('')}
           </ul>
         </section>
         <section class="note-grid">
-          ${statusNotes.map(renderStatusNote).join('')}
+          ${viewModel.statusNotes.map(renderStatusNote).join('')}
         </section>
       </aside>
     </section>
   </main>
 `
+
+const app = document.querySelector<HTMLDivElement>('#app')
+
+if (!app) {
+  throw new Error('Dashboard root element #app was not found')
+}
+
+let currentResult: DashboardDataResult | undefined
+let isRefreshing = false
+
+const renderResult = (result: DashboardDataResult, loading = false): void => {
+  const viewModel = buildDashboardViewModel(result.snapshot, {
+    mode: result.mode,
+    error: result.error,
+    isLoading: loading,
+  })
+  app.innerHTML = renderDashboard(viewModel, loading)
+}
+
+const renderInitialLoading = (): void => {
+  renderResult(
+    {
+      mode: 'offline',
+      snapshot: {
+        ...SAMPLE_DASHBOARD_API_SNAPSHOT,
+        fetchedAt: new Date().toISOString(),
+      },
+    },
+    true,
+  )
+}
+
+const refreshDashboard = async (): Promise<void> => {
+  if (isRefreshing) {
+    return
+  }
+
+  isRefreshing = true
+
+  if (currentResult) {
+    renderResult(currentResult, true)
+  } else {
+    renderInitialLoading()
+  }
+
+  const result = await loadDashboardData()
+  currentResult = result
+  isRefreshing = false
+  renderResult(result)
+}
+
+void refreshDashboard()
+window.setInterval(() => void refreshDashboard(), DEFAULT_DASHBOARD_POLL_INTERVAL_MS)

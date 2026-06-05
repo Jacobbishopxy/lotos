@@ -10,6 +10,10 @@ MDBOOK_DIR ?= docs/book/lotos
 MDBOOK_HOST ?= 0.0.0.0
 MDBOOK_PORT ?= 3004
 DASHBOARD_DIR ?= applications/dashboard
+DASHBOARD_API_TARGET ?= http://127.0.0.1:8081
+DASHBOARD_API_ROOT ?= /SimpleServer
+DASHBOARD_API_BASE ?=
+DASHBOARD_API_TIMEOUT_MS ?= 3500
 
 CI_TEST_TARGETS ?= \
 	lotos:test:test-conc-executor \
@@ -42,15 +46,15 @@ help:
 	@printf '  %-16s %s\n' 'docs-build' 'Alias for book-build.'
 	@printf '  %-16s %s\n' 'docs-serve' 'Alias for book-serve.'
 	@printf '  %-16s %s\n' 'dashboard-install' 'Install dashboard npm dependencies.'
-	@printf '  %-16s %s\n' 'dashboard-build' 'Build the dashboard Vite app.'
-	@printf '  %-16s %s\n' 'dashboard-dev' 'Run the dashboard Vite dev server.'
+	@printf '  %-16s %s\n' 'dashboard-build' 'Build the dashboard Vite app (no live server required).'
+	@printf '  %-16s %s\n' 'dashboard-dev' 'Run Vite with /SimpleServer proxied to DASHBOARD_API_TARGET.'
 	@printf '  %-16s %s\n' 'dashboard-preview' 'Preview the built dashboard locally.'
 	@printf '  %-16s %s\n' 'example-minimal' 'Run the bounded minimal scheduler preview.'
 	@printf '  %-16s %s\n' 'smoke-single' 'Run single-worker TaskSchedule smoke.'
 	@printf '  %-16s %s\n' 'smoke-multi' 'Run multi-worker/capacity TaskSchedule smoke.'
 	@printf '  %-16s %s\n' 'hie' 'Regenerate hie.yaml with gen-hie.'
 	@printf '\nmdBook defaults: MDBOOK_DIR=%s MDBOOK_HOST=%s MDBOOK_PORT=%s\n' '$(MDBOOK_DIR)' '$(MDBOOK_HOST)' '$(MDBOOK_PORT)'
-	@printf 'Dashboard default: DASHBOARD_DIR=%s\n' '$(DASHBOARD_DIR)'
+	@printf 'Dashboard defaults: DASHBOARD_DIR=%s DASHBOARD_API_TARGET=%s DASHBOARD_API_ROOT=%s DASHBOARD_API_BASE=%s DASHBOARD_API_TIMEOUT_MS=%s\n' '$(DASHBOARD_DIR)' '$(DASHBOARD_API_TARGET)' '$(DASHBOARD_API_ROOT)' '$(DASHBOARD_API_BASE)' '$(DASHBOARD_API_TIMEOUT_MS)'
 
 tree:
 	tree . --gitignore
@@ -91,13 +95,13 @@ dashboard-install:
 	npm --prefix $(DASHBOARD_DIR) install
 
 dashboard-build:
-	npm --prefix $(DASHBOARD_DIR) run build
+	VITE_TASKSCHEDULE_API_BASE="$(DASHBOARD_API_BASE)" VITE_TASKSCHEDULE_API_ROOT="$(DASHBOARD_API_ROOT)" VITE_TASKSCHEDULE_API_TIMEOUT_MS="$(DASHBOARD_API_TIMEOUT_MS)" npm --prefix $(DASHBOARD_DIR) run build
 
 dashboard-dev:
-	npm --prefix $(DASHBOARD_DIR) run dev
+	DASHBOARD_API_TARGET="$(DASHBOARD_API_TARGET)" VITE_TASKSCHEDULE_API_TARGET="$(DASHBOARD_API_TARGET)" VITE_TASKSCHEDULE_API_BASE="$(DASHBOARD_API_BASE)" VITE_TASKSCHEDULE_API_ROOT="$(DASHBOARD_API_ROOT)" VITE_TASKSCHEDULE_API_TIMEOUT_MS="$(DASHBOARD_API_TIMEOUT_MS)" npm --prefix $(DASHBOARD_DIR) run dev
 
 dashboard-preview:
-	npm --prefix $(DASHBOARD_DIR) run preview
+	VITE_TASKSCHEDULE_API_BASE="$(DASHBOARD_API_BASE)" VITE_TASKSCHEDULE_API_ROOT="$(DASHBOARD_API_ROOT)" VITE_TASKSCHEDULE_API_TIMEOUT_MS="$(DASHBOARD_API_TIMEOUT_MS)" npm --prefix $(DASHBOARD_DIR) run preview
 
 example-minimal:
 	cabal run lotos-minimal-scheduler-example:exe:mini-scheduler-preview

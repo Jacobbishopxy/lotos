@@ -4,7 +4,7 @@ Lotos is a Haskell/Cabal workspace for experimenting with a ZeroMQ-backed task l
 
 - `lotos`: a reusable library with logging, STM-backed data structures, concurrent process execution, and a ZMQ client/server/worker framework.
 - `TaskSchedule`: an example application that schedules shell-command tasks onto workers based on reported CPU and memory load.
-- `applications/dashboard`: a Vite + TypeScript dashboard foundation for a light, read-only runtime overview using static sample data.
+- `applications/dashboard`: a Vite + TypeScript dashboard for a light, read-only live runtime overview with sample/offline fallback.
 
 ## Repository layout
 
@@ -22,7 +22,7 @@ Lotos is a Haskell/Cabal workspace for experimenting with a ZeroMQ-backed task l
 │   ├── TaskSchedule.cabal
 │   ├── app/                              # ts-server, ts-worker, ts-client entry points
 │   └── src/                              # scheduler, worker, client task types
-├── applications/dashboard/               # Static light dashboard foundation (Vite + TypeScript)
+├── applications/dashboard/               # Light live-data dashboard (Vite + TypeScript)
 ├── examples/minimal-scheduler/           # Tiny public-API-only scheduler package
 ├── docs/lb_sys.drawio                    # Architecture sketch
 ├── docs/book/lotos/                      # mdBook architecture/API/runbook docs
@@ -67,14 +67,18 @@ Executables:
 
 ### `applications/dashboard`
 
-The dashboard is a static Vite + TypeScript foundation under `applications/dashboard/`. TP-056 keeps it independent of a live broker: sample data renders the intended runtime shapes for endpoint health, worker capacity, queue depth/reservations, and recent log/status panels. The visual direction is light and Linear-inspired: near-white canvas, quiet gray hierarchy, hairline borders, restrained cards, and one lavender-blue primary accent.
+The dashboard is a Vite + TypeScript app under `applications/dashboard/`. It polls the read-only TaskSchedule info API (`/SimpleServer/info`, `/worker_stats`, `/worker_tasks`, `/tasks`, and `/logs/stats`) when available, and keeps rendering useful sample/offline data when the backend is stopped. The visual direction is light and Linear-inspired: near-white canvas, quiet gray hierarchy, hairline borders, restrained cards, and one lavender-blue primary accent.
+
+For live local data, start the TaskSchedule backend first (`cabal run TaskSchedule:exe:ts-server` for the info API on `http://127.0.0.1:8081`; one or more `TaskSchedule:exe:ts-worker` processes or the `make smoke-single`/`make smoke-multi` helpers can populate runtime state). Then run the dashboard dev server. By default `make dashboard-dev` uses the Vite proxy to forward `/SimpleServer/*` to `DASHBOARD_API_TARGET=http://127.0.0.1:8081`, so the browser can fetch live data without requiring backend CORS changes.
 
 Use the root Make targets to install dependencies, build, develop, or preview the app:
 
 ```bash
 make dashboard-install
-make dashboard-build
-make dashboard-dev
+make dashboard-build                  # no live server required; sample/offline fallback remains available
+make dashboard-dev                    # proxies /SimpleServer to http://127.0.0.1:8081
+DASHBOARD_API_TARGET=http://127.0.0.1:8081 make dashboard-dev
+DASHBOARD_API_BASE=http://127.0.0.1:8081 make dashboard-build  # direct API base for same-origin/CORS-enabled previews
 make dashboard-preview
 ```
 
@@ -97,7 +101,7 @@ make ci-check
 make ci-build        # cabal build all --enable-tests
 make ci-test         # explicit bounded regression suites only
 make book-build      # mdBook only
-make dashboard-build # static dashboard Vite build
+make dashboard-build # dashboard Vite build with offline fallback
 ```
 
 Then run one of the intentional end-to-end demo smokes from the repository root after the build/test gate is green:
