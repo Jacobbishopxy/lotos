@@ -26,6 +26,10 @@ The helpers generate run-local configs/evidence under `.tmp/`, start only the se
 
 Use the [Runtime Failure Runbook](runtime-failures.md) when workers stop making progress, broker handoff queues grow, LogIngest falls behind, heartbeats go stale, capacity reservations look conservative, or smoke helpers fail. The safe default is to preserve `/info`, `/worker_stats`, `/worker_tasks`, `/logs/*`, process logs, and generated `.tmp/` smoke artifacts before restarting services. Do not recover overload by dropping task/status protocol frames, and treat LogIngest as at-least-once/idempotent rather than exactly-once.
 
+## Dashboard operations
+
+Use the [Dashboard Operations Manual](dashboard-operations.md) for the read-only visualization startup path, dashboard-specific Make targets, API root/proxy overrides, and manual browser verification. Keep deeper failure diagnosis on this runbook and the [Runtime Failure Runbook](runtime-failures.md).
+
 ## HTTP probes
 
 With default TaskSchedule config, useful endpoints include:

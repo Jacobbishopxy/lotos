@@ -14,6 +14,11 @@ DASHBOARD_API_TARGET ?= http://127.0.0.1:8081
 DASHBOARD_API_ROOT ?= /SimpleServer
 DASHBOARD_API_BASE ?=
 DASHBOARD_API_TIMEOUT_MS ?= 3500
+TASKSCHEDULE_CONFIG_DIR ?= applications/TaskSchedule/config
+TASKSCHEDULE_BROKER_CONFIG ?= $(TASKSCHEDULE_CONFIG_DIR)/broker.json
+TASKSCHEDULE_WORKER_CONFIG ?= $(TASKSCHEDULE_CONFIG_DIR)/worker.json
+TASKSCHEDULE_CLIENT_CONFIG ?= $(TASKSCHEDULE_CONFIG_DIR)/client.json
+TASKSCHEDULE_TASK_JSON ?= $(TASKSCHEDULE_CONFIG_DIR)/task-demo.json
 
 CI_TEST_TARGETS ?= \
 	lotos:test:test-conc-executor \
@@ -28,33 +33,38 @@ CI_TEST_TARGETS ?= \
 	TaskSchedule:test:test-scheduler \
 	lotos-minimal-scheduler-example:test:test-minimal-scheduler-example
 
-.PHONY: help tree clean update build ci-build ci-test ci-docs ci-check book-build book-serve docs-build docs-serve dashboard-install dashboard-build dashboard-dev dashboard-preview example-minimal smoke-single smoke-multi hie
+.PHONY: help tree clean update build ci-build ci-test ci-docs ci-check book-build book-serve docs-build docs-serve dashboard-install dashboard-build dashboard-dev dashboard-preview task-schedule-server task-schedule-broker task-schedule-worker task-schedule-submit example-minimal smoke-single smoke-multi hie
 
 help:
 	@printf '%s\n' 'Lotos Make targets:'
-	@printf '  %-16s %s\n' 'help' 'Show this help (default target).'
-	@printf '  %-16s %s\n' 'tree' 'Print repository tree using .gitignore rules.'
-	@printf '  %-16s %s\n' 'clean' 'Run cabal clean.'
-	@printf '  %-16s %s\n' 'update' 'Run cabal update.'
-	@printf '  %-16s %s\n' 'build' 'Build all workspace components.'
-	@printf '  %-16s %s\n' 'ci-build' 'Build all components with tests enabled.'
-	@printf '  %-16s %s\n' 'ci-test' 'Run bounded regression suites in CI_TEST_TARGETS.'
-	@printf '  %-16s %s\n' 'ci-docs' 'Build documentation via book-build.'
-	@printf '  %-16s %s\n' 'ci-check' 'Run ci-build, ci-test, and ci-docs.'
-	@printf '  %-16s %s\n' 'book-build' 'Build mdBook from MDBOOK_DIR.'
-	@printf '  %-16s %s\n' 'book-serve' 'Serve mdBook on MDBOOK_HOST:MDBOOK_PORT.'
-	@printf '  %-16s %s\n' 'docs-build' 'Alias for book-build.'
-	@printf '  %-16s %s\n' 'docs-serve' 'Alias for book-serve.'
-	@printf '  %-16s %s\n' 'dashboard-install' 'Install dashboard npm dependencies.'
-	@printf '  %-16s %s\n' 'dashboard-build' 'Build the dashboard Vite app (no live server required).'
-	@printf '  %-16s %s\n' 'dashboard-dev' 'Run Vite with /SimpleServer proxied to DASHBOARD_API_TARGET.'
-	@printf '  %-16s %s\n' 'dashboard-preview' 'Preview the built dashboard locally.'
-	@printf '  %-16s %s\n' 'example-minimal' 'Run the bounded minimal scheduler preview.'
-	@printf '  %-16s %s\n' 'smoke-single' 'Run single-worker TaskSchedule smoke.'
-	@printf '  %-16s %s\n' 'smoke-multi' 'Run multi-worker/capacity TaskSchedule smoke.'
-	@printf '  %-16s %s\n' 'hie' 'Regenerate hie.yaml with gen-hie.'
+	@printf '  %-24s %s\n' 'help' 'Show this help (default target).'
+	@printf '  %-24s %s\n' 'tree' 'Print repository tree using .gitignore rules.'
+	@printf '  %-24s %s\n' 'clean' 'Run cabal clean.'
+	@printf '  %-24s %s\n' 'update' 'Run cabal update.'
+	@printf '  %-24s %s\n' 'build' 'Build all workspace components.'
+	@printf '  %-24s %s\n' 'ci-build' 'Build all components with tests enabled.'
+	@printf '  %-24s %s\n' 'ci-test' 'Run bounded regression suites in CI_TEST_TARGETS.'
+	@printf '  %-24s %s\n' 'ci-docs' 'Build documentation via book-build.'
+	@printf '  %-24s %s\n' 'ci-check' 'Run ci-build, ci-test, and ci-docs.'
+	@printf '  %-24s %s\n' 'book-build' 'Build mdBook from MDBOOK_DIR.'
+	@printf '  %-24s %s\n' 'book-serve' 'Serve mdBook on MDBOOK_HOST:MDBOOK_PORT.'
+	@printf '  %-24s %s\n' 'docs-build' 'Alias for book-build.'
+	@printf '  %-24s %s\n' 'docs-serve' 'Alias for book-serve.'
+	@printf '  %-24s %s\n' 'dashboard-install' 'Install dashboard npm dependencies.'
+	@printf '  %-24s %s\n' 'dashboard-build' 'Build the dashboard Vite app (no live server required).'
+	@printf '  %-24s %s\n' 'dashboard-dev' 'Run Vite dashboard on 127.0.0.1 with DASHBOARD_API_TARGET proxy.'
+	@printf '  %-24s %s\n' 'dashboard-preview' 'Preview the built dashboard locally.'
+	@printf '  %-24s %s\n' 'task-schedule-server' 'Run long-lived TaskSchedule broker/server using TASKSCHEDULE_BROKER_CONFIG.'
+	@printf '  %-24s %s\n' 'task-schedule-broker' 'Alias for task-schedule-server.'
+	@printf '  %-24s %s\n' 'task-schedule-worker' 'Run long-lived TaskSchedule worker using TASKSCHEDULE_WORKER_CONFIG.'
+	@printf '  %-24s %s\n' 'task-schedule-submit' 'Submit TASKSCHEDULE_TASK_JSON using TASKSCHEDULE_CLIENT_CONFIG.'
+	@printf '  %-24s %s\n' 'example-minimal' 'Run the bounded minimal scheduler preview.'
+	@printf '  %-24s %s\n' 'smoke-single' 'Run single-worker TaskSchedule smoke.'
+	@printf '  %-24s %s\n' 'smoke-multi' 'Run multi-worker/capacity TaskSchedule smoke.'
+	@printf '  %-24s %s\n' 'hie' 'Regenerate hie.yaml with gen-hie.'
 	@printf '\nmdBook defaults: MDBOOK_DIR=%s MDBOOK_HOST=%s MDBOOK_PORT=%s\n' '$(MDBOOK_DIR)' '$(MDBOOK_HOST)' '$(MDBOOK_PORT)'
 	@printf 'Dashboard defaults: DASHBOARD_DIR=%s DASHBOARD_API_TARGET=%s DASHBOARD_API_ROOT=%s DASHBOARD_API_BASE=%s DASHBOARD_API_TIMEOUT_MS=%s\n' '$(DASHBOARD_DIR)' '$(DASHBOARD_API_TARGET)' '$(DASHBOARD_API_ROOT)' '$(DASHBOARD_API_BASE)' '$(DASHBOARD_API_TIMEOUT_MS)'
+	@printf 'TaskSchedule defaults: TASKSCHEDULE_BROKER_CONFIG=%s TASKSCHEDULE_WORKER_CONFIG=%s TASKSCHEDULE_CLIENT_CONFIG=%s TASKSCHEDULE_TASK_JSON=%s\n' '$(TASKSCHEDULE_BROKER_CONFIG)' '$(TASKSCHEDULE_WORKER_CONFIG)' '$(TASKSCHEDULE_CLIENT_CONFIG)' '$(TASKSCHEDULE_TASK_JSON)'
 
 tree:
 	tree . --gitignore
@@ -102,6 +112,17 @@ dashboard-dev:
 
 dashboard-preview:
 	VITE_TASKSCHEDULE_API_BASE="$(DASHBOARD_API_BASE)" VITE_TASKSCHEDULE_API_ROOT="$(DASHBOARD_API_ROOT)" VITE_TASKSCHEDULE_API_TIMEOUT_MS="$(DASHBOARD_API_TIMEOUT_MS)" npm --prefix $(DASHBOARD_DIR) run preview
+
+task-schedule-server:
+	cabal run TaskSchedule:exe:ts-server -- $(TASKSCHEDULE_BROKER_CONFIG)
+
+task-schedule-broker: task-schedule-server
+
+task-schedule-worker:
+	cabal run TaskSchedule:exe:ts-worker -- $(TASKSCHEDULE_WORKER_CONFIG)
+
+task-schedule-submit:
+	cabal run TaskSchedule:exe:ts-client -- $(TASKSCHEDULE_CLIENT_CONFIG) $(TASKSCHEDULE_TASK_JSON)
 
 example-minimal:
 	cabal run lotos-minimal-scheduler-example:exe:mini-scheduler-preview

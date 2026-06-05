@@ -1,6 +1,6 @@
 # Lotos dashboard visual foundation
 
-This dashboard is a static Vite + TypeScript foundation for visualizing Lotos and TaskSchedule runtime state. It intentionally ships with sample data only; future work can replace the sample data module with read-only calls to the broker info/log endpoints.
+This dashboard is a static Vite + TypeScript foundation for visualizing Lotos and TaskSchedule runtime state. It polls the broker's existing read-only info/log endpoints when available and falls back to sample data when a local TaskSchedule server is unavailable.
 
 ## Light theme direction
 
@@ -14,14 +14,14 @@ The UI follows a light, Linear-inspired direction rather than a dark operations 
 
 ## Dashboard patterns
 
-- **Header:** product identity, static-data badge, and build-ready messaging.
+- **Header:** product identity, live/offline badge, and build-ready messaging.
 - **Endpoint/status strip:** compact health summaries for info, worker, log, and broker endpoints.
 - **Worker cards:** capacity, heartbeat, queue, and load signals with subtle progress rails.
 - **Queue/reservation cards:** runtime queue depth, high-water marks, reservation counts, and overload state.
 - **Logs/status panels:** recent event stream plus operational notes for what the static shell will eventually connect to.
 
-## Non-goals for TP-056
+## Non-goals
 
-- No authentication, writes, task control, or live server dependency.
+- No authentication, writes, task control, or required live server dependency for build/preview.
 - No backend API changes.
 - No dark/neon-first theme.

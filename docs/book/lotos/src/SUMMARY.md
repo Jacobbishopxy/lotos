@@ -13,6 +13,7 @@
 - [EventLoop Ownership](eventloop-ownership.md)
 - [TaskSchedule](task-schedule.md)
 - [TaskSchedule Demo](task-schedule-demo.md)
+- [Dashboard Operations Manual](dashboard-operations.md)
 - [Operations Runbook](operations.md)
 - [Runtime Failure Runbook](runtime-failures.md)
 - [Compatibility Notes](compatibility.md)

@@ -36,7 +36,16 @@ Use this page as the shortest path through the Lotos docs.
    make smoke-multi
    ```
 
-3. Use [Operations Runbook](operations.md) for normal probes and [Runtime Failure Runbook](runtime-failures.md) for stuck workers, stale heartbeats, queue pressure, LogIngest issues, or capacity surprises.
+3. Use [Dashboard Operations Manual](dashboard-operations.md) for the read-only dashboard startup path:
+
+   ```bash
+   make task-schedule-server
+   make task-schedule-worker
+   make task-schedule-submit
+   make dashboard-dev
+   ```
+
+4. Use [Operations Runbook](operations.md) for normal probes and [Runtime Failure Runbook](runtime-failures.md) for stuck workers, stale heartbeats, queue pressure, LogIngest issues, or capacity surprises.
 
 ## I want to change runtime behavior safely
 

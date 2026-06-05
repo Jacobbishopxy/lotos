@@ -67,16 +67,24 @@ Executables:
 
 ### `applications/dashboard`
 
-The dashboard is a Vite + TypeScript app under `applications/dashboard/`. It polls the read-only TaskSchedule info API (`/SimpleServer/info`, `/worker_stats`, `/worker_tasks`, `/tasks`, and `/logs/stats`) when available, and keeps rendering useful sample/offline data when the backend is stopped. The visual direction is light and Linear-inspired: near-white canvas, quiet gray hierarchy, hairline borders, restrained cards, and one lavender-blue primary accent.
+The dashboard is a Vite + TypeScript app under [`applications/dashboard/`](applications/dashboard/). It polls the read-only TaskSchedule info API (`/SimpleServer/info`, `/worker_stats`, `/worker_tasks`, `/tasks`, and `/logs/stats`) when available, and keeps rendering useful sample/offline data when the backend is stopped. The visual direction is light and Linear-inspired: near-white canvas, quiet gray hierarchy, hairline borders, restrained cards, and one lavender-blue primary accent.
 
-For live local data, start the TaskSchedule backend first (`cabal run TaskSchedule:exe:ts-server` for the info API on `http://127.0.0.1:8081`; one or more `TaskSchedule:exe:ts-worker` processes or the `make smoke-single`/`make smoke-multi` helpers can populate runtime state). Then run the dashboard dev server. By default `make dashboard-dev` uses the Vite proxy to forward `/SimpleServer/*` to `DASHBOARD_API_TARGET=http://127.0.0.1:8081`, so the browser can fetch live data without requiring backend CORS changes.
+For the shortest live local path, start the TaskSchedule roles with root Make targets, then open the dashboard dev server. Run the long-lived server, worker, and dashboard commands in separate terminals:
 
-Use the root Make targets to install dependencies, build, develop, or preview the app:
+```bash
+make dashboard-install                # once, if node_modules is absent
+make task-schedule-server             # terminal 1; info API on http://127.0.0.1:8081
+make task-schedule-worker             # terminal 2; connects to the broker backend
+make task-schedule-submit             # terminal 3; optional demo task submission
+make dashboard-dev                    # terminal 4; proxies /SimpleServer to http://127.0.0.1:8081
+```
+
+The full [Dashboard Operations Manual](docs/book/lotos/src/dashboard-operations.md) documents startup order, role boundaries, read-only endpoints, overrides, troubleshooting, and manual browser verification. Use the root Make targets to install dependencies, build, develop, or preview the app:
 
 ```bash
 make dashboard-install
 make dashboard-build                  # no live server required; sample/offline fallback remains available
-make dashboard-dev                    # proxies /SimpleServer to http://127.0.0.1:8081
+make dashboard-dev                    # proxies /SimpleServer to DASHBOARD_API_TARGET
 DASHBOARD_API_TARGET=http://127.0.0.1:8081 make dashboard-dev
 DASHBOARD_API_BASE=http://127.0.0.1:8081 make dashboard-build  # direct API base for same-origin/CORS-enabled previews
 make dashboard-preview
@@ -117,13 +125,13 @@ For a manual single-machine demo, start the server and worker in separate termin
 mkdir -p logs .tmp
 
 # Terminal 1
-cabal run TaskSchedule:exe:ts-server -- applications/TaskSchedule/config/broker.json
+make task-schedule-server
 
 # Terminal 2
-cabal run TaskSchedule:exe:ts-worker -- applications/TaskSchedule/config/worker.json
+make task-schedule-worker
 
 # Terminal 3
-cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json applications/TaskSchedule/config/task-demo.json
+make task-schedule-submit
 sleep 5
 cat .tmp/task-schedule-demo.out
 ```
@@ -151,7 +159,7 @@ make book-serve
 make book-serve MDBOOK_HOST=0.0.0.0 MDBOOK_PORT=3004 MDBOOK_DIR=docs/book/lotos
 ```
 
-The book source is under [`docs/book/lotos`](docs/book/lotos/src/SUMMARY.md). New readers should start with [Start Here](docs/book/lotos/src/start-here.md). Use the [Runtime Failure Runbook](docs/book/lotos/src/runtime-failures.md) when diagnosing stuck workers, LogIngest backlog, broker overload, stale heartbeats, capacity-reservation surprises, or smoke failures. Generated HTML is written to `docs/book/lotos/book/` by mdBook and should not be committed.
+The book source is under [`docs/book/lotos`](docs/book/lotos/src/SUMMARY.md). New readers should start with [Start Here](docs/book/lotos/src/start-here.md). Use the [Dashboard Operations Manual](docs/book/lotos/src/dashboard-operations.md) for the read-only dashboard path and the [Runtime Failure Runbook](docs/book/lotos/src/runtime-failures.md) when diagnosing stuck workers, LogIngest backlog, broker overload, stale heartbeats, capacity-reservation surprises, or smoke failures. Generated HTML is written to `docs/book/lotos/book/` by mdBook and should not be committed.
 
 ## Architecture overview
 
@@ -276,25 +284,25 @@ Default addresses:
 - logs: `./logs/taskScheduleServer.log`, `./logs/taskScheduleWorker.log`, and `./logs/taskScheduleClient.log`
 - worker stale timeout: `taskProcessor.workerStaleTimeoutSec = 60` seconds in the checked-in broker config; keep it above `workerStatusReportIntervalSec` for healthy workers.
 
-Start the server with defaults, or pass `applications/TaskSchedule/config/broker.json` to make the defaults explicit:
+Start the server with defaults, or use the root Make target to pass `applications/TaskSchedule/config/broker.json` explicitly:
 
 ```bash
 cabal run TaskSchedule:exe:ts-server
-cabal run TaskSchedule:exe:ts-server -- applications/TaskSchedule/config/broker.json
+make task-schedule-server
 ```
 
-Start a worker in another terminal with defaults, or pass `applications/TaskSchedule/config/worker.json`:
+Start a worker in another terminal with defaults, or use the root Make target to pass `applications/TaskSchedule/config/worker.json`:
 
 ```bash
 cabal run TaskSchedule:exe:ts-worker
-cabal run TaskSchedule:exe:ts-worker -- applications/TaskSchedule/config/worker.json
+make task-schedule-worker
 ```
 
-Submit a task JSON with the client. A client config can be supplied as the first argument when overriding the frontend address or `reqTimeoutSec`; if no ACK arrives before that timeout, `ts-client` exits non-zero with a no-ACK message:
+Submit a task JSON with the client. A client config can be supplied as the first argument when overriding the frontend address or `reqTimeoutSec`; if no ACK arrives before that timeout, `ts-client` exits non-zero with a no-ACK message. The root Make target passes the checked-in client config and sample task:
 
 ```bash
 cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/task-demo.json
-cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json applications/TaskSchedule/config/task-demo.json
+make task-schedule-submit
 ```
 
 For repeatable local smoke runs, compile all packages and test targets first, then run the desired helper from the repository root:
