@@ -53,8 +53,11 @@ Use `curl --noproxy '*'` for loopback probes in proxy-enabled environments.
 - `highWaterDepth` — highest observed depth since process start.
 - `totalEnqueued` / `totalDrained` — monotonic counters for diagnosis.
 - `warningThreshold` — depth that starts bounded WARN logging.
+- `overloadStatus` — derived operator state: `unconfigured`, `nominal`, `recovered`, `warning`, or `critical`.
 
-These metrics are observability only: task/status handoff queues stay intentionally unbounded and non-dropping. Treat rising `currentDepth` or repeatedly increasing `highWaterDepth` as overload evidence, then inspect worker capacity, scheduler throughput, and downstream task execution time. The smoke scripts only require the fields and queue names to be present; they do not require a nonzero backlog.
+`overloadStatus` is derived from the same counters; it is not backpressure. `warning` means the current depth is at or above `warningThreshold`, `critical` means current depth is at least twice that threshold, and `recovered` means the queue is currently below threshold but previously crossed it via `highWaterDepth`. Compare repeated snapshots of `currentDepth`, `highWaterDepth`, and `totalEnqueued - totalDrained` before choosing a response.
+
+These metrics are observability only: task/status handoff queues stay intentionally unbounded and non-dropping. Treat active `warning`/`critical` or repeatedly increasing `highWaterDepth` as overload evidence, then inspect worker capacity, scheduler throughput, and downstream task execution time. The smoke scripts only require the fields and queue names to be present; they do not require a nonzero backlog.
 
 `/logs/stats` remains LogIngest-specific rejected/drop/sequence accounting and is intentionally separate from `/info.runtimeQueueStats`; do not interpret it as task/status queue loss or runtime queue depth.
 

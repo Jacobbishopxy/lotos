@@ -105,5 +105,5 @@ Use the [Runtime Failure Runbook](runtime-failures.md) for operator recovery ste
 - ACK timeout: verify frontend/backend addresses and REQ/ROUTER frame preservation.
 - Missing worker stats: verify worker backend address, worker routing id, and heartbeat interval versus stale timeout.
 - Missing logs: verify LogIngest endpoint alignment and journal isolation for the run; `/logs/stats` reports LogIngest drop/reject/sequence accounting, not task/status queue depth.
-- Missing runtime stats: inspect `/SimpleServer/info` for `runtimeQueueStats` entries with `currentDepth`, `highWaterDepth`, `totalEnqueued`, and `totalDrained` fields.
+- Missing runtime stats: inspect `/SimpleServer/info` for `runtimeQueueStats` entries with `currentDepth`, `highWaterDepth`, `totalEnqueued`, `totalDrained`, `warningThreshold`, and `overloadStatus` fields.
 - Capacity surprises: verify `processingTaskNum`, `waitingTaskNum`, `taskCapacity`, and broker reservations in worker status/worker-task snapshots.

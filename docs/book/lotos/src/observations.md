@@ -13,7 +13,7 @@ The recent TP-032 through TP-041 work moved long-running broker and worker socke
 
 - **Task IDs are broker-owned.** Clients may submit tasks with `taskID = null`; the broker fills UUIDs before scheduling or worker execution.
 - **Frame order is the wire contract.** `ToZmq` and `FromZmq` instances decode multipart messages positionally. Any frame-order change must update both peers and bounded frame tests.
-- **Task/status queues preserve no-drop semantics.** EventLoop callbacks hand off complete frame sets to owner-thread queues; task and status traffic should not silently drop under load. Queue depth/high-water counters and bounded WARN logs make overload visible without converting those protocol-critical queues into dropping queues.
+- **Task/status queues preserve no-drop semantics.** EventLoop callbacks hand off complete frame sets to owner-thread queues; task and status traffic should not silently drop under load. Queue depth/high-water counters, derived `overloadStatus`, and bounded WARN logs make overload visible without converting those protocol-critical queues into dropping queues.
 - **Logging is at-least-once.** Worker log batches retry until the broker LogIngest service ACKs accepted records. Deduplication makes retries idempotent, but the project does not claim exactly-once delivery.
 - **Capacity is heartbeat based.** TaskSchedule reports configured worker capacity in status payloads; schedulers should treat this as a snapshot that can lag rapid assignment/execution changes.
 

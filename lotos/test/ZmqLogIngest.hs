@@ -312,7 +312,9 @@ logIngestStatsRemainDistinctFromHandoffQueueStats = withJournal $ \journalPath -
       handoffStatsJson = LBS.unpack $ Aeson.encode handoffStats
   assertBool "LogIngest stats keep rejected/drop accounting" ("\"rejectedEvents\"" `isInfixOf` logStatsJson && "\"droppedEvents\"" `isInfixOf` logStatsJson)
   assertBool "LogIngest stats do not expose no-drop queue depth" (not $ "\"currentDepth\"" `isInfixOf` logStatsJson)
+  assertBool "LogIngest stats do not expose overload status" (not $ "\"overloadStatus\"" `isInfixOf` logStatsJson)
   assertBool "handoff stats expose no-drop queue depth" ("\"currentDepth\":1" `isInfixOf` handoffStatsJson)
+  assertBool "handoff stats expose overload status" ("\"overloadStatus\":\"warning\"" `isInfixOf` handoffStatsJson)
   assertBool "handoff stats do not expose LogIngest rejection/drop counters" (not $ "\"rejectedEvents\"" `isInfixOf` handoffStatsJson || "\"droppedEvents\"" `isInfixOf` handoffStatsJson)
 
 routerLoopReceivesBatchPersistsAndAcks :: Assertion

@@ -505,6 +505,33 @@ workerBackendStatsAwareEnqueuePreservesOrderWakeAndMetrics = do
   hqsTotalEnqueued drainedStats @?= 2
   hqsTotalDrained drainedStats @?= 2
 
+handoffQueueOverloadStatusClassifiesDepthAndSerializes :: Assertion
+handoffQueueOverloadStatusClassifiesDepthAndSerializes = do
+  taskQueueStats <- newHandoffQueueStats "overload-classifier-test" 2
+  initialStats <- readHandoffQueueStats taskQueueStats
+  classifyHandoffQueueStats initialStats @?= HandoffQueueOverloadNominal
+
+  recordHandoffEnqueue taskQueueStats
+  belowThresholdStats <- readHandoffQueueStats taskQueueStats
+  classifyHandoffQueueStats belowThresholdStats @?= HandoffQueueOverloadNominal
+
+  recordHandoffEnqueue taskQueueStats
+  warningStats <- readHandoffQueueStats taskQueueStats
+  classifyHandoffQueueStats warningStats @?= HandoffQueueOverloadWarning
+
+  recordHandoffEnqueueN 2 taskQueueStats
+  criticalStats <- readHandoffQueueStats taskQueueStats
+  classifyHandoffQueueStats criticalStats @?= HandoffQueueOverloadCritical
+
+  recordHandoffDrain 4 taskQueueStats
+  recoveredStats <- readHandoffQueueStats taskQueueStats
+  classifyHandoffQueueStats recoveredStats @?= HandoffQueueOverloadRecovered
+
+  disabledStatsVar <- newHandoffQueueStats "overload-classifier-disabled-test" 0
+  recordHandoffEnqueueN 10 disabledStatsVar
+  disabledStats <- readHandoffQueueStats disabledStatsVar
+  classifyHandoffQueueStats disabledStats @?= HandoffQueueOverloadUnconfigured
+
 workerBackendEventLoopStoppedSendReturnsError :: Assertion
 workerBackendEventLoopStoppedSendReturnsError =
   runZmqContextIO do
@@ -793,6 +820,7 @@ tests =
       TestLabel "worker backend drain alternates status and backend queues" (TestCase workerBackendDrainAlternatesStatusAndBackendQueues),
       TestLabel "worker backend enqueue notifies after task is queued" (TestCase workerBackendEnqueueNotifiesAfterTaskIsQueued),
       TestLabel "worker backend stats-aware enqueue preserves order, wake, and metrics" (TestCase workerBackendStatsAwareEnqueuePreservesOrderWakeAndMetrics),
+      TestLabel "handoff queue overload status classifies depth and serializes" (TestCase handoffQueueOverloadStatusClassifiesDepthAndSerializes),
       TestLabel "handoff queue stats concurrent enqueue/drain does not drift" (TestCase handoffQueueStatsConcurrentEnqueueDrainDoesNotDrift),
       TestLabel "worker backend EventLoop stopped send returns error" (TestCase workerBackendEventLoopStoppedSendReturnsError),
       TestLabel "worker task-status callback returns after backend stopped" (TestCase workerTaskStatusCallbackReturnsAfterBackendStopped),

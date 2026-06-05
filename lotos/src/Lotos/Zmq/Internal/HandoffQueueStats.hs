@@ -1,11 +1,15 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Lotos.Zmq.Internal.HandoffQueueStats
   ( HandoffQueueStats (..),
+    HandoffQueueOverloadStatus (..),
     HandoffQueueStatsVar,
     HandoffQueueRegistry,
     newHandoffQueueStats,
     readHandoffQueueStats,
+    classifyHandoffQueueStats,
     recordHandoffEnqueue,
     recordHandoffEnqueueN,
     recordHandoffDrain,
@@ -35,15 +39,27 @@ data HandoffQueueStats = HandoffQueueStats
   }
   deriving (Show, Eq)
 
+data HandoffQueueOverloadStatus
+  = HandoffQueueOverloadUnconfigured
+  | HandoffQueueOverloadNominal
+  | HandoffQueueOverloadRecovered
+  | HandoffQueueOverloadWarning
+  | HandoffQueueOverloadCritical
+  deriving (Show, Eq)
+
+instance Aeson.ToJSON HandoffQueueOverloadStatus where
+  toJSON = Aeson.String . handoffQueueOverloadStatusText
+
 instance Aeson.ToJSON HandoffQueueStats where
-  toJSON HandoffQueueStats {..} =
+  toJSON stats@HandoffQueueStats {..} =
     Aeson.object
       [ "name" .= hqsName,
         "currentDepth" .= hqsCurrentDepth,
         "highWaterDepth" .= hqsHighWaterDepth,
         "totalEnqueued" .= hqsTotalEnqueued,
         "totalDrained" .= hqsTotalDrained,
-        "warningThreshold" .= hqsWarningThreshold
+        "warningThreshold" .= hqsWarningThreshold,
+        "overloadStatus" .= classifyHandoffQueueStats stats
       ]
 
 data HandoffQueueState = HandoffQueueState
@@ -77,6 +93,22 @@ newHandoffQueueStats hqsName warningThreshold =
 readHandoffQueueStats :: HandoffQueueStatsVar -> IO HandoffQueueStats
 readHandoffQueueStats (HandoffQueueStatsVar stateVar) =
   hqsSnapshot <$> readTVarIO stateVar
+
+classifyHandoffQueueStats :: HandoffQueueStats -> HandoffQueueOverloadStatus
+classifyHandoffQueueStats HandoffQueueStats {..}
+  | hqsWarningThreshold <= 0 = HandoffQueueOverloadUnconfigured
+  | hqsCurrentDepth >= hqsWarningThreshold * 2 = HandoffQueueOverloadCritical
+  | hqsCurrentDepth >= hqsWarningThreshold = HandoffQueueOverloadWarning
+  | hqsHighWaterDepth >= hqsWarningThreshold = HandoffQueueOverloadRecovered
+  | otherwise = HandoffQueueOverloadNominal
+
+handoffQueueOverloadStatusText :: HandoffQueueOverloadStatus -> Text
+handoffQueueOverloadStatusText = \case
+  HandoffQueueOverloadUnconfigured -> "unconfigured"
+  HandoffQueueOverloadNominal -> "nominal"
+  HandoffQueueOverloadRecovered -> "recovered"
+  HandoffQueueOverloadWarning -> "warning"
+  HandoffQueueOverloadCritical -> "critical"
 
 recordHandoffEnqueue :: HandoffQueueStatsVar -> IO ()
 recordHandoffEnqueue statsVar = atomically $ recordHandoffEnqueueSTM statsVar

@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-06-05
 **Status:** Active
-**Next Task ID:** TP-055
+**Next Task ID:** TP-056
 
 ---
 
@@ -35,6 +35,7 @@ and `MDBOOK_PORT` when needed.
 
 _Items discovered during task execution are logged here by agents._
 
+- [ ] **Configurable runtime handoff warning thresholds** — TP-055 added derived overload status and runbook response guidance, but broker socket-layer and worker handoff queues still use code-level default warning thresholds. Future production tuning could expose those thresholds in config without changing no-drop task/status semantics. (discovered during TP-055)
 - [ ] **Package/runtime polish roadmap TP-052 through TP-056** — Planned next batch: TP-052 handles package/release metadata and cabal check polish; TP-053 refines reservation reconciliation precision; TP-054 writes explicit protocol versioning guidance; TP-055 adds production overload response support around runtime queue stats; TP-056 adds a minimal external scheduler example using public API only.
 - [x] **Release-readiness roadmap TP-047 through TP-051** — Planned next trust batch: TP-047 hardens deterministic TaskSchedule smoke evidence; TP-048 adds golden protocol frame fixtures; TP-049 adds CI-safe verification targets; TP-050 polishes first-user README/public API guidance; TP-051 writes the runtime failure runbook.
 - [x] **Follow-up roadmap TP-042 through TP-046** — Planned after the monad/EventLoop/capacity work: TP-042 adds an mdBook architecture/API/observations runbook plus `Makefile` build/serve commands; TP-043 adds overload observability for no-drop EventLoop handoff queues; TP-044 adds broker-side capacity reservations between heartbeats; TP-045 cleans up legacy logging compatibility names; TP-046 codifies protocol compatibility/versioning policy and tests.

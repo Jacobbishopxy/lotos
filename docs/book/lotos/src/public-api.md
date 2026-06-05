@@ -65,7 +65,7 @@ instance StatusReporter MyWorker MyStatus where
     pure (worker, status)
 ```
 
-`StatusReporterAPI.srReportInfo` exposes framework-maintained processing, waiting, and configured capacity counts. Include these in your payload if scheduler decisions depend on them.
+`StatusReporterAPI.srReportInfo` exposes framework-maintained processing, waiting, and configured capacity counts. Include these in your payload if scheduler decisions depend on them. `StatusReporterAPI.srHandoffQueueStats` exposes worker-side no-drop handoff queue snapshots; use `classifyHandoffQueueStats` or the JSON `overloadStatus` field when surfacing operator diagnostics, but do not treat these observability signals as task/status frame drops or automatic backpressure.
 
 ## Logging configuration compatibility
 

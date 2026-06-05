@@ -23,7 +23,7 @@ Collect the smallest evidence set that distinguishes scheduler delay, worker los
 | Evidence source | What it proves | Useful fields or observations |
 | --- | --- | --- |
 | `/SimpleServer/info` | Read-only scheduler snapshot: queued tasks, failed/retry queue payloads, garbage tasks, per-worker task assignment, worker status, and runtime handoff queue stats. | `tasksInQueue`, `tasksInFailedQueue`, `tasksInGarbageBin`, `workerTasksMap`, `workerStatusMap`, `runtimeQueueStats`. |
-| `/SimpleServer/info.runtimeQueueStats` | Broker and worker handoff pressure for no-drop task/status paths. | Queue `name`, `currentDepth`, `highWaterDepth`, `totalEnqueued`, `totalDrained`, `warningThreshold`. Rising depth is overload evidence, not proof of dropped task/status frames. |
+| `/SimpleServer/info.runtimeQueueStats` | Broker and worker handoff pressure for no-drop task/status paths. | Queue `name`, `currentDepth`, `highWaterDepth`, `totalEnqueued`, `totalDrained`, `warningThreshold`, and derived `overloadStatus`. Rising depth is overload evidence, not proof of dropped task/status frames. |
 | `/SimpleServer/tasks` | Queued and retryable task state without the rest of `/info`. | Response type `TaskQueues`, with `queued` and `running` fields as exposed by the current API. |
 | `/SimpleServer/worker_tasks` | Broker-known tasks currently assigned to each worker. | Response type `WorkerTasks`, keyed by worker routing id. Compare with worker logs and task side effects. |
 | `/SimpleServer/worker_stats` | Latest heartbeat/status payloads per worker. | TaskSchedule status fields include `processingTaskNum`, `waitingTaskNum`, and `taskCapacity`; absence or stale values indicate heartbeat/liveness problems. |
@@ -83,17 +83,23 @@ Do not invent recovery evidence that the runtime does not currently expose. When
 
 ### Broker overload and handoff queue growth
 
-1. Inspect `runtimeQueueStats` from `/info` and identify which queue name has a rising `currentDepth` or repeatedly increasing `highWaterDepth`:
+1. Inspect `runtimeQueueStats` from `/info` and identify which queue name has a rising `currentDepth`, repeatedly increasing `highWaterDepth`, or active `overloadStatus`:
    ```bash
    curl --noproxy '*' http://127.0.0.1:8081/SimpleServer/info | jq '.runtimeQueueStats'
    ```
-2. Treat task/status handoff queues as protocol-critical no-drop queues. Do not recover overload by dropping task, status, heartbeat, or ACK frames. The safe response is to reduce ingress, increase worker/scheduler capacity, or fix the slow consumer.
-3. Compare `totalEnqueued` and `totalDrained` over time. If both increase but depth remains high, the owner thread is draining too slowly for incoming load. If enqueued rises while drained stalls, inspect the owner thread logs for exceptions or a blocked downstream operation.
-4. Correlate queue pressure with `/tasks`, `/worker_stats`, and `/worker_tasks`:
+2. Classify the response from the status and counters:
+   - `nominal`: keep the snapshot as a baseline; no overload action is implied.
+   - `recovered`: the queue crossed `warningThreshold` earlier but is currently below it; compare with the next snapshot and preserve logs if high-water keeps advancing.
+   - `warning`: current depth is at or above `warningThreshold`; pause or slow new client submissions while checking worker capacity and owner-thread logs.
+   - `critical`: current depth is at least twice `warningThreshold`; treat ingress throttling, added workers, or slow-consumer remediation as urgent.
+   - `unconfigured`: no warning threshold is available; rely on raw depth/counter deltas until the deployment sets a meaningful threshold.
+3. Treat task/status handoff queues as protocol-critical no-drop queues. Do not recover overload by dropping task, status, heartbeat, or ACK frames. The safe response is to reduce ingress, increase worker/scheduler capacity, or fix the slow consumer.
+4. Compare `totalEnqueued` and `totalDrained` over time. If both increase but depth remains high, the owner thread is draining too slowly for incoming load. If enqueued rises while drained stalls, inspect the owner thread logs for exceptions or a blocked downstream operation.
+5. Correlate queue pressure with `/tasks`, `/worker_stats`, and `/worker_tasks`:
    - many queued tasks plus idle worker capacity points at scheduler/backend dispatch problems;
    - full worker capacity plus long task logs points at downstream task execution;
    - growing status/heartbeat handoff pressure points at a broker-side status processing bottleneck.
-5. Remediate by pausing new client submissions, adding workers, shortening expensive task commands, or widening scheduler/task-processor throughput only after measuring the slow path. Keep logs and snapshots for follow-up capacity planning.
+6. Remediate by pausing new client submissions, adding workers, shortening expensive task commands, or widening scheduler/task-processor throughput only after measuring the slow path. Keep logs and snapshots for follow-up capacity planning.
 
 ### Capacity reservation underutilization
 

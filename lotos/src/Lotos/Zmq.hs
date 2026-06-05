@@ -104,6 +104,8 @@ module Lotos.Zmq
     LogIngestConfig (..),
     TaskSchedulerData (..),
     HandoffQueueStats (..),
+    HandoffQueueOverloadStatus (..),
+    classifyHandoffQueueStats,
     defaultLogIngestConfig,
     defaultReliableLogIngestAddr,
 
