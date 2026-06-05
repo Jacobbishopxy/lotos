@@ -125,6 +125,9 @@ mixedWorkerConfigJson =
   \  \"workerLogging\": {\"logIngestSocketHWM\": 17}\
   \}"
 
+-- Keep legacy and reliable log fixtures exact: counted tails must reject
+-- surplus frames unless a future migration introduces an explicit versioned
+-- payload with separate fixtures.
 workerLoggingFramesRemainCompatible :: Assertion
 workerLoggingFramesRemainCompatible = do
   task <- fillTaskID' (defaultTask :: Task ())

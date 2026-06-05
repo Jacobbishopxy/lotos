@@ -293,7 +293,7 @@ The `/info` response is intentionally a lightweight scheduler snapshot; worker l
 
 ## Protocol and verification invariants
 
-- `ToZmq` and `FromZmq` instances define positional multipart wire formats. Treat them as a stable wire ABI: compatible changes append payload frames at the tail, keep old-frame decoder fallbacks, and update bounded frame tests; route/envelope/discriminator changes require an explicit protocol migration. The mdBook [Protocol Compatibility and Versioning](docs/book/lotos/src/protocol-compatibility.md) chapter has the full break/version-tag policy.
+- `ToZmq` and `FromZmq` instances define positional multipart wire formats. Treat them as a stable wire ABI: compatible changes append payload frames at the tail, keep old-frame decoder fallbacks, and update bounded frame tests; route/envelope/discriminator changes require an explicit protocol migration using a new discriminator, endpoint, or versioned payload. The mdBook [Protocol Compatibility and Versioning](docs/book/lotos/src/protocol-compatibility.md#versioning-decision-matrix) chapter has the full decision matrix and break/version-tag policy.
 - Client ACKs mean accepted/enqueued by the broker, not worker completion. Completion evidence comes from worker side effects, worker task/status state, logs, or smoke artifacts.
 - The broker owns UUID assignment. Client task JSON may set `taskID` to `null`, but scheduled/executing tasks must have IDs before `unsafeGetTaskID` is used.
 - Worker DEALER routing ids and reliable worker log DEALER routing ids both use `workerId`; custom configs must align client/frontend, worker/backend, and LogIngest endpoints.

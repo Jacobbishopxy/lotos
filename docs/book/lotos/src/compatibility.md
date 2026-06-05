@@ -6,7 +6,7 @@ Package dependency upper bounds are part of the first-release compatibility cont
 
 ## Protocol frames
 
-All ZeroMQ payloads use positional multipart frames. Preserve frame order for `Task`, client ACK, backend worker status/task-status, and logging frames unless a task explicitly scopes a protocol migration with tests for both peers. The full append-only policy, WorkerState example, break criteria, and version-tag guidance live in [Protocol Compatibility and Versioning](protocol-compatibility.md).
+All ZeroMQ payloads use positional multipart frames. Preserve frame order for `Task`, client ACK, backend worker status/task-status, and logging frames unless a task explicitly scopes a protocol migration with tests for both peers. The full append-only policy, WorkerState example, versioning decision matrix, break criteria, and version-tag guidance live in [Protocol Compatibility and Versioning](protocol-compatibility.md#versioning-decision-matrix).
 
 ## Worker status capacity
 

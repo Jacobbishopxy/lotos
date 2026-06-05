@@ -48,4 +48,4 @@ LogAck:   ackTimestamp workerId acceptedThrough rejectedCount rejectedMessage...
 
 ## Compatibility rule
 
-Do not change multipart frame ordering casually. If an application changes a payload frame shape, update both the `ToZmq` and `FromZmq` instances, then add bounded frame regression coverage for the new shape.
+Do not change multipart frame ordering casually. If an application changes a payload frame shape, first use the [Protocol Compatibility and Versioning](protocol-compatibility.md#versioning-decision-matrix) matrix to decide whether the change is append-only or needs a new discriminator, endpoint, or versioned payload. Then update both the `ToZmq` and `FromZmq` instances and add bounded frame regression coverage for the new shape, old fallback, or intentional rejection.

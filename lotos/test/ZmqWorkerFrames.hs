@@ -222,6 +222,9 @@ workerReportTaskStatusPayloadsRoundTrip = do
         decodedStatus @?= status
       Left err -> assertFailure $ "worker report task status did not round-trip for " <> show status <> ": " <> show err
 
+-- Keep this fixture exact: incompatible worker-route changes should add a new
+-- discriminator/versioned surface and a separate fixture, not silently broaden
+-- the existing decoder.
 exactWorkerProtocolGoldenFrames :: Assertion
 exactWorkerProtocolGoldenFrames = do
   taskId <- unwrapEither $ uuidFromBS "00000000-0000-0000-0000-000000000048"

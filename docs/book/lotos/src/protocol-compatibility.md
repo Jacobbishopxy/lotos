@@ -20,6 +20,32 @@ old WorkerState: load1 load5 load15 memTotal memUsed memAvailable processing wai
 new WorkerState: load1 load5 load15 memTotal memUsed memAvailable processing waiting taskCapacity
 ```
 
+## Versioning decision matrix
+
+Use this matrix before editing any `ToZmq` or `FromZmq` instance. The safe default is to keep the current route and append only when old peers can still decode the old prefix exactly.
+
+| Change shape | Compatibility decision | Required tests |
+|---|---|---|
+| Add an optional application field after all existing payload frames. | Keep the same route/discriminator. Append the field at the tail and keep an old-frame `FromZmq` case with a conservative default. | Exact-frame golden test for the new shape plus an old-frame fallback test. |
+| Add records to a count-delimited tail such as `LogBatch` events or `LogAck` rejected messages. | Keep the count field authoritative. Do not accept surplus frames that are not represented by the count. | Round-trip the new counted shape and keep negative/mismatched-count rejection tests. |
+| Insert, remove, reorder, or reinterpret an existing frame. | Treat as incompatible. Do not widen the existing decoder to guess both meanings. | Prove the old shape either remains accepted by an explicit fallback or fails with a bounded negative fixture. |
+| Add a new message semantic on an existing socket where peers can branch by type. | Prefer a new discriminator frame, for example alongside `WorkerStatusT` / `WorkerTaskStatusT`, so old peers reject unknown messages clearly. | Exact-frame tests for the new discriminator and negative tests that old/wrong discriminators do not decode as existing messages. |
+| Change routing, socket ownership, envelope placement, or transport lifecycle. | Prefer a new endpoint or socket path so old and new peers do not share ambiguous frames. | Peer-to-peer smoke or integration coverage plus exact envelope tests for both sides. |
+| Need old and new incompatible payload schemas to coexist on the same route/discriminator during a rolling migration. | Add an explicit versioned payload surface near the discriminator/prefix, document the supported versions, and fail closed for unknown versions. | Version-specific fixtures, old-peer rejection or fallback proof, and migration tests covering mixed-version peers. |
+
+Do not use a protocol-wide version tag for append-only additions. Add version tags only when an incompatible alternate schema must coexist with the old one and a route/discriminator/endpoint split would be more confusing than an explicit version frame.
+
+## Migration test plan
+
+Every incompatible protocol plan should state which peers can talk during rollout:
+
+1. **Old sender → new receiver:** accepted only through a named fallback, or rejected with a clear parse failure.
+2. **New sender → old receiver:** rejected before side effects unless the rollout guarantees old receivers are gone.
+3. **New sender → new receiver:** exact golden frames match the documented order.
+4. **Mixed runtime path:** if endpoints or discriminators change, run the smallest broker/client/worker or LogIngest smoke that proves routing and ACK behavior.
+
+Keep these tests bounded. They should live next to the current frame fixtures, not in long-running demo executables.
+
 ## What may not change silently
 
 Route envelopes, request-id delimiters, message-type discriminators, count fields, and existing payload prefixes are not append-only extension points. Reordering or removing any of these can make peers decode the wrong value or route replies to the wrong socket.

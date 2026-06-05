@@ -35,6 +35,9 @@ assertLeft :: String -> Either e a -> Assertion
 assertLeft _ (Left _) = pure ()
 assertLeft message (Right _) = assertFailure $ message <> "; decoded successfully"
 
+-- Keep this fixture exact: client envelope changes are migration work and
+-- should use a new route/versioned surface rather than accepting ambiguous
+-- request-id or delimiter positions.
 exactClientRequestAndAckGoldenFrames :: Assertion
 exactClientRequestAndAckGoldenFrames = do
   let task = Task Nothing "golden-client-task" 1 2 3 ()

@@ -1,8 +1,8 @@
 # General — Context
 
-**Last Updated:** 2026-06-04
+**Last Updated:** 2026-06-05
 **Status:** Active
-**Next Task ID:** TP-054
+**Next Task ID:** TP-055
 
 ---
 
@@ -57,7 +57,7 @@ _Items discovered during task execution are logged here by agents._
 - [x] **Complete reliable worker logging hardening** — TP-021 selected the DEALER/ROUTER architecture, TP-022 added the `LogEvent`/`LogBatch`/`LogAck` protocol plus `LogIngestConfig`, TP-023 added broker LogIngest state/query routes, TP-024 switched workers to a bounded reliable logging DEALER with ACK retry/drop markers, TP-025 removed the InfoStorage full-log snapshot coupling while proving TaskSchedule logs through `/logs/*`, and TP-026 added broker journal restart recovery, retention/checkpoint compaction, malformed journal accounting, and socket-level logging HWM.
 - [x] **Rename legacy logging compatibility fields/callbacks** — Resolved during TP-045 by adding preferred JSON migration names (`infoStorage.logIngestDefaultAddr`, `infoStorage.logIngestDefaultBufferSize`, explicit `workerLogging.logIngestAddr` with optional top-level `logIngestDefaultAddr` for derivation-only worker configs), keeping old JSON/Haskell fields and `taPubTaskLogging` as compatibility surfaces, documenting precedence/default rules, and covering old/new/mixed config parsing plus checked-in TaskSchedule configs.
 - [x] **Document protocol compatibility/versioning policy** — Resolved during TP-046 by codifying positional ZMQ multipart frames as a stable wire ABI, allowing compatible payload evolution only through append-only tail fields with old-frame decoder fallbacks and frame-order tests, documenting break criteria/version-tag deferral in the mdBook/README, and tightening TaskSchedule `WorkerState` tests for the current 9-frame payload plus old 8-frame fallback.
-- [ ] **Add explicit protocol versioning when incompatible ZMQ payloads must coexist** — TP-046 intentionally deferred protocol-wide version tags because current routes/discriminators and the `WorkerState` old-frame fallback cover existing compatibility needs. Future changes that cannot be append-only should introduce a new discriminator, endpoint, or versioned payload rather than widening exact decoders silently.
+- [ ] **Add explicit protocol versioning when incompatible ZMQ payloads must coexist** — TP-054 documented the decision matrix and migration test plan for choosing a new discriminator, endpoint, or versioned payload when append-only evolution is unsafe. Actual versioned wire surfaces remain future work only when an incompatible payload must coexist; do not add protocol-wide tags preemptively or widen exact decoders silently.
 - [x] **Set package dependency upper bounds** — Resolved during TP-052 by adding conservative PVP-style upper bounds to `lotos` and TaskSchedule public-library dependencies, documenting the first-release policy, and making package-local `cabal check` warning-free.
 - [ ] **Audit lower-bound/oldest-dependency support before broader package claims** — TP-052 intentionally added upper bounds only; aside from `base >=4 && <5`, oldest dependency versions have not been verified by a build/test matrix.
 - [ ] **Publish or replace the git-pinned `zmqx` dependency for public release** — TP-052 documented that `cabal.project` still consumes `zmqx` from a pinned GitHub source repository, so a public package release needs either a released artifact or explicit downstream source-access guidance.
