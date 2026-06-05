@@ -19,7 +19,7 @@ Define:
 
 `ToZmq`/`FromZmq` frame order is the wire contract. Update both peers and bounded frame tests whenever you change it. Examples:
 
-- `examples/minimal-scheduler/src/MinimalSchedulerExample.hs` — `MiniTask`, `submitMiniTask`, and `MiniWorkerStatus`, implemented through the public `Lotos.Zmq` facade only.
+- `examples/minimal-scheduler/src/MinimalSchedulerExample.hs` — `MiniTask`, `submitMiniTask`, and `MiniWorkerStatus`, implemented through the public `Lotos.Zmq` facade only; `make example-minimal` prints a bounded assignment preview.
 - `applications/TaskSchedule/src/Adt.hs` — richer `ClientTask`, `WorkerState`, and their ZMQ/JSON shapes.
 - `examples/minimal-scheduler/test/MinimalSchedulerExampleTest.hs`, `lotos/test/ZmqWorkerFrames.hs`, and `lotos/test/ZmqClientAckFrames.hs` — frame-regression test patterns at different sizes.
 
@@ -124,6 +124,7 @@ Recommended gates from the repository root follow the TP-049 CI/local profile:
 make ci-check        # cabal build all --enable-tests + explicit bounded tests + mdBook
 make ci-test         # rerun only the explicit bounded regression target list
 make book-build      # docs-only gate
+make example-minimal # bounded public-API scheduler preview
 make smoke-single    # intentional end-to-end demo after the build gate
 make smoke-multi     # intentional multi-worker/capacity smoke after the build gate
 ```

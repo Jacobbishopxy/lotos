@@ -23,26 +23,27 @@ CI_TEST_TARGETS ?= \
 	TaskSchedule:test:test-scheduler \
 	lotos-minimal-scheduler-example:test:test-minimal-scheduler-example
 
-.PHONY: help tree clean update build ci-build ci-test ci-docs ci-check book-build book-serve docs-build docs-serve smoke-single smoke-multi hie
+.PHONY: help tree clean update build ci-build ci-test ci-docs ci-check book-build book-serve docs-build docs-serve example-minimal smoke-single smoke-multi hie
 
 help:
 	@printf '%s\n' 'Lotos Make targets:'
-	@printf '  %-14s %s\n' 'help' 'Show this help (default target).'
-	@printf '  %-14s %s\n' 'tree' 'Print repository tree using .gitignore rules.'
-	@printf '  %-14s %s\n' 'clean' 'Run cabal clean.'
-	@printf '  %-14s %s\n' 'update' 'Run cabal update.'
-	@printf '  %-14s %s\n' 'build' 'Build all workspace components.'
-	@printf '  %-14s %s\n' 'ci-build' 'Build all components with tests enabled.'
-	@printf '  %-14s %s\n' 'ci-test' 'Run bounded regression suites in CI_TEST_TARGETS.'
-	@printf '  %-14s %s\n' 'ci-docs' 'Build documentation via book-build.'
-	@printf '  %-14s %s\n' 'ci-check' 'Run ci-build, ci-test, and ci-docs.'
-	@printf '  %-14s %s\n' 'book-build' 'Build mdBook from MDBOOK_DIR.'
-	@printf '  %-14s %s\n' 'book-serve' 'Serve mdBook on MDBOOK_HOST:MDBOOK_PORT.'
-	@printf '  %-14s %s\n' 'docs-build' 'Alias for book-build.'
-	@printf '  %-14s %s\n' 'docs-serve' 'Alias for book-serve.'
-	@printf '  %-14s %s\n' 'smoke-single' 'Run single-worker TaskSchedule smoke.'
-	@printf '  %-14s %s\n' 'smoke-multi' 'Run multi-worker/capacity TaskSchedule smoke.'
-	@printf '  %-14s %s\n' 'hie' 'Regenerate hie.yaml with gen-hie.'
+	@printf '  %-16s %s\n' 'help' 'Show this help (default target).'
+	@printf '  %-16s %s\n' 'tree' 'Print repository tree using .gitignore rules.'
+	@printf '  %-16s %s\n' 'clean' 'Run cabal clean.'
+	@printf '  %-16s %s\n' 'update' 'Run cabal update.'
+	@printf '  %-16s %s\n' 'build' 'Build all workspace components.'
+	@printf '  %-16s %s\n' 'ci-build' 'Build all components with tests enabled.'
+	@printf '  %-16s %s\n' 'ci-test' 'Run bounded regression suites in CI_TEST_TARGETS.'
+	@printf '  %-16s %s\n' 'ci-docs' 'Build documentation via book-build.'
+	@printf '  %-16s %s\n' 'ci-check' 'Run ci-build, ci-test, and ci-docs.'
+	@printf '  %-16s %s\n' 'book-build' 'Build mdBook from MDBOOK_DIR.'
+	@printf '  %-16s %s\n' 'book-serve' 'Serve mdBook on MDBOOK_HOST:MDBOOK_PORT.'
+	@printf '  %-16s %s\n' 'docs-build' 'Alias for book-build.'
+	@printf '  %-16s %s\n' 'docs-serve' 'Alias for book-serve.'
+	@printf '  %-16s %s\n' 'example-minimal' 'Run the bounded minimal scheduler preview.'
+	@printf '  %-16s %s\n' 'smoke-single' 'Run single-worker TaskSchedule smoke.'
+	@printf '  %-16s %s\n' 'smoke-multi' 'Run multi-worker/capacity TaskSchedule smoke.'
+	@printf '  %-16s %s\n' 'hie' 'Regenerate hie.yaml with gen-hie.'
 	@printf '\nmdBook defaults: MDBOOK_DIR=%s MDBOOK_HOST=%s MDBOOK_PORT=%s\n' '$(MDBOOK_DIR)' '$(MDBOOK_HOST)' '$(MDBOOK_PORT)'
 
 tree:
@@ -79,6 +80,9 @@ book-serve:
 docs-build: book-build
 
 docs-serve: book-serve
+
+example-minimal:
+	cabal run lotos-minimal-scheduler-example:exe:mini-scheduler-preview
 
 smoke-single:
 	scripts/task-schedule-smoke.sh

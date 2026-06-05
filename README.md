@@ -65,7 +65,7 @@ Executables:
 
 ### `examples/minimal-scheduler`
 
-`lotos-minimal-scheduler-example` is a deliberately small external-style package. It imports the public `Lotos.Zmq` facade, defines one task payload and one worker-status payload, adds a tiny `sendTaskRequest` client helper, implements `LoadBalancerAlgo`, `TaskAcceptor`, and `StatusReporter`, and ships a bounded HUnit fixture. It does not import TaskSchedule or lower-level implementation modules, so it is the quickest proof that a first user can build a custom scheduler from the public API alone.
+`lotos-minimal-scheduler-example` is a deliberately small external-style package. It imports the public `Lotos.Zmq` facade, defines one task payload and one worker-status payload, adds a tiny `sendTaskRequest` client helper, implements `LoadBalancerAlgo`, `TaskAcceptor`, and `StatusReporter`, and ships a bounded HUnit fixture plus `make example-minimal` assignment preview. It does not import TaskSchedule or lower-level implementation modules, so it is the quickest proof that a first user can build a custom scheduler from the public API alone.
 
 ## Quickstart for new adopters
 
@@ -121,7 +121,7 @@ make book-serve
 make book-serve MDBOOK_HOST=0.0.0.0 MDBOOK_PORT=3004 MDBOOK_DIR=docs/book/lotos
 ```
 
-The book source is under [`docs/book/lotos`](docs/book/lotos/src/SUMMARY.md). Start with the [Runtime Failure Runbook](docs/book/lotos/src/runtime-failures.md) when diagnosing stuck workers, LogIngest backlog, broker overload, stale heartbeats, capacity-reservation surprises, or smoke failures. Generated HTML is written to `docs/book/lotos/book/` by mdBook and should not be committed.
+The book source is under [`docs/book/lotos`](docs/book/lotos/src/SUMMARY.md). New readers should start with [Start Here](docs/book/lotos/src/start-here.md). Use the [Runtime Failure Runbook](docs/book/lotos/src/runtime-failures.md) when diagnosing stuck workers, LogIngest backlog, broker overload, stale heartbeats, capacity-reservation surprises, or smoke failures. Generated HTML is written to `docs/book/lotos/book/` by mdBook and should not be committed.
 
 ## Architecture overview
 
@@ -159,7 +159,7 @@ For a new application, import `Lotos.Zmq` and provide application payloads plus 
 5. Implement `StatusReporter` for workers. Combine `StatusReporterAPI.srReportInfo` queue/processing counts with app-specific metrics such as CPU or memory load.
 6. Keep config endpoints aligned: clients use the broker `frontendAddr`, workers use the broker `backendAddr`, and worker log DEALER sockets connect to the broker `logIngest.logIngestAddr` / worker `workerLogging.logIngestAddr`. New JSON should prefer `infoStorage.logIngestDefaultAddr` / `logIngestDefaultBufferSize` only as broker derivation hints and explicit `workerLogging.logIngestAddr` for workers; legacy `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` remain accepted for old JSON/default derivation. The current reliable logging design is documented in [`docs/logging-redesign.md`](docs/logging-redesign.md).
 
-Concrete examples live at two sizes. `examples/minimal-scheduler/src/MinimalSchedulerExample.hs` is the smallest public-API-only fixture for a custom scheduler, client submission helper, acceptor, and status reporter. The TaskSchedule demo is the full runtime example: `applications/TaskSchedule/src/Adt.hs` defines task/status payload frames, `applications/TaskSchedule/src/Server.hs` implements `LoadBalancerAlgo`, and `applications/TaskSchedule/src/Worker.hs` implements both worker typeclasses. The concise adopter checklist is [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md); the full demo runtime contract and smoke path remain in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
+Concrete examples live at two sizes. `examples/minimal-scheduler/src/MinimalSchedulerExample.hs` is the smallest public-API-only fixture for a custom scheduler, client submission helper, acceptor, and status reporter; run `make example-minimal` for a bounded assignment preview. The TaskSchedule demo is the full runtime example: `applications/TaskSchedule/src/Adt.hs` defines task/status payload frames, `applications/TaskSchedule/src/Server.hs` implements `LoadBalancerAlgo`, and `applications/TaskSchedule/src/Worker.hs` implements both worker typeclasses. The concise adopter checklist is [`docs/build-your-own-scheduler.md`](docs/build-your-own-scheduler.md); the full demo runtime contract and smoke path remain in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
 
 ## Prerequisites
 

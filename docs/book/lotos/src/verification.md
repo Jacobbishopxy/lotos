@@ -95,7 +95,7 @@ scripts/task-schedule-smoke.sh
 scripts/task-schedule-multi-worker-smoke.sh
 ```
 
-Expected evidence includes client ACKs, worker stats, current-run task side effects, `/logs/worker/<workerId>` stdout/result events, clean LogIngest-only `/logs/stats`, broker `/info.runtimeQueueStats`, and no current-run garbage entry. The multi-worker smoke also checks generated worker capacity and a reservation-safe in-flight dispatch snapshot so queued bursts do not exceed configured worker slots while heartbeats catch up.
+Expected evidence includes client ACKs, worker stats, current-run task side effects, `/logs/worker/<workerId>` stdout/result events, clean LogIngest-only `/logs/stats`, broker `/info.runtimeQueueStats`, `/info.workerLivenessMap`, `/info.workerReservationMap`, and no current-run garbage entry. The multi-worker smoke also checks generated worker capacity and a reservation-safe in-flight dispatch snapshot so queued bursts do not exceed configured worker slots while heartbeats catch up.
 
 ## Failure triage
 
@@ -105,7 +105,7 @@ Use the [Runtime Failure Runbook](runtime-failures.md) for operator recovery ste
 - CI regression failure: rerun the printed `cabal test <target>` command; `make ci-test` echoes each target before executing it.
 - Docs failure: run `make book-build` and inspect the mdBook source path reported by mdBook.
 - ACK timeout: verify frontend/backend addresses and REQ/ROUTER frame preservation.
-- Missing worker stats: verify worker backend address, worker routing id, and heartbeat interval versus stale timeout.
+- Missing worker stats: verify worker backend address, worker routing id, and heartbeat interval versus stale timeout; `/SimpleServer/info.workerLivenessMap` exposes `heartbeatAgeSec` and `staleTimeoutSec` for the latest broker-observed heartbeat.
 - Missing logs: verify LogIngest endpoint alignment and journal isolation for the run; `/logs/stats` reports LogIngest drop/reject/sequence accounting, not task/status queue depth.
-- Missing runtime stats: inspect `/SimpleServer/info` for `runtimeQueueStats` entries with `currentDepth`, `highWaterDepth`, `totalEnqueued`, `totalDrained`, `warningThreshold`, and `overloadStatus` fields.
-- Capacity surprises: verify `processingTaskNum`, `waitingTaskNum`, `taskCapacity`, and broker reservations in worker status/worker-task snapshots.
+- Missing runtime stats: inspect `/SimpleServer/info` for `runtimeQueueStats` entries with `currentDepth`, `highWaterDepth`, `totalEnqueued`, `totalDrained`, `warningThreshold`, and `overloadStatus` fields, plus `workerLivenessMap` and `workerReservationMap` when diagnosing heartbeat or capacity issues.
+- Capacity surprises: verify `processingTaskNum`, `waitingTaskNum`, `taskCapacity`, `/info.workerReservationMap`, and broker worker-task snapshots.

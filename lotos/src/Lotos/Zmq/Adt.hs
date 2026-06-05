@@ -1005,6 +1005,13 @@ data WorkerCapacityReservation = WorkerCapacityReservation
   }
   deriving (Show, Eq)
 
+instance Aeson.ToJSON WorkerCapacityReservation where
+  toJSON WorkerCapacityReservation {..} =
+    Aeson.object
+      [ "taskId" Aeson..= wcrTaskId,
+        "baselineOccupiedSlots" Aeson..= wcrBaselineOccupiedSlots
+      ]
+
 type TSWorkerReservationsMap = TSWorkerTasksMap WorkerCapacityReservation
 
 newTSWorkerReservationsMap :: IO TSWorkerReservationsMap

@@ -46,7 +46,13 @@ Use `curl --noproxy '*'` for loopback probes in proxy-enabled environments.
 
 ## Overload indicators
 
-`/SimpleServer/info` includes `runtimeQueueStats`, a small list of no-drop handoff queue snapshots. Each entry reports:
+`/SimpleServer/info` includes lightweight runtime observability beyond the raw task queues:
+
+- `workerLivenessMap` records broker-observed heartbeat freshness per worker: `lastSeen`, `staleTimeoutSec`, `heartbeatAgeSec`, and `stale`.
+- `workerReservationMap` records broker-side capacity reservations per worker: `reservedSlots` plus the reserved task ids and optional dispatch-time `baselineOccupiedSlots`.
+- `runtimeQueueStats` records no-drop handoff queue snapshots.
+
+Each `runtimeQueueStats` entry reports:
 
 - `name` — the broker queue being observed.
 - `currentDepth` — enqueue/dequeue-tracked depth at snapshot time.
@@ -57,7 +63,7 @@ Use `curl --noproxy '*'` for loopback probes in proxy-enabled environments.
 
 `overloadStatus` is derived from the same counters; it is not backpressure. `warning` means the current depth is at or above `warningThreshold`, `critical` means current depth is at least twice that threshold, and `recovered` means the queue is currently below threshold but previously crossed it via `highWaterDepth`. Compare repeated snapshots of `currentDepth`, `highWaterDepth`, and `totalEnqueued - totalDrained` before choosing a response.
 
-These metrics are observability only: task/status handoff queues stay intentionally unbounded and non-dropping. Treat active `warning`/`critical` or repeatedly increasing `highWaterDepth` as overload evidence, then inspect worker capacity, scheduler throughput, and downstream task execution time. The smoke scripts only require the fields and queue names to be present; they do not require a nonzero backlog.
+These metrics are observability only: task/status handoff queues stay intentionally unbounded and non-dropping. Treat active `warning`/`critical` or repeatedly increasing `highWaterDepth` as overload evidence, then inspect worker capacity, scheduler throughput, heartbeat freshness in `workerLivenessMap`, active reservations in `workerReservationMap`, and downstream task execution time. The smoke scripts only require the fields and queue names to be present; they do not require a nonzero backlog.
 
 `/logs/stats` remains LogIngest-specific rejected/drop/sequence accounting and is intentionally separate from `/info.runtimeQueueStats`; do not interpret it as task/status queue loss or runtime queue depth.
 

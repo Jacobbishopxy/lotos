@@ -22,7 +22,9 @@ Collect the smallest evidence set that distinguishes scheduler delay, worker los
 
 | Evidence source | What it proves | Useful fields or observations |
 | --- | --- | --- |
-| `/SimpleServer/info` | Read-only scheduler snapshot: queued tasks, failed/retry queue payloads, garbage tasks, per-worker task assignment, worker status, and runtime handoff queue stats. | `tasksInQueue`, `tasksInFailedQueue`, `tasksInGarbageBin`, `workerTasksMap`, `workerStatusMap`, `runtimeQueueStats`. |
+| `/SimpleServer/info` | Read-only scheduler snapshot: queued tasks, failed/retry queue payloads, garbage tasks, per-worker task assignment, worker status, heartbeat freshness, capacity reservations, and runtime handoff queue stats. | `tasksInQueue`, `tasksInFailedQueue`, `tasksInGarbageBin`, `workerTasksMap`, `workerStatusMap`, `workerLivenessMap`, `workerReservationMap`, `runtimeQueueStats`. |
+| `/SimpleServer/info.workerLivenessMap` | Broker-observed heartbeat freshness per worker. | `lastSeen`, `staleTimeoutSec`, `heartbeatAgeSec`, and `stale`; use this before guessing whether `/worker_stats` is fresh. |
+| `/SimpleServer/info.workerReservationMap` | Broker-side capacity reservations currently protecting assigned-but-not-yet-reflected slots. | `reservedSlots` and per-reservation `taskId` / `baselineOccupiedSlots`; compare with `/worker_stats` and `/worker_tasks` during burst dispatch. |
 | `/SimpleServer/info.runtimeQueueStats` | Broker and worker handoff pressure for no-drop task/status paths. | Queue `name`, `currentDepth`, `highWaterDepth`, `totalEnqueued`, `totalDrained`, `warningThreshold`, and derived `overloadStatus`. Rising depth is overload evidence, not proof of dropped task/status frames. |
 | `/SimpleServer/tasks` | Queued and retryable task state without the rest of `/info`. | Response type `TaskQueues`, with `queued` and `running` fields as exposed by the current API. |
 | `/SimpleServer/worker_tasks` | Broker-known tasks currently assigned to each worker. | Response type `WorkerTasks`, keyed by worker routing id. Compare with worker logs and task side effects. |
@@ -40,9 +42,8 @@ Collect the smallest evidence set that distinguishes scheduler delay, worker los
 
 Do not invent recovery evidence that the runtime does not currently expose. When these questions matter, record the limitation in the incident notes and add follow-up work rather than changing operator procedure mid-incident.
 
-- There is no dedicated heartbeat-age field in `/worker_stats`; freshness is inferred from worker presence, status changes, broker logs, and the configured `workerStaleTimeoutSec`.
 - `runtimeQueueStats` reports handoff queue depth/counters, but it does not name a causal task, worker, or scheduler decision for each enqueue.
-- Capacity reservations are broker-internal safety markers. Operators can infer their effect by comparing `/worker_stats` capacity fields with `/worker_tasks`, but there is no separate public reservations endpoint.
+- `workerReservationMap` shows active broker reservations, but it does not predict exact future scheduler decisions; compare it with worker status payloads and task duration.
 - LogIngest exposes accepted/duplicate/gap/drop/reject counters and accepted-through sequence state, not an exactly-once delivery proof.
 - Smoke helpers write generated evidence under `.tmp/`, but they are not continuous monitoring; use them for bounded reproduction and release checks.
 
@@ -57,7 +58,7 @@ Do not invent recovery evidence that the runtime does not currently expose. When
    curl --noproxy '*' http://127.0.0.1:8081/SimpleServer/worker_tasks
    curl --noproxy '*' http://127.0.0.1:8081/SimpleServer/logs/recent
    ```
-2. Identify the worker routing id from `/worker_stats` and `/worker_tasks`. Compare `processingTaskNum`, `waitingTaskNum`, and `taskCapacity` with the broker-known task list.
+2. Identify the worker routing id from `/worker_stats`, `/worker_tasks`, and `/info.workerLivenessMap`. Compare `heartbeatAgeSec`, `staleTimeoutSec`, `processingTaskNum`, `waitingTaskNum`, and `taskCapacity` with the broker-known task list.
 3. Query worker and task logs. If task logs show command output/result progress, prefer waiting or fixing the downstream command over restarting the worker.
 4. If the worker stopped reporting heartbeats, let broker stale-worker recovery run before manually resubmitting tasks. The broker removes stale worker status/task buckets and sends non-succeeded in-flight tasks through the normal retry/garbage path after `workerStaleTimeoutSec`.
 5. Restart only the affected worker process when process logs show it is wedged, disconnected, or its backend EventLoop has stopped. Do not restart the broker first unless broker probes/logs show broker-side failure; broker restart is a wider disruption and may obscure the original evidence.
@@ -95,7 +96,7 @@ Do not invent recovery evidence that the runtime does not currently expose. When
    - `unconfigured`: no warning threshold is available; rely on raw depth/counter deltas until the deployment sets a meaningful threshold.
 3. Treat task/status handoff queues as protocol-critical no-drop queues. Do not recover overload by dropping task, status, heartbeat, or ACK frames. The safe response is to reduce ingress, increase worker/scheduler capacity, or fix the slow consumer.
 4. Compare `totalEnqueued` and `totalDrained` over time. If both increase but depth remains high, the owner thread is draining too slowly for incoming load. If enqueued rises while drained stalls, inspect the owner thread logs for exceptions or a blocked downstream operation.
-5. Correlate queue pressure with `/tasks`, `/worker_stats`, and `/worker_tasks`:
+5. Correlate queue pressure with `/tasks`, `/worker_stats`, `/worker_tasks`, `/info.workerLivenessMap`, and `/info.workerReservationMap`:
    - many queued tasks plus idle worker capacity points at scheduler/backend dispatch problems;
    - full worker capacity plus long task logs points at downstream task execution;
    - growing status/heartbeat handoff pressure points at a broker-side status processing bottleneck.
@@ -105,7 +106,7 @@ Do not invent recovery evidence that the runtime does not currently expose. When
 
 TaskSchedule capacity is heartbeat-based, while the broker also keeps conservative reservations for tasks it has assigned but may not yet see reflected in the next worker status snapshot. This prevents burst over-assignment, but it can look like temporary underutilization. Non-terminal task-status frames (`TaskPending`/`TaskProcessing`) refresh only active reservations; once heartbeat reconciliation has safely accounted for an assignment and removed its reservation, a duplicate or late non-terminal status does not recreate hidden reserved capacity.
 
-1. Compare `/worker_stats` with `/worker_tasks`. If `processingTaskNum + waitingTaskNum` is below `taskCapacity` but `/worker_tasks` already shows recent assignments for that worker, reservations may be protecting those slots until a heartbeat catches up.
+1. Compare `/worker_stats`, `/worker_tasks`, and `/info.workerReservationMap`. If `processingTaskNum + waitingTaskNum` is below `taskCapacity` but `/worker_tasks` and `workerReservationMap.<worker>.reservedSlots` already show recent assignments for that worker, reservations may be protecting those slots until a heartbeat catches up.
 2. Wait at least one heartbeat/status refresh interval before declaring capacity lost, unless worker logs show the worker is down or not accepting tasks. After a heartbeat has reflected the occupied slot, later duplicate `TaskPending`/`TaskProcessing` reports should not by themselves keep that slot reserved.
 3. Use the multi-worker smoke evidence as a known-good model: capacity-1 generated workers should not receive more in-flight work than their configured slots during burst dispatch.
 4. If underutilization persists across multiple heartbeat intervals, inspect scheduler logic, worker acceptor behavior, and task execution duration. Do not manually edit broker state; restart an affected worker only when its process is unhealthy, and let stale recovery/retry handling reconcile its tasks.

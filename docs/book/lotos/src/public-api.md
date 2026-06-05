@@ -69,6 +69,8 @@ instance StatusReporter MyWorker MyStatus where
 
 `StatusReporterAPI.srReportInfo` exposes framework-maintained processing, waiting, and configured capacity counts. Include these in your payload if scheduler decisions depend on them; the minimal example's `miniStatusFromWorkerInfo` maps these counters into occupied capacity. `StatusReporterAPI.srHandoffQueueStats` exposes worker-side no-drop handoff queue snapshots; use `classifyHandoffQueueStats` or the JSON `overloadStatus` field when surfacing operator diagnostics, but do not treat these observability signals as task/status frame drops or automatic backpressure.
 
+The broker `/info` snapshot also exposes `workerLivenessMap` and `workerReservationMap` for operators. These are read-only diagnostics: heartbeat age and reservation counts explain scheduler behavior, but application code should still make scheduling decisions through `LoadBalancerAlgo` inputs and the capacity hooks rather than reading HTTP state back into the scheduler.
+
 ## Logging configuration compatibility
 
 Runtime task logs use the broker `BrokerServiceConfig.logIngest` block and the worker `WorkerServiceConfig.workerLogging` block. New JSON should set `logIngest.logIngestAddr` and `workerLogging.logIngestAddr` explicitly. The old Haskell record fields remain exported for source compatibility, but their JSON names are now compatibility/default-derivation surfaces:

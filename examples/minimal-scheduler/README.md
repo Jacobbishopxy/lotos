@@ -8,12 +8,14 @@ helper, and implements the three application extension points:
 - `TaskAcceptor` for worker-side lifecycle/status callbacks.
 - `StatusReporter` for heartbeat payload construction from `WorkerInfo`.
 
-It is a compile/test fixture rather than a long-running demo service. Run it
-from the repository root with:
+It is a compile/test fixture rather than a long-running demo service. Run its
+bounded assignment preview or tests from the repository root with:
 
 ```bash
+make example-minimal
 cabal test lotos-minimal-scheduler-example:test:test-minimal-scheduler-example
 ```
 
-Use the TaskSchedule application for full runtime config, process execution, and
-smoke-test examples.
+The preview only exercises the pure scheduler plan; it does not start a broker,
+worker, or client. Use the TaskSchedule application for full runtime config,
+process execution, and smoke-test examples.
