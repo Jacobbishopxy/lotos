@@ -5,8 +5,8 @@
 include Makefile.env
 
 MDBOOK_DIR ?= docs/book/lotos
-MDBOOK_HOST ?= 127.0.0.1
-MDBOOK_PORT ?= 3003
+MDBOOK_HOST ?= 0.0.0.0
+MDBOOK_PORT ?= 3004
 
 CI_TEST_TARGETS ?= \
 	lotos:test:test-conc-executor \

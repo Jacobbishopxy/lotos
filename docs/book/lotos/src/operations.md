@@ -104,5 +104,5 @@ make book-serve
 Override location and serving address as needed:
 
 ```bash
-make book-serve MDBOOK_DIR=docs/book/lotos MDBOOK_HOST=0.0.0.0 MDBOOK_PORT=3003
+make book-serve MDBOOK_DIR=docs/book/lotos MDBOOK_HOST=0.0.0.0 MDBOOK_PORT=3004
 ```

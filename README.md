@@ -118,7 +118,7 @@ A lightweight mdBook collects the architecture observations, public API guide, Z
 make book-build
 make book-serve
 # optional overrides
-make book-serve MDBOOK_HOST=0.0.0.0 MDBOOK_PORT=3003 MDBOOK_DIR=docs/book/lotos
+make book-serve MDBOOK_HOST=0.0.0.0 MDBOOK_PORT=3004 MDBOOK_DIR=docs/book/lotos
 ```
 
 The book source is under [`docs/book/lotos`](docs/book/lotos/src/SUMMARY.md). Start with the [Runtime Failure Runbook](docs/book/lotos/src/runtime-failures.md) when diagnosing stuck workers, LogIngest backlog, broker overload, stale heartbeats, capacity-reservation surprises, or smoke failures. Generated HTML is written to `docs/book/lotos/book/` by mdBook and should not be committed.
