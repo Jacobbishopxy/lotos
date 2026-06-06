@@ -195,12 +195,12 @@ const renderDashboard = (viewModel: DashboardViewModel, isRefreshing: boolean): 
       <p>Worker cards combine /worker_stats capacity with /worker_tasks assignments, liveness, and broker reservation overlays.</p>
     </section>
 
-    <section class="worker-grid" aria-label="Worker cards">
-      ${viewModel.workers.map(renderWorker).join('')}
-    </section>
+    <section class="operations-grid">
+      <div class="main-column">
+        <section class="worker-grid" aria-label="Worker cards">
+          ${viewModel.workers.map(renderWorker).join('')}
+        </section>
 
-    <section class="dashboard-grid">
-      <div>
         <section class="section-heading section-heading--compact">
           <div>
             <span class="eyebrow">Queues & overload</span>
@@ -236,6 +236,89 @@ if (!app) {
   throw new Error('Dashboard root element #app was not found')
 }
 
+const replaceNode = (current: Node, next: Node): void => {
+  current.parentNode?.replaceChild(next.cloneNode(true), current)
+}
+
+const updateAttributes = (current: Element, next: Element): void => {
+  for (const attribute of [...current.attributes]) {
+    if (!next.hasAttribute(attribute.name)) {
+      current.removeAttribute(attribute.name)
+    }
+  }
+
+  for (const attribute of [...next.attributes]) {
+    if (current.getAttribute(attribute.name) !== attribute.value) {
+      current.setAttribute(attribute.name, attribute.value)
+    }
+  }
+}
+
+const morphNode = (current: Node, next: Node): void => {
+  if (current.nodeType !== next.nodeType) {
+    replaceNode(current, next)
+    return
+  }
+
+  if (current.nodeType === Node.TEXT_NODE) {
+    if (current.textContent !== next.textContent) {
+      current.textContent = next.textContent
+    }
+    return
+  }
+
+  if (current.nodeType !== Node.ELEMENT_NODE || next.nodeType !== Node.ELEMENT_NODE) {
+    return
+  }
+
+  const currentElement = current as Element
+  const nextElement = next as Element
+  if (currentElement.tagName !== nextElement.tagName) {
+    replaceNode(currentElement, nextElement)
+    return
+  }
+
+  updateAttributes(currentElement, nextElement)
+  morphChildren(currentElement, nextElement)
+}
+
+const morphChildren = (current: ParentNode, next: ParentNode): void => {
+  const currentChildren = [...current.childNodes]
+  const nextChildren = [...next.childNodes]
+  const maxLength = Math.max(currentChildren.length, nextChildren.length)
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const currentChild = currentChildren[index]
+    const nextChild = nextChildren[index]
+
+    if (!currentChild && nextChild) {
+      current.appendChild(nextChild.cloneNode(true))
+      continue
+    }
+
+    if (currentChild && !nextChild) {
+      currentChild.remove()
+      continue
+    }
+
+    if (currentChild && nextChild) {
+      morphNode(currentChild, nextChild)
+    }
+  }
+}
+
+const patchDashboard = (html: string): void => {
+  const template = document.createElement('template')
+  template.innerHTML = html.trim()
+
+  if (app.childNodes.length === 0) {
+    app.appendChild(template.content.cloneNode(true))
+    return
+  }
+
+  morphChildren(app, template.content)
+}
+
 let currentResult: DashboardDataResult | undefined
 let isRefreshing = false
 
@@ -245,7 +328,7 @@ const renderResult = (result: DashboardDataResult, loading = false): void => {
     error: result.error,
     isLoading: loading,
   })
-  app.innerHTML = renderDashboard(viewModel, loading)
+  patchDashboard(renderDashboard(viewModel, loading))
 }
 
 const renderInitialLoading = (): void => {
@@ -268,9 +351,7 @@ const refreshDashboard = async (): Promise<void> => {
 
   isRefreshing = true
 
-  if (currentResult) {
-    renderResult(currentResult, true)
-  } else {
+  if (!currentResult) {
     renderInitialLoading()
   }
 
