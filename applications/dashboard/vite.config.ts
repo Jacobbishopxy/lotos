@@ -30,5 +30,8 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    preview: {
+      host,
+    },
   }
 })
