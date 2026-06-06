@@ -16,6 +16,8 @@ Use the commands below from the repository root. Long-running runtime commands s
 | Dashboard | `make dashboard-dev` | Browser fetches existing read-only HTTP endpoints under `DASHBOARD_API_ROOT` through the Vite proxy target `DASHBOARD_API_TARGET`; Vite binds `DASHBOARD_HOST` | Local Vite UI only, bound to `0.0.0.0:5173` by default; no task-control UI and no write API |
 | mdBook docs | `make book-serve` | Static docs in `MDBOOK_DIR` | Local docs server at `http://<MDBOOK_HOST>:<MDBOOK_PORT>`; no runtime dependency |
 
+The worker card's `Host load avg` meter shows the worker heartbeat's one-minute OS load average normalized by the worker's configured task capacity. It is a scheduling signal, not per-process CPU percentage; use OS tools such as `top`/`htop` when you need actual CPU utilization.
+
 The dashboard consumes only these read-only TaskSchedule endpoints by default:
 
 ```text

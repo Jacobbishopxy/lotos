@@ -56,11 +56,11 @@ const renderEndpoint = (endpoint: EndpointStatus): string => `
   </article>
 `
 
-const renderMeter = (label: string, value: number): string => `
-  <div class="meter" aria-label="${escapeHtml(label)} ${percentage(value)}">
+const renderMeter = (label: string, value: number, valueLabel = percentage(value)): string => `
+  <div class="meter" aria-label="${escapeHtml(label)} ${escapeHtml(valueLabel)}">
     <div class="meter__label">
       <span>${escapeHtml(label)}</span>
-      <strong>${percentage(value)}</strong>
+      <strong>${escapeHtml(valueLabel)}</strong>
     </div>
     <div class="meter__track">
       <span class="meter__fill" style="width: ${percentage(value)}"></span>
@@ -100,7 +100,7 @@ const renderWorker = (worker: WorkerSnapshot): string => {
         </div>
       </div>
       ${renderMeter('Slot pressure', capacityRatio)}
-      ${renderMeter('CPU load', worker.cpuLoad)}
+      ${renderMeter('Host load avg', worker.systemLoadRatio, worker.systemLoadValue)}
       ${renderMeter('Memory load', worker.memoryLoad)}
       <footer>${worker.assigned} broker tasks · Last heartbeat ${escapeHtml(worker.heartbeat)}</footer>
     </article>

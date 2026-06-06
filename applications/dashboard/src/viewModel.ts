@@ -28,7 +28,8 @@ export type WorkerSnapshot = {
   queued: number
   reserved: number
   assigned: number
-  cpuLoad: number
+  systemLoadRatio: number
+  systemLoadValue: string
   memoryLoad: number
   heartbeat: string
 }
@@ -187,7 +188,8 @@ const buildWorkers = (snapshot: DashboardApiSnapshot): WorkerSnapshot[] => {
         queued: 0,
         reserved: 0,
         assigned: 0,
-        cpuLoad: 0,
+        systemLoadRatio: 0,
+        systemLoadValue: 'n/a',
         memoryLoad: 0,
         heartbeat: 'waiting for worker_stats',
       },
@@ -204,7 +206,9 @@ const buildWorkers = (snapshot: DashboardApiSnapshot): WorkerSnapshot[] => {
     const queued = status?.waitingTaskNum ?? 0
     const reserved = reservations?.reservedSlots ?? 0
     const state: Health = liveness?.stale ? 'warning' : capacity > 0 ? 'healthy' : 'idle'
-    const cpuLoad = status ? clampRatio(status.loadAvg1 / Math.max(status.taskCapacity, 1)) : 0
+    const loadBaseline = Math.max(status?.taskCapacity ?? 1, 1)
+    const systemLoadRatio = status ? clampRatio(status.loadAvg1 / loadBaseline) : 0
+    const systemLoadValue = status ? `${status.loadAvg1.toFixed(2)} / ${loadBaseline} slots` : 'n/a'
     const memoryLoad = status ? clampRatio(status.memUsed / Math.max(status.memTotal, 1)) : 0
     const firstTask = assignedTasks[0]
 
@@ -217,7 +221,8 @@ const buildWorkers = (snapshot: DashboardApiSnapshot): WorkerSnapshot[] => {
       queued,
       reserved,
       assigned: assignedTasks.length,
-      cpuLoad,
+      systemLoadRatio,
+      systemLoadValue,
       memoryLoad,
       heartbeat: formatHeartbeat(liveness),
     }
