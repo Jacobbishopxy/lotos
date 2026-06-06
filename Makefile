@@ -10,6 +10,7 @@ MDBOOK_DIR ?= docs/book/lotos
 MDBOOK_HOST ?= 0.0.0.0
 MDBOOK_PORT ?= 3004
 DASHBOARD_DIR ?= applications/dashboard
+DASHBOARD_HOST ?= 0.0.0.0
 DASHBOARD_API_TARGET ?= http://127.0.0.1:8081
 DASHBOARD_API_ROOT ?= /SimpleServer
 DASHBOARD_API_BASE ?=
@@ -52,7 +53,7 @@ help:
 	@printf '  %-24s %s\n' 'docs-serve' 'Alias for book-serve.'
 	@printf '  %-24s %s\n' 'dashboard-install' 'Install dashboard npm dependencies.'
 	@printf '  %-24s %s\n' 'dashboard-build' 'Build the dashboard Vite app (no live server required).'
-	@printf '  %-24s %s\n' 'dashboard-dev' 'Run Vite dashboard on 127.0.0.1 with DASHBOARD_API_TARGET proxy.'
+	@printf '  %-24s %s\n' 'dashboard-dev' 'Run Vite dashboard on DASHBOARD_HOST with DASHBOARD_API_TARGET proxy.'
 	@printf '  %-24s %s\n' 'dashboard-preview' 'Preview the built dashboard locally.'
 	@printf '  %-24s %s\n' 'task-schedule-server' 'Run long-lived TaskSchedule broker/server using TASKSCHEDULE_BROKER_CONFIG.'
 	@printf '  %-24s %s\n' 'task-schedule-broker' 'Alias for task-schedule-server.'
@@ -63,7 +64,7 @@ help:
 	@printf '  %-24s %s\n' 'smoke-multi' 'Run multi-worker/capacity TaskSchedule smoke.'
 	@printf '  %-24s %s\n' 'hie' 'Regenerate hie.yaml with gen-hie.'
 	@printf '\nmdBook defaults: MDBOOK_DIR=%s MDBOOK_HOST=%s MDBOOK_PORT=%s\n' '$(MDBOOK_DIR)' '$(MDBOOK_HOST)' '$(MDBOOK_PORT)'
-	@printf 'Dashboard defaults: DASHBOARD_DIR=%s DASHBOARD_API_TARGET=%s DASHBOARD_API_ROOT=%s DASHBOARD_API_BASE=%s DASHBOARD_API_TIMEOUT_MS=%s\n' '$(DASHBOARD_DIR)' '$(DASHBOARD_API_TARGET)' '$(DASHBOARD_API_ROOT)' '$(DASHBOARD_API_BASE)' '$(DASHBOARD_API_TIMEOUT_MS)'
+	@printf 'Dashboard defaults: DASHBOARD_DIR=%s DASHBOARD_HOST=%s DASHBOARD_API_TARGET=%s DASHBOARD_API_ROOT=%s DASHBOARD_API_BASE=%s DASHBOARD_API_TIMEOUT_MS=%s\n' '$(DASHBOARD_DIR)' '$(DASHBOARD_HOST)' '$(DASHBOARD_API_TARGET)' '$(DASHBOARD_API_ROOT)' '$(DASHBOARD_API_BASE)' '$(DASHBOARD_API_TIMEOUT_MS)'
 	@printf 'TaskSchedule defaults: TASKSCHEDULE_BROKER_CONFIG=%s TASKSCHEDULE_WORKER_CONFIG=%s TASKSCHEDULE_CLIENT_CONFIG=%s TASKSCHEDULE_TASK_JSON=%s\n' '$(TASKSCHEDULE_BROKER_CONFIG)' '$(TASKSCHEDULE_WORKER_CONFIG)' '$(TASKSCHEDULE_CLIENT_CONFIG)' '$(TASKSCHEDULE_TASK_JSON)'
 
 tree:
@@ -108,7 +109,7 @@ dashboard-build:
 	VITE_TASKSCHEDULE_API_BASE="$(DASHBOARD_API_BASE)" VITE_TASKSCHEDULE_API_ROOT="$(DASHBOARD_API_ROOT)" VITE_TASKSCHEDULE_API_TIMEOUT_MS="$(DASHBOARD_API_TIMEOUT_MS)" npm --prefix $(DASHBOARD_DIR) run build
 
 dashboard-dev:
-	DASHBOARD_API_TARGET="$(DASHBOARD_API_TARGET)" VITE_TASKSCHEDULE_API_TARGET="$(DASHBOARD_API_TARGET)" VITE_TASKSCHEDULE_API_BASE="$(DASHBOARD_API_BASE)" VITE_TASKSCHEDULE_API_ROOT="$(DASHBOARD_API_ROOT)" VITE_TASKSCHEDULE_API_TIMEOUT_MS="$(DASHBOARD_API_TIMEOUT_MS)" npm --prefix $(DASHBOARD_DIR) run dev
+	DASHBOARD_HOST="$(DASHBOARD_HOST)" DASHBOARD_API_TARGET="$(DASHBOARD_API_TARGET)" VITE_TASKSCHEDULE_API_TARGET="$(DASHBOARD_API_TARGET)" VITE_TASKSCHEDULE_API_BASE="$(DASHBOARD_API_BASE)" VITE_TASKSCHEDULE_API_ROOT="$(DASHBOARD_API_ROOT)" VITE_TASKSCHEDULE_API_TIMEOUT_MS="$(DASHBOARD_API_TIMEOUT_MS)" npm --prefix $(DASHBOARD_DIR) run dev
 
 dashboard-preview:
 	VITE_TASKSCHEDULE_API_BASE="$(DASHBOARD_API_BASE)" VITE_TASKSCHEDULE_API_ROOT="$(DASHBOARD_API_ROOT)" VITE_TASKSCHEDULE_API_TIMEOUT_MS="$(DASHBOARD_API_TIMEOUT_MS)" npm --prefix $(DASHBOARD_DIR) run preview

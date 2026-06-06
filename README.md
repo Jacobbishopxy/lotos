@@ -76,7 +76,7 @@ make dashboard-install                # once, if node_modules is absent
 make task-schedule-server             # terminal 1; info API on http://127.0.0.1:8081
 make task-schedule-worker             # terminal 2; connects to the broker backend
 make task-schedule-submit             # terminal 3; optional demo task submission
-make dashboard-dev                    # terminal 4; proxies /SimpleServer to http://127.0.0.1:8081
+make dashboard-dev                    # terminal 4; serves on 0.0.0.0 and proxies /SimpleServer to http://127.0.0.1:8081
 ```
 
 The full [Dashboard Operations Manual](docs/book/lotos/src/dashboard-operations.md) documents startup order, role boundaries, read-only endpoints, overrides, troubleshooting, and manual browser verification. Use the root Make targets to install dependencies, build, develop, or preview the app:
@@ -84,8 +84,8 @@ The full [Dashboard Operations Manual](docs/book/lotos/src/dashboard-operations.
 ```bash
 make dashboard-install
 make dashboard-build                  # no live server required; sample/offline fallback remains available
-make dashboard-dev                    # proxies /SimpleServer to DASHBOARD_API_TARGET
-DASHBOARD_API_TARGET=http://127.0.0.1:8081 make dashboard-dev
+make dashboard-dev                    # serves on DASHBOARD_HOST and proxies /SimpleServer to DASHBOARD_API_TARGET
+DASHBOARD_HOST=0.0.0.0 DASHBOARD_API_TARGET=http://127.0.0.1:8081 make dashboard-dev
 DASHBOARD_API_BASE=http://127.0.0.1:8081 make dashboard-build  # direct API base for same-origin/CORS-enabled previews
 make dashboard-preview
 ```

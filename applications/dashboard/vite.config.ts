@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 
+const DEFAULT_HOST = '0.0.0.0'
 const DEFAULT_PROXY_TARGET = 'http://127.0.0.1:8081'
 const DEFAULT_API_ROOT = '/SimpleServer'
 
@@ -16,9 +17,11 @@ export default defineConfig(({ mode }) => {
     env.DASHBOARD_API_TARGET ?? env.VITE_TASKSCHEDULE_API_TARGET ?? DEFAULT_PROXY_TARGET,
   )
   const apiRoot = normalizeProxyRoot(env.VITE_TASKSCHEDULE_API_ROOT ?? DEFAULT_API_ROOT)
+  const host = env.DASHBOARD_HOST ?? DEFAULT_HOST
 
   return {
     server: {
+      host,
       proxy: {
         [apiRoot]: {
           target: proxyTarget,

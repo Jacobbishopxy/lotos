@@ -11,6 +11,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Data.Data (Proxy (..))
 import Data.Text qualified as Text
+import LiveStatus
 import Lotos.Logger
 import Lotos.Zmq
 import Server
@@ -77,17 +78,18 @@ loadBrokerConfig [] = pure defaultBrokerConfig
 loadBrokerConfig [configPath] = readBrokerConfig configPath
 loadBrokerConfig _ = dieWith usage
 
-describeBrokerConfig :: BrokerServiceConfig -> String
-describeBrokerConfig cfg =
-  unlines
-    [ "ts-server configuration:",
-      "  frontend: " <> Text.unpack (frontendAddr (socketLayer cfg)),
-      "  backend: " <> Text.unpack (backendAddr (socketLayer cfg)),
-      "  info HTTP: http://127.0.0.1:" <> show (httpPort (infoStorage cfg)) <> "/SimpleServer/...",
-      "  LogIngest: " <> Text.unpack (logIngestAddr (logIngest cfg)),
-      "  worker stale timeout: " <> show (workerStaleTimeoutSec (taskProcessor cfg)) <> "s",
-      "  info snapshot interval: " <> show (infoFetchIntervalSec (infoStorage cfg)) <> "s"
-    ]
+brokerAliveStatus :: BrokerServiceConfig -> AliveStatus
+brokerAliveStatus cfg =
+  AliveStatus
+    { aliveRole = "ts-server",
+      aliveDetails =
+        [ "frontend=" <> Text.unpack (frontendAddr (socketLayer cfg)),
+          "backend=" <> Text.unpack (backendAddr (socketLayer cfg)),
+          "info=http://127.0.0.1:" <> show (httpPort (infoStorage cfg)) <> "/SimpleServer",
+          "logIngest=" <> Text.unpack (logIngestAddr (logIngest cfg))
+        ],
+      aliveIntervalSec = 5
+    }
 
 dieWith :: String -> IO a
 dieWith msg = do
@@ -98,8 +100,8 @@ main :: IO ()
 main = do
   args <- getArgs
   lbsConfig <- loadBrokerConfig args
-  putStr $ describeBrokerConfig lbsConfig
-  logConfig <- initLocalTimeLogger "./logs/taskScheduleServer.log" DEBUG True
-  runZmqApp logConfig $ do
-    run lbsConfig
-    liftIO $ forever $ threadDelay 60_000_000
+  logConfig <- initLocalTimeLogger "./logs/taskScheduleServer.log" DEBUG False
+  withAliveStatus (brokerAliveStatus lbsConfig) $
+    runZmqApp logConfig $ do
+      run lbsConfig
+      liftIO $ forever $ threadDelay 60_000_000

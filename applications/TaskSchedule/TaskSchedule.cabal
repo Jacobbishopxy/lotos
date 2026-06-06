@@ -41,6 +41,7 @@ library ts-server-lib
 executable ts-server
   import:         shared-properties
   main-is:        TaskScheduleServer.hs
+  other-modules:  LiveStatus
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     , aeson
@@ -49,6 +50,7 @@ executable ts-server
     , process
     , TaskSchedule:ts-server-lib
     , text
+    , time
 
   hs-source-dirs: app
 
@@ -72,6 +74,7 @@ library ts-worker-lib
 executable ts-worker
   import:         shared-properties
   main-is:        TaskScheduleWorker.hs
+  other-modules:  LiveStatus
   ghc-options:    -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     , aeson
@@ -80,6 +83,7 @@ executable ts-worker
     , process
     , TaskSchedule:ts-worker-lib
     , text
+    , time
 
   hs-source-dirs: app
 

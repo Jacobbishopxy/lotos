@@ -13,7 +13,7 @@ Use the commands below from the repository root. Long-running runtime commands s
 | Broker/server | `make task-schedule-server` | TaskSchedule broker config from `TASKSCHEDULE_BROKER_CONFIG`; ZMQ frontend `tcp://127.0.0.1:5555`; ZMQ backend `tcp://127.0.0.1:5556`; LogIngest runtime `tcp://127.0.0.1:5558` | Read-only HTTP info API at `http://127.0.0.1:8081/SimpleServer/...`; no HTTP write/control routes |
 | Worker | `make task-schedule-worker` | Worker config from `TASKSCHEDULE_WORKER_CONFIG`; broker backend `tcp://127.0.0.1:5556`; LogIngest runtime `tcp://127.0.0.1:5558` | Heartbeats, task status, and task logs through the broker protocols; no dashboard HTTP server |
 | Client submission | `make task-schedule-submit` | Client config from `TASKSCHEDULE_CLIENT_CONFIG`; task payload from `TASKSCHEDULE_TASK_JSON`; broker frontend `tcp://127.0.0.1:5555` | One task request and ACK result; use this role for writes instead of adding dashboard controls |
-| Dashboard | `make dashboard-dev` | Browser fetches existing read-only HTTP endpoints under `DASHBOARD_API_ROOT` through the Vite proxy target `DASHBOARD_API_TARGET` | Local Vite UI only, normally `http://127.0.0.1:5173`; no task-control UI and no write API |
+| Dashboard | `make dashboard-dev` | Browser fetches existing read-only HTTP endpoints under `DASHBOARD_API_ROOT` through the Vite proxy target `DASHBOARD_API_TARGET`; Vite binds `DASHBOARD_HOST` | Local Vite UI only, bound to `0.0.0.0:5173` by default; no task-control UI and no write API |
 | mdBook docs | `make book-serve` | Static docs in `MDBOOK_DIR` | Local docs server at `http://<MDBOOK_HOST>:<MDBOOK_PORT>`; no runtime dependency |
 
 The dashboard consumes only these read-only TaskSchedule endpoints by default:
@@ -44,11 +44,15 @@ For deeper probes such as `/logs/recent`, `/logs/worker/<workerId>`, `/logs/task
    make task-schedule-server
    ```
 
+   The foreground console intentionally stays quiet: it prints a compact alive line while detailed broker logs continue under `logs/taskScheduleServer.log` and runtime state is visible in the dashboard.
+
 3. Start one or more workers in terminal 2:
 
    ```bash
    make task-schedule-worker
    ```
+
+   Worker terminals follow the same pattern: a compact alive line on stdout, detailed file logs under `logs/taskScheduleWorker.log`, and task/runtime state through the dashboard and `/logs/*` endpoints.
 
 4. Submit a demo task from another terminal when you want live work to appear:
 
@@ -62,7 +66,7 @@ For deeper probes such as `/logs/recent`, `/logs/worker/<workerId>`, `/logs/task
    make dashboard-dev
    ```
 
-   Open the Vite URL printed by the command, usually `http://127.0.0.1:5173`.
+   Open the Vite URL printed by the command, usually `http://127.0.0.1:5173` locally or the machine's LAN address on port `5173`.
 
 6. Serve this manual locally if needed:
 
@@ -91,11 +95,12 @@ Use matching frontend/backend/LogIngest addresses across those config files. The
 ### Dashboard API and serving
 
 ```bash
-make dashboard-dev DASHBOARD_API_TARGET=http://127.0.0.1:8081 DASHBOARD_API_ROOT=/SimpleServer
+make dashboard-dev DASHBOARD_HOST=0.0.0.0 DASHBOARD_API_TARGET=http://127.0.0.1:8081 DASHBOARD_API_ROOT=/SimpleServer
 make dashboard-build DASHBOARD_API_BASE= DASHBOARD_API_ROOT=/SimpleServer DASHBOARD_API_TIMEOUT_MS=3500
 make dashboard-preview DASHBOARD_API_BASE=http://127.0.0.1:8081 DASHBOARD_API_ROOT=/SimpleServer
 ```
 
+- `DASHBOARD_HOST` defaults to `0.0.0.0` so the dev dashboard can be opened from another machine/container when networking permits.
 - `DASHBOARD_API_TARGET` configures the Vite dev proxy target.
 - `DASHBOARD_API_ROOT` defaults to `/SimpleServer` and must match the broker service name.
 - `DASHBOARD_API_BASE` is used by built/previewed assets when you want direct browser fetches without the dev proxy.
@@ -123,7 +128,7 @@ The dashboard intentionally uses a light operations theme rather than a dark con
   curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/info
   ```
 
-- If the direct probe works but the Vite page does not, verify `DASHBOARD_API_ROOT=/SimpleServer` and restart `make dashboard-dev` so the proxy config reloads.
+- If the direct probe works but the Vite page does not, verify `DASHBOARD_HOST`, `DASHBOARD_API_ROOT=/SimpleServer`, and restart `make dashboard-dev` so the server/proxy config reloads.
 
 ### Workers do not appear
 

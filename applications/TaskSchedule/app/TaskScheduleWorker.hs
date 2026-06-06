@@ -11,6 +11,7 @@ import Adt
 import Control.Concurrent
 import Control.Monad.IO.Class
 import Data.Text qualified as Text
+import LiveStatus
 import Lotos.Logger
 import Lotos.Zmq
 import System.Environment (getArgs)
@@ -54,16 +55,18 @@ loadWorkerConfig [] = pure defaultWorkerConfig
 loadWorkerConfig [configPath] = readWorkerConfig configPath
 loadWorkerConfig _ = dieWith usage
 
-describeWorkerConfig :: WorkerServiceConfig -> String
-describeWorkerConfig cfg =
-  unlines
-    [ "ts-worker configuration:",
-      "  worker id: " <> Text.unpack (workerId cfg),
-      "  backend: " <> Text.unpack (loadBalancerBackendAddr cfg),
-      "  LogIngest: " <> Text.unpack (logIngestAddr (workerLogging cfg)),
-      "  status interval: " <> show (workerStatusReportIntervalSec cfg) <> "s",
-      "  parallel tasks: " <> show (parallelTasksNo cfg)
-    ]
+workerAliveStatus :: WorkerServiceConfig -> AliveStatus
+workerAliveStatus cfg =
+  AliveStatus
+    { aliveRole = "ts-worker",
+      aliveDetails =
+        [ "worker=" <> Text.unpack (workerId cfg),
+          "backend=" <> Text.unpack (loadBalancerBackendAddr cfg),
+          "logIngest=" <> Text.unpack (logIngestAddr (workerLogging cfg)),
+          "capacity=" <> show (parallelTasksNo cfg)
+        ],
+      aliveIntervalSec = max 1 (workerStatusReportIntervalSec cfg)
+    }
 
 dieWith :: String -> IO a
 dieWith msg = do
@@ -74,6 +77,6 @@ main :: IO ()
 main = do
   args <- getArgs
   wsConfig <- loadWorkerConfig args
-  putStr $ describeWorkerConfig wsConfig
-  logConfig <- initLocalTimeLogger "./logs/taskScheduleWorker.log" DEBUG True
-  runZmqApp logConfig $ run wsConfig
+  logConfig <- initLocalTimeLogger "./logs/taskScheduleWorker.log" DEBUG False
+  withAliveStatus (workerAliveStatus wsConfig) $
+    runZmqApp logConfig $ run wsConfig
