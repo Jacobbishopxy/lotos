@@ -28,8 +28,8 @@ export type WorkerSnapshot = {
   queued: number
   reserved: number
   assigned: number
-  systemLoadRatio: number
-  systemLoadValue: string
+  cpuUsageRatio: number
+  cpuUsageValue: string
   memoryLoad: number
   heartbeat: string
 }
@@ -188,8 +188,8 @@ const buildWorkers = (snapshot: DashboardApiSnapshot): WorkerSnapshot[] => {
         queued: 0,
         reserved: 0,
         assigned: 0,
-        systemLoadRatio: 0,
-        systemLoadValue: 'n/a',
+        cpuUsageRatio: 0,
+        cpuUsageValue: 'not reported',
         memoryLoad: 0,
         heartbeat: 'waiting for worker_stats',
       },
@@ -206,9 +206,10 @@ const buildWorkers = (snapshot: DashboardApiSnapshot): WorkerSnapshot[] => {
     const queued = status?.waitingTaskNum ?? 0
     const reserved = reservations?.reservedSlots ?? 0
     const state: Health = liveness?.stale ? 'warning' : capacity > 0 ? 'healthy' : 'idle'
-    const loadBaseline = Math.max(status?.taskCapacity ?? 1, 1)
-    const systemLoadRatio = status ? clampRatio(status.loadAvg1 / loadBaseline) : 0
-    const systemLoadValue = status ? `${status.loadAvg1.toFixed(2)} / ${loadBaseline} slots` : 'n/a'
+    const cpuUsagePercent = status?.cpuUsagePercent
+    const hasCpuUsage = typeof cpuUsagePercent === 'number' && Number.isFinite(cpuUsagePercent)
+    const cpuUsageRatio = hasCpuUsage ? clampRatio(cpuUsagePercent / 100) : 0
+    const cpuUsageValue = hasCpuUsage ? `${Math.round(cpuUsagePercent)}%` : 'not reported'
     const memoryLoad = status ? clampRatio(status.memUsed / Math.max(status.memTotal, 1)) : 0
     const firstTask = assignedTasks[0]
 
@@ -221,8 +222,8 @@ const buildWorkers = (snapshot: DashboardApiSnapshot): WorkerSnapshot[] => {
       queued,
       reserved,
       assigned: assignedTasks.length,
-      systemLoadRatio,
-      systemLoadValue,
+      cpuUsageRatio,
+      cpuUsageValue,
       memoryLoad,
       heartbeat: formatHeartbeat(liveness),
     }

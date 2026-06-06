@@ -21,10 +21,10 @@ testWorkerId :: RoutingID
 testWorkerId = "simpleWorker_1"
 
 idleWorker :: WorkerState
-idleWorker = WorkerState 0.0 0.0 0.0 100.0 10.0 90.0 0 0 1
+idleWorker = WorkerState 0.0 0.0 0.0 10.0 100.0 10.0 90.0 0 0 1
 
 hotIdleWorker :: WorkerState
-hotIdleWorker = WorkerState 10.0 10.0 10.0 100.0 90.0 10.0 0 0 1
+hotIdleWorker = WorkerState 10.0 10.0 10.0 90.0 100.0 90.0 10.0 0 0 1
 
 busyWorker :: WorkerState
 busyWorker = idleWorker {processingTaskNum = 1}
@@ -143,9 +143,10 @@ leastLoadedIdleWorkerPreferred = do
 
 workerStateFramesAppendCapacityAndDecodeOldPayloads :: Assertion
 workerStateFramesAppendCapacityAndDecodeOldPayloads = do
-  let state = (capacityWorker 4) {processingTaskNum = 1, waitingTaskNum = 2}
+  let state = (capacityWorker 4) {processingTaskNum = 1, waitingTaskNum = 2, cpuUsagePercent = 12.5}
       frames = toZmq state
-      expectedFrames = ["0.0", "0.0", "0.0", "100.0", "10.0", "90.0", "1", "2", "4"]
+      expectedFrames = ["0.0", "0.0", "0.0", "100.0", "10.0", "90.0", "1", "2", "4", "12.5"]
+      oldCapacityFrames = take 9 expectedFrames
       oldFrames = take 8 expectedFrames
       assertDecode label expected payload =
         case fromZmq payload of
@@ -153,18 +154,21 @@ workerStateFramesAppendCapacityAndDecodeOldPayloads = do
           Left err -> assertFailure $ label <> " failed to decode: " <> show err
   frames @?= expectedFrames
   assertDecode "new WorkerState payload" state expectedFrames
-  assertDecode "old WorkerState payload" (state {taskCapacity = 1}) oldFrames
+  assertDecode "old WorkerState capacity-only payload" (state {cpuUsagePercent = 0}) oldCapacityFrames
+  assertDecode "old WorkerState payload" (state {taskCapacity = 1, cpuUsagePercent = 0}) oldFrames
   case fromZmq (expectedFrames <> ["future-extra-frame"]) :: Either ZmqError WorkerState of
     Left _ -> pure ()
     Right actual -> assertFailure $ "WorkerState unexpectedly decoded a non-policy extra frame as " <> show actual
 
 workerStateStatusGoldenFramesDecodeOldPayloads :: Assertion
 workerStateStatusGoldenFramesDecodeOldPayloads = do
-  let state = (capacityWorker 4) {processingTaskNum = 1, waitingTaskNum = 2}
+  let state = (capacityWorker 4) {processingTaskNum = 1, waitingTaskNum = 2, cpuUsagePercent = 12.5}
       ack = fixedAck
-      expectedStatusPayload = ["WorkerStatusT", "2026-01-01T00:00:00Z", "0.0", "0.0", "0.0", "100.0", "10.0", "90.0", "1", "2", "4"]
+      expectedStatusPayload = ["WorkerStatusT", "2026-01-01T00:00:00Z", "0.0", "0.0", "0.0", "100.0", "10.0", "90.0", "1", "2", "4", "12.5"]
+      oldCapacityStatusPayload = take 11 expectedStatusPayload
       oldStatusPayload = take 10 expectedStatusPayload
       expectedRouterFrames = textToBS testWorkerId : expectedStatusPayload
+      oldCapacityRouterFrames = textToBS testWorkerId : oldCapacityStatusPayload
       oldRouterFrames = textToBS testWorkerId : oldStatusPayload
       assertStatusDecode label expectedState payload =
         case fromZmq payload :: Either ZmqError (RouterBackendIn WorkerState) of
@@ -177,7 +181,8 @@ workerStateStatusGoldenFramesDecodeOldPayloads = do
           Left err -> assertFailure $ label <> " failed to decode: " <> show err
   toZmq (WorkerReportStatus ack state) @?= expectedStatusPayload
   assertStatusDecode "new WorkerState status payload" state expectedRouterFrames
-  assertStatusDecode "old WorkerState status payload" (state {taskCapacity = 1}) oldRouterFrames
+  assertStatusDecode "old WorkerState capacity-only status payload" (state {cpuUsagePercent = 0}) oldCapacityRouterFrames
+  assertStatusDecode "old WorkerState status payload" (state {taskCapacity = 1, cpuUsagePercent = 0}) oldRouterFrames
 
 tests :: Test
 tests =

@@ -28,7 +28,7 @@ WorkerStatus:     workerRoutingId WorkerStatusT ackTimestamp workerStatusPayload
 WorkerTaskStatus: workerRoutingId WorkerTaskStatusT ackTimestamp taskUuid taskStatus
 ```
 
-The current TaskSchedule `WorkerState` heartbeat payload appends `taskCapacity` after the old eight-frame load/memory/task-count prefix. The decoder still accepts the old prefix and defaults capacity to one.
+The current TaskSchedule `WorkerState` heartbeat payload appends `taskCapacity` and `cpuUsagePercent` after the old eight-frame load/memory/task-count prefix. The decoder still accepts the old prefix and the intermediate capacity-only shape, defaulting capacity to one and unknown CPU to zero.
 
 ## Task processor and socket layer
 

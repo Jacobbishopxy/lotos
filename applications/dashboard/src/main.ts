@@ -100,7 +100,7 @@ const renderWorker = (worker: WorkerSnapshot): string => {
         </div>
       </div>
       ${renderMeter('Slot pressure', capacityRatio)}
-      ${renderMeter('Host load avg', worker.systemLoadRatio, worker.systemLoadValue)}
+      ${renderMeter('Device CPU', worker.cpuUsageRatio, worker.cpuUsageValue)}
       ${renderMeter('Memory load', worker.memoryLoad)}
       <footer>${worker.assigned} broker tasks · Last heartbeat ${escapeHtml(worker.heartbeat)}</footer>
     </article>

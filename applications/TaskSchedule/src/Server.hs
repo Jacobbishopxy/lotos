@@ -22,7 +22,7 @@ import Adt
 -- status payloads used by the application.
 data SimpleServer = SimpleServer
 
--- | Assign tasks to workers with the lowest combined CPU/memory load score.
+-- | Assign tasks to workers with the lowest combined device CPU/memory load score.
 instance LoadBalancerAlgo SimpleServer ClientTask WorkerState where
   applyCapacityReservations _ _ reservedSlots ws =
     ws {waitingTaskNum = waitingTaskNum ws + reservedSlots}
@@ -54,14 +54,12 @@ instance LoadBalancerAlgo SimpleServer ClientTask WorkerState where
                 nextRound = [(rid, slotsLeft - 1) | (rid, slotsLeft) <- slots, slotsLeft > 1]
              in currentRound <> if null nextRound then [] else go nextRound
 
-      -- | Calculate a worker's load score based on CPU and memory usage.
+      -- | Calculate a worker's load score based on device CPU and memory usage.
       -- Lower scores are preferred; stable sorting preserves snapshot order for
-      -- equal scores.
+      -- equal scores. Older workers decode with 0 CPU usage, keeping the score
+      -- conservative only through memory until they are upgraded.
       loadScore :: WorkerState -> Double
       loadScore ws =
-        let -- Weight different load averages (1min: 50%, 5min: 30%, 15min: 20%)
-            loadFactor = loadAvg1 ws * 0.5 + loadAvg5 ws * 0.3 + loadAvg15 ws * 0.2
-            -- Calculate memory usage ratio
+        let cpuFactor = cpuUsagePercent ws / 100
             memFactor = memUsed ws / memTotal ws
-         in -- Combined score: 70% CPU load, 30% memory usage
-            loadFactor * 0.7 + memFactor * 0.3
+         in cpuFactor * 0.7 + memFactor * 0.3

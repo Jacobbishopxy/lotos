@@ -16,7 +16,7 @@ make task-schedule-submit             # optional demo task submission
 make dashboard-dev                    # terminal 3; serves Vite on 0.0.0.0 and proxies /SimpleServer
 ```
 
-Worker cards show `Host load avg`, which is the one-minute OS load average from the worker heartbeat normalized by configured task capacity. It is not per-process CPU percentage.
+Worker cards show `Device CPU`, a system-wide CPU usage percentage sampled by the worker heartbeat. It is host/device utilization, not per-worker-process CPU.
 
 The dashboard polls these read-only endpoints by default:
 

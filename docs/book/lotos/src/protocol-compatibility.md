@@ -13,11 +13,12 @@ Compatible evolution is append-only at the tail of an application payload:
 
 Golden frame fixtures now enforce this policy in code. Before changing any `ToZmq` or `FromZmq` instance, update the relevant exact-frame assertion in `lotos/test/ZmqWorkerFrames.hs`, `lotos/test/ZmqClientAckFrames.hs`, `lotos/test/ZmqLogProtocolConfig.hs`, or `applications/TaskSchedule/test/Scheduler.hs`, then run the targeted protocol suites. These tests intentionally use fixed UUID/ACK values so frame order changes show up as simple list diffs.
 
-TaskSchedule's `WorkerState.taskCapacity` is the current example. New workers send nine status payload frames; old workers sent eight. The decoder still accepts the eight-frame shape and treats it as `taskCapacity = 1`, so old workers remain schedulable without over-assigning capacity.
+TaskSchedule's `WorkerState` append-only payload is the current example. Current workers send ten status payload frames: the old eight-frame load/memory/task-count prefix, appended `taskCapacity`, then appended `cpuUsagePercent`. The decoder still accepts the nine-frame capacity shape and the original eight-frame shape; old workers remain schedulable as `taskCapacity = 1` with unknown CPU reported as `0`.
 
 ```text
-old WorkerState: load1 load5 load15 memTotal memUsed memAvailable processing waiting
-new WorkerState: load1 load5 load15 memTotal memUsed memAvailable processing waiting taskCapacity
+old WorkerState:      load1 load5 load15 memTotal memUsed memAvailable processing waiting
+capacity WorkerState: load1 load5 load15 memTotal memUsed memAvailable processing waiting taskCapacity
+current WorkerState:  load1 load5 load15 memTotal memUsed memAvailable processing waiting taskCapacity cpuUsagePercent
 ```
 
 ## Versioning decision matrix
@@ -77,7 +78,7 @@ Most current payloads decode only the current frame shape. The explicit compatib
 | `WorkerLogging` | Legacy task id plus text line. | No fallback; retained as a compatibility surface and covered by log compatibility tests. |
 | `LogEvent`, `LogBatch`, `LogAck` | Fixed log event frames; batches/acks include count-delimited variable tails. | No old-frame fallback; counts must match tails exactly and are covered by log golden/negative fixtures. |
 | `Notify`, `Ack`, scalar enums/discriminators | Small exact positional payloads. | No fallback. |
-| TaskSchedule `WorkerState` | Nine-frame status payload with appended `taskCapacity`. | Accepts old eight-frame payload as single-slot capacity; covered both directly and inside worker-status wrapper frames. |
+| TaskSchedule `WorkerState` | Ten-frame status payload with appended `taskCapacity` and `cpuUsagePercent`. | Accepts old nine-frame capacity payload and old eight-frame payload as single-slot/unknown-CPU compatibility shapes; covered both directly and inside worker-status wrapper frames. |
 | TaskSchedule `ClientTask` | Command and timeout frames. | No fallback. |
 
 ## Deliberate compatibility breaks

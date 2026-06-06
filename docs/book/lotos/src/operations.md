@@ -65,7 +65,7 @@ curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/info \
 
 # TaskSchedule capacity view from latest worker status payloads
 curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/worker_stats \
-  | jq '.stats | to_entries[] | {worker: .key, processing: .value.processingTaskNum, waiting: .value.waitingTaskNum, capacity: .value.taskCapacity}'
+  | jq '.stats | to_entries[] | {worker: .key, cpuUsagePercent: .value.cpuUsagePercent, processing: .value.processingTaskNum, waiting: .value.waitingTaskNum, capacity: .value.taskCapacity}'
 ```
 
 ## Overload indicators

@@ -30,6 +30,7 @@ export type WorkerState = {
   loadAvg1: number
   loadAvg5: number
   loadAvg15: number
+  cpuUsagePercent?: number
   memTotal: number
   memUsed: number
   memAvailable: number

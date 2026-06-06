@@ -30,7 +30,7 @@ Default loopback endpoints:
 taskCapacity - processingTaskNum - waitingTaskNum
 ```
 
-It then assigns tasks in stable rounds across available worker slots and returns overflow to the broker queue. Older eight-frame worker status payloads still decode as single-slot workers, preserving compatibility with workers that do not report capacity.
+It then assigns tasks in stable rounds across available worker slots and returns overflow to the broker queue. Older eight- or nine-frame worker status payloads still decode conservatively, preserving compatibility with workers that do not report capacity or device CPU percent.
 
 ## Worker behavior
 

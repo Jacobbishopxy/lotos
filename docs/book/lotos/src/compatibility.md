@@ -10,7 +10,7 @@ All ZeroMQ payloads use positional multipart frames. Preserve frame order for `T
 
 ## Worker status capacity
 
-TaskSchedule's `WorkerState` now appends `taskCapacity` to the status payload. The decoder accepts both the new nine-frame shape and the older eight-frame shape. Older workers are treated as conservative single-slot workers. See [TaskSchedule](task-schedule.md) for how the demo scheduler combines this field with broker-side capacity reservations, and [Protocol Compatibility and Versioning](protocol-compatibility.md#compatibility-policy) for why appended fields need old-frame fallback tests.
+TaskSchedule's `WorkerState` now appends `taskCapacity` and `cpuUsagePercent` to the status payload. The decoder accepts the current ten-frame shape plus the older nine-frame capacity shape and eight-frame base shape. Older workers are treated as conservative single-slot workers with unknown CPU reported as `0`. See [TaskSchedule](task-schedule.md) for how the demo scheduler combines capacity with broker-side reservations, and [Protocol Compatibility and Versioning](protocol-compatibility.md#compatibility-policy) for why appended fields need old-frame fallback tests.
 
 ## Logging names
 

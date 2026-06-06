@@ -55,7 +55,7 @@ Lower-level `Lotos.Zmq.*` implementation modules are intentionally not part of t
 `TaskSchedule` demonstrates the library with concrete task and worker types:
 
 - `ClientTask`: a shell command plus timeout.
-- `WorkerState`: load average, memory usage, task-count metrics, and configured task capacity.
+- `WorkerState`: load average, device CPU percentage, memory usage, task-count metrics, and configured task capacity.
 - `SimpleServer`: schedules by remaining worker capacity, preferring the least-loaded workers and leaving overflow queued when no capacity remains.
 - `SimpleWorker`: executes commands with `executeConcurrently` and reports task results.
 
@@ -343,7 +343,7 @@ The `/info` response is intentionally a lightweight scheduler snapshot; worker l
 - Worker DEALER routing ids and reliable worker log DEALER routing ids both use `workerId`; custom configs must align client/frontend, worker/backend, and LogIngest endpoints.
 - Failed tasks retry while `taskRetry > 0`; positive `taskRetryInterval` values delay eligibility until the interval has elapsed, while `0` or less preserves immediate retry.
 - Worker status heartbeats drive broker liveness. When a worker is stale for `taskProcessor.workerStaleTimeoutSec`, the broker removes it from scheduling/info maps and recovers its non-succeeded in-flight tasks through the same retry/garbage path.
-- TaskSchedule's demo scheduler uses `WorkerState.taskCapacity - processingTaskNum - waitingTaskNum` as remaining capacity. The capacity field is appended to the worker-status payload; decoders still accept the older payload shape as a conservative single-slot worker status. See the mdBook protocol compatibility chapter for append-only examples and break criteria.
+- TaskSchedule's demo scheduler uses `WorkerState.taskCapacity - processingTaskNum - waitingTaskNum` as remaining capacity and prefers lower `cpuUsagePercent`/memory workers. The capacity and device-CPU fields are append-only worker-status payload fields; decoders still accept older payload shapes as conservative single-slot/unknown-CPU worker statuses. See the mdBook protocol compatibility chapter for append-only examples and break criteria.
 - Safe verification commands are `make ci-check` for the routine compile/test/docs gate, `make ci-test` for the explicit bounded regression list, `make smoke-single` / `scripts/task-schedule-smoke.sh` for the intentional single-worker end-to-end demo smoke, and `make smoke-multi` / `scripts/task-schedule-multi-worker-smoke.sh` for bounded multi-worker scheduling smoke after building.
 
 ## Development notes
