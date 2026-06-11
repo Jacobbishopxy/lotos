@@ -376,8 +376,10 @@ data WorkerServiceConfig = WorkerServiceConfig
     -- ^ Reliable logging DEALER config. Optional in JSON for compatibility.
     workerStatusReportIntervalSec :: Int,
     -- ^ Seconds between calls to 'StatusReporter.gatherStatus'.
-    parallelTasksNo :: Int
+    parallelTasksNo :: Int,
     -- ^ Maximum number of queued tasks handed to 'TaskAcceptor.processTasks' at once.
+    workerTags :: [Text.Text]
+    -- ^ Optional operator-defined capability/location tags used by application schedulers.
   }
   deriving (Show, Generic)
 
@@ -403,6 +405,7 @@ instance Aeson.FromJSON WorkerServiceConfig where
                 Nothing -> defaultLegacyLoggingAddr
     parsedWorkerStatusReportIntervalSec <- v Aeson..: "workerStatusReportIntervalSec"
     parsedParallelTasksNo <- v Aeson..: "parallelTasksNo"
+    parsedWorkerTags <- v Aeson..:? "workerTags" Aeson..!= []
     pure $
       WorkerServiceConfig
         { workerId = parsedWorkerId,
@@ -411,7 +414,8 @@ instance Aeson.FromJSON WorkerServiceConfig where
           loadBalancerLoggingAddr = parsedLoadBalancerLoggingAddr,
           workerLogging = parsedWorkerLogging,
           workerStatusReportIntervalSec = parsedWorkerStatusReportIntervalSec,
-          parallelTasksNo = parsedParallelTasksNo
+          parallelTasksNo = parsedParallelTasksNo,
+          workerTags = parsedWorkerTags
         }
 
 -- | Read a worker JSON config using the record field names above.

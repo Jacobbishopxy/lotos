@@ -1,0 +1,39 @@
+schemaVersion = "task-schedule/v2"
+name = "write a TaskSchedule MVP marker file"
+description = "Create the demo marker used by the local TaskSchedule smoke path."
+labels = ["demo", "smoke"]
+
+[retry]
+maxAttempts = 0
+intervalSec = 0
+
+[schedule]
+priority = 50
+requiredTags = []
+preferredTags = []
+maxRuntimeSec = 5
+
+[[steps]]
+name = "write-marker"
+
+[steps.run]
+type = "shell"
+command = "sh"
+args = ["-c", "mkdir -p .tmp && printf 'task-schedule-ok\\n' > .tmp/task-schedule-demo.out"]
+timeoutSec = 5
+
+[[outputs]]
+name = "marker"
+kind = "file"
+path = ".tmp/task-schedule-demo.out"
+required = true
+
+[[success.checks]]
+name = "marker exists"
+type = "path-exists"
+path = ".tmp/task-schedule-demo.out"
+
+[[success.checks]]
+name = "marker non-empty"
+type = "path-nonempty"
+path = ".tmp/task-schedule-demo.out"

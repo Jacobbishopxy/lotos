@@ -2,7 +2,7 @@
 
 module Main where
 
-import Adt (ClientTask (..), WorkerState (..))
+import Adt (ClientTask (..), ScheduleHints (..), WorkerState (..), simpleClientTask)
 import Control.Monad (when)
 import qualified Data.Text as Text
 import Lotos.Logger (LogLevel (ERROR), withConsoleLogger)
@@ -21,10 +21,10 @@ testWorkerId :: RoutingID
 testWorkerId = "simpleWorker_1"
 
 idleWorker :: WorkerState
-idleWorker = WorkerState 0.0 0.0 0.0 10.0 100.0 10.0 90.0 0 0 1
+idleWorker = WorkerState 0.0 0.0 0.0 10.0 100.0 10.0 90.0 0 0 1 []
 
 hotIdleWorker :: WorkerState
-hotIdleWorker = WorkerState 10.0 10.0 10.0 90.0 100.0 90.0 10.0 0 0 1
+hotIdleWorker = WorkerState 10.0 10.0 10.0 90.0 100.0 90.0 10.0 0 0 1 []
 
 busyWorker :: WorkerState
 busyWorker = idleWorker {processingTaskNum = 1}
@@ -47,7 +47,23 @@ mkTask n =
     0
     0
     0
-    (ClientTask ("command-" <> show n) 0)
+    (simpleClientTask ("command-" <> show n))
+
+mkTaggedTask :: Int -> [Text.Text] -> [Text.Text] -> Task ClientTask
+mkTaggedTask n required preferred =
+  let baseTask = mkTask n
+      baseProp = taskProp baseTask
+      schedule = clientTaskSchedule baseProp
+   in baseTask
+        { taskProp =
+            baseProp
+              { clientTaskSchedule =
+                  schedule
+                    { scheduleRequiredTags = required,
+                      schedulePreferredTags = preferred
+                    }
+              }
+        }
 
 runSchedule :: [(RoutingID, WorkerState)] -> [Task ClientTask] -> IO (ScheduledResult ClientTask WorkerState)
 runSchedule workers tasks =
@@ -141,11 +157,34 @@ leastLoadedIdleWorkerPreferred = do
   assignmentSummary result @?= [("cool", "task-1"), ("hot", "task-2")]
   leftSummary result @?= []
 
+requiredWorkerTagsRestrictAssignments :: Assertion
+requiredWorkerTagsRestrictAssignments = do
+  let linuxWorker = (capacityWorker 1) {workerStateTags = ["linux"]}
+      gpuWorker = (capacityWorker 1) {workerStateTags = ["linux", "gpu"]}
+  result <- runSchedule [("linux", linuxWorker), ("gpu", gpuWorker)] [mkTaggedTask 1 ["gpu"] []]
+  assignmentSummary result @?= [("gpu", "task-1")]
+  leftSummary result @?= []
+
+unmatchedRequiredWorkerTagsStayQueued :: Assertion
+unmatchedRequiredWorkerTagsStayQueued = do
+  result <- runSchedule [("linux", (capacityWorker 1) {workerStateTags = ["linux"]})] [mkTaggedTask 1 ["gpu"] []]
+  assignmentSummary result @?= []
+  leftSummary result @?= ["task-1"]
+
+preferredWorkerTagsBreakCompatibleSlotTies :: Assertion
+preferredWorkerTagsBreakCompatibleSlotTies = do
+  let ordinaryWorker = (capacityWorker 1) {workerStateTags = ["linux"]}
+      preferred = (capacityWorker 1) {workerStateTags = ["linux", "near-storage-a"]}
+  result <- runSchedule [("ordinary", ordinaryWorker), ("preferred", preferred)] [mkTaggedTask 1 ["linux"] ["near-storage-a"]]
+  assignmentSummary result @?= [("preferred", "task-1")]
+  leftSummary result @?= []
+
 workerStateFramesAppendCapacityAndDecodeOldPayloads :: Assertion
 workerStateFramesAppendCapacityAndDecodeOldPayloads = do
   let state = (capacityWorker 4) {processingTaskNum = 1, waitingTaskNum = 2, cpuUsagePercent = 12.5}
       frames = toZmq state
-      expectedFrames = ["0.0", "0.0", "0.0", "100.0", "10.0", "90.0", "1", "2", "4", "12.5"]
+      expectedFrames = ["0.0", "0.0", "0.0", "100.0", "10.0", "90.0", "1", "2", "4", "12.5", "[]"]
+      oldCpuFrames = take 10 expectedFrames
       oldCapacityFrames = take 9 expectedFrames
       oldFrames = take 8 expectedFrames
       assertDecode label expected payload =
@@ -154,6 +193,7 @@ workerStateFramesAppendCapacityAndDecodeOldPayloads = do
           Left err -> assertFailure $ label <> " failed to decode: " <> show err
   frames @?= expectedFrames
   assertDecode "new WorkerState payload" state expectedFrames
+  assertDecode "old WorkerState cpu-only payload" state oldCpuFrames
   assertDecode "old WorkerState capacity-only payload" (state {cpuUsagePercent = 0}) oldCapacityFrames
   assertDecode "old WorkerState payload" (state {taskCapacity = 1, cpuUsagePercent = 0}) oldFrames
   case fromZmq (expectedFrames <> ["future-extra-frame"]) :: Either ZmqError WorkerState of
@@ -164,10 +204,12 @@ workerStateStatusGoldenFramesDecodeOldPayloads :: Assertion
 workerStateStatusGoldenFramesDecodeOldPayloads = do
   let state = (capacityWorker 4) {processingTaskNum = 1, waitingTaskNum = 2, cpuUsagePercent = 12.5}
       ack = fixedAck
-      expectedStatusPayload = ["WorkerStatusT", "2026-01-01T00:00:00Z", "0.0", "0.0", "0.0", "100.0", "10.0", "90.0", "1", "2", "4", "12.5"]
+      expectedStatusPayload = ["WorkerStatusT", "2026-01-01T00:00:00Z", "0.0", "0.0", "0.0", "100.0", "10.0", "90.0", "1", "2", "4", "12.5", "[]"]
+      oldCpuStatusPayload = take 12 expectedStatusPayload
       oldCapacityStatusPayload = take 11 expectedStatusPayload
       oldStatusPayload = take 10 expectedStatusPayload
       expectedRouterFrames = textToBS testWorkerId : expectedStatusPayload
+      oldCpuRouterFrames = textToBS testWorkerId : oldCpuStatusPayload
       oldCapacityRouterFrames = textToBS testWorkerId : oldCapacityStatusPayload
       oldRouterFrames = textToBS testWorkerId : oldStatusPayload
       assertStatusDecode label expectedState payload =
@@ -181,6 +223,7 @@ workerStateStatusGoldenFramesDecodeOldPayloads = do
           Left err -> assertFailure $ label <> " failed to decode: " <> show err
   toZmq (WorkerReportStatus ack state) @?= expectedStatusPayload
   assertStatusDecode "new WorkerState status payload" state expectedRouterFrames
+  assertStatusDecode "old WorkerState cpu-only status payload" state oldCpuRouterFrames
   assertStatusDecode "old WorkerState capacity-only status payload" (state {cpuUsagePercent = 0}) oldCapacityRouterFrames
   assertStatusDecode "old WorkerState status payload" (state {taskCapacity = 1, cpuUsagePercent = 0}) oldRouterFrames
 
@@ -196,6 +239,9 @@ tests =
       TestLabel "busy or waiting workers receive no new work" (TestCase saturatedWorkersDoNotReceiveWork),
       TestLabel "all saturated workers leave all tasks queued" (TestCase allSaturatedWorkersLeaveEverythingQueued),
       TestLabel "lowest load idle worker receives the first task" (TestCase leastLoadedIdleWorkerPreferred),
+      TestLabel "required worker tags restrict assignments" (TestCase requiredWorkerTagsRestrictAssignments),
+      TestLabel "unmatched required worker tags stay queued" (TestCase unmatchedRequiredWorkerTagsStayQueued),
+      TestLabel "preferred worker tags break compatible slot ties" (TestCase preferredWorkerTagsBreakCompatibleSlotTies),
       TestLabel "WorkerState frames append capacity and decode old payloads" (TestCase workerStateFramesAppendCapacityAndDecodeOldPayloads),
       TestLabel "WorkerState status golden frames decode old payloads" (TestCase workerStateStatusGoldenFramesDecodeOldPayloads)
     ]

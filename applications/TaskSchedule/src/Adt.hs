@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- file: Adt.hs
 -- author: Jacob Xie
@@ -13,6 +14,13 @@ module Adt
 
     -- * client task
     ClientTask (..),
+    TaskArtifact (..),
+    TaskStep (..),
+    RunSpec (..),
+    EnvVar (..),
+    SuccessCriteria (..),
+    SuccessCheck (..),
+    ScheduleHints (..),
     simpleClientTask,
   )
 where
@@ -20,10 +28,12 @@ where
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, SomeException, handle)
 import Control.Monad (guard)
-import qualified Data.Aeson  as Aeson
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString.Lazy as BL
 import Data.Char (isDigit, isSpace)
 import Data.List (isPrefixOf)
 import Data.Maybe (listToMaybe, mapMaybe)
+import qualified Data.Text as Text
 import GHC.Generics (Generic)
 import Lotos.Zmq
 import System.Info (os)
@@ -44,7 +54,8 @@ data WorkerState = WorkerState
     memAvailable :: Double, -- In megabytes
     processingTaskNum :: Int, -- Number of tasks currently being processed
     waitingTaskNum :: Int, -- Number of tasks waiting to be processed
-    taskCapacity :: Int -- Configured maximum concurrent tasks for this worker
+    taskCapacity :: Int, -- Configured maximum concurrent tasks for this worker
+    workerStateTags :: [Text.Text] -- Operator-defined capability/location tags
   }
   deriving (Show, Eq, Generic, Aeson.ToJSON)
 
@@ -199,7 +210,7 @@ getWorkerState = do
   (la1, la5, la15) <- getLoadAvg
   cpu <- getCpuUsagePercent
   (total, used, available) <- getMemoryInfo
-  return $ WorkerState la1 la5 la15 cpu total used available 0 0 1
+  return $ WorkerState la1 la5 la15 cpu total used available 0 0 1 []
 
 instance ToZmq WorkerState where
   toZmq ws =
@@ -212,29 +223,40 @@ instance ToZmq WorkerState where
       intToBS (processingTaskNum ws),
       intToBS (waitingTaskNum ws),
       intToBS (taskCapacity ws),
-      doubleToBS (cpuUsagePercent ws)
+      doubleToBS (cpuUsagePercent ws),
+      BL.toStrict $ Aeson.encode (workerStateTags ws)
     ]
 
 instance FromZmq WorkerState where
   fromZmq frames =
     case frames of
+      [la1BS, la5BS, la15BS, totalBS, usedBS, availableBS, processingTaskNumBS, waitingTaskNumBS, taskCapacityBS, cpuUsagePercentBS, workerTagsBS] -> do
+        taskCapacity <- intFromBS taskCapacityBS
+        cpuUsage <- doubleFromBS cpuUsagePercentBS
+        tags <- parseWorkerTags workerTagsBS
+        parseWorkerState la1BS la5BS la15BS totalBS usedBS availableBS processingTaskNumBS waitingTaskNumBS taskCapacity cpuUsage tags
       [la1BS, la5BS, la15BS, totalBS, usedBS, availableBS, processingTaskNumBS, waitingTaskNumBS, taskCapacityBS, cpuUsagePercentBS] -> do
         taskCapacity <- intFromBS taskCapacityBS
         cpuUsage <- doubleFromBS cpuUsagePercentBS
-        parseWorkerState la1BS la5BS la15BS totalBS usedBS availableBS processingTaskNumBS waitingTaskNumBS taskCapacity cpuUsage
+        parseWorkerState la1BS la5BS la15BS totalBS usedBS availableBS processingTaskNumBS waitingTaskNumBS taskCapacity cpuUsage []
       [la1BS, la5BS, la15BS, totalBS, usedBS, availableBS, processingTaskNumBS, waitingTaskNumBS, taskCapacityBS] -> do
         -- Backward-compatible decode for heartbeats emitted before CPU usage
         -- was appended to the WorkerState payload.
         taskCapacity <- intFromBS taskCapacityBS
-        parseWorkerState la1BS la5BS la15BS totalBS usedBS availableBS processingTaskNumBS waitingTaskNumBS taskCapacity 0
+        parseWorkerState la1BS la5BS la15BS totalBS usedBS availableBS processingTaskNumBS waitingTaskNumBS taskCapacity 0 []
       [la1BS, la5BS, la15BS, totalBS, usedBS, availableBS, processingTaskNumBS, waitingTaskNumBS] ->
         -- Backward-compatible decode for heartbeats emitted before task capacity
         -- was appended to the WorkerState payload. Old workers are treated as
         -- single-slot workers so scheduling remains conservative.
-        parseWorkerState la1BS la5BS la15BS totalBS usedBS availableBS processingTaskNumBS waitingTaskNumBS 1 0
+        parseWorkerState la1BS la5BS la15BS totalBS usedBS availableBS processingTaskNumBS waitingTaskNumBS 1 0 []
       _ -> Left $ ZmqParsing "Invalid WorkerState format"
     where
-      parseWorkerState la1BS la5BS la15BS totalBS usedBS availableBS processingTaskNumBS waitingTaskNumBS taskCapacity cpuUsage = do
+      parseWorkerTags workerTagsBS =
+        case Aeson.eitherDecodeStrict' workerTagsBS of
+          Left err -> Left $ ZmqParsing $ "Invalid WorkerState tags JSON payload: " <> Text.pack err
+          Right tags -> Right tags
+
+      parseWorkerState la1BS la5BS la15BS totalBS usedBS availableBS processingTaskNumBS waitingTaskNumBS taskCapacity cpuUsage tags = do
         la1 <- doubleFromBS la1BS
         la5 <- doubleFromBS la5BS
         la15 <- doubleFromBS la15BS
@@ -243,30 +265,106 @@ instance FromZmq WorkerState where
         available <- doubleFromBS availableBS
         processingTaskNum <- intFromBS processingTaskNumBS
         waitingTaskNum <- intFromBS waitingTaskNumBS
-        return $ WorkerState la1 la5 la15 cpuUsage total used available processingTaskNum waitingTaskNum taskCapacity
+        return $ WorkerState la1 la5 la15 cpuUsage total used available processingTaskNum waitingTaskNum taskCapacity tags
 
 ----------------------------------------------------------------------------------------------------
 -- ClientTask
 ----------------------------------------------------------------------------------------------------
 
-data ClientTask = ClientTask
-  { command :: String,
-    executeTimeoutSec :: Int
+data TaskArtifact = TaskArtifact
+  { artifactName :: Text.Text,
+    -- ^ Operator-facing name used in validation logs.
+    artifactKind :: Text.Text,
+    -- ^ One of @file@, @directory@, or @any@.
+    artifactPath :: Text.Text,
+    artifactRequired :: Bool
   }
-  deriving (Show, Generic, Aeson.ToJSON, Aeson.FromJSON)
+  deriving (Show, Eq, Generic, Aeson.ToJSON, Aeson.FromJSON)
+
+data EnvVar = EnvVar
+  { envName :: Text.Text,
+    envValue :: Text.Text
+  }
+  deriving (Show, Eq, Generic, Aeson.ToJSON, Aeson.FromJSON)
+
+data RunSpec = RunSpec
+  { runType :: Text.Text,
+    -- ^ Currently @shell@.
+    runCommand :: Text.Text,
+    runArgs :: [Text.Text],
+    runCwd :: Maybe Text.Text,
+    runEnv :: [EnvVar],
+    runTimeoutSec :: Int
+  }
+  deriving (Show, Eq, Generic, Aeson.ToJSON, Aeson.FromJSON)
+
+data TaskStep = TaskStep
+  { stepName :: Text.Text,
+    stepRun :: RunSpec
+  }
+  deriving (Show, Eq, Generic, Aeson.ToJSON, Aeson.FromJSON)
+
+data SuccessCheck = SuccessCheck
+  { checkName :: Text.Text,
+    -- ^ One of @path-exists@, @path-nonempty@, or @command@.
+    checkType :: Text.Text,
+    checkPath :: Maybe Text.Text,
+    checkCommand :: Maybe Text.Text,
+    checkTimeoutSec :: Maybe Int
+  }
+  deriving (Show, Eq, Generic, Aeson.ToJSON, Aeson.FromJSON)
+
+data SuccessCriteria = SuccessCriteria
+  { successChecks :: [SuccessCheck]
+  }
+  deriving (Show, Eq, Generic, Aeson.ToJSON, Aeson.FromJSON)
+
+data ScheduleHints = ScheduleHints
+  { schedulePriority :: Int,
+    scheduleRequiredTags :: [Text.Text],
+    schedulePreferredTags :: [Text.Text],
+    scheduleMaxRuntimeSec :: Maybe Int
+  }
+  deriving (Show, Eq, Generic, Aeson.ToJSON, Aeson.FromJSON)
+
+data ClientTask = ClientTask
+  { clientTaskSchemaVersion :: Text.Text,
+    clientTaskName :: Text.Text,
+    clientTaskDescription :: Maybe Text.Text,
+    clientTaskLabels :: [Text.Text],
+    clientTaskSchedule :: ScheduleHints,
+    clientTaskInputs :: [TaskArtifact],
+    clientTaskSteps :: [TaskStep],
+    clientTaskOutputs :: [TaskArtifact],
+    clientTaskSuccess :: SuccessCriteria
+  }
+  deriving (Show, Eq, Generic, Aeson.ToJSON, Aeson.FromJSON)
 
 simpleClientTask :: String -> ClientTask
-simpleClientTask cmd = ClientTask cmd 0
+simpleClientTask cmd =
+  ClientTask
+    { clientTaskSchemaVersion = "task-schedule/v2",
+      clientTaskName = Text.pack cmd,
+      clientTaskDescription = Nothing,
+      clientTaskLabels = [],
+      clientTaskSchedule = ScheduleHints 50 [] [] Nothing,
+      clientTaskInputs = [],
+      clientTaskSteps =
+        [ TaskStep
+            { stepName = "run",
+              stepRun = RunSpec "shell" (Text.pack cmd) [] Nothing [] 0
+            }
+        ],
+      clientTaskOutputs = [],
+      clientTaskSuccess = SuccessCriteria []
+    }
 
 instance ToZmq ClientTask where
-  toZmq (ClientTask cmd timeout) =
-    [ stringToBS cmd,
-      intToBS timeout
-    ]
+  toZmq = (: []) . BL.toStrict . Aeson.encode
 
 instance FromZmq ClientTask where
-  fromZmq [cmdBS, timeoutBS] = do
-    cmd <- stringFromBS cmdBS
-    timeout <- intFromBS timeoutBS
-    return $ ClientTask cmd timeout
+  fromZmq [payload] =
+    case Aeson.eitherDecodeStrict' payload of
+      Left err -> Left $ ZmqParsing $ "Invalid ClientTask JSON payload: " <> Text.pack err
+      Right task -> Right task
   fromZmq _ = Left $ ZmqParsing "Invalid ClientTask format"

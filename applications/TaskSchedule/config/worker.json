@@ -4,6 +4,7 @@
   "loadBalancerBackendAddr": "tcp://127.0.0.1:5556",
   "workerStatusReportIntervalSec": 5,
   "parallelTasksNo": 4,
+  "workerTags": ["linux"],
   "workerLogging": {
     "logIngestAddr": "tcp://127.0.0.1:5558",
     "logIngestSocketHWM": 1000,

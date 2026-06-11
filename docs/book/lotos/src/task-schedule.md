@@ -8,8 +8,8 @@
 mkdir -p logs
 cabal run TaskSchedule:exe:ts-server -- [BROKER_CONFIG_JSON]
 cabal run TaskSchedule:exe:ts-worker -- [WORKER_CONFIG_JSON]
-cabal run TaskSchedule:exe:ts-client -- TASK_JSON
-cabal run TaskSchedule:exe:ts-client -- CLIENT_CONFIG_JSON TASK_JSON
+cabal run TaskSchedule:exe:ts-client -- TASK_TOML
+cabal run TaskSchedule:exe:ts-client -- CLIENT_CONFIG_JSON TASK_TOML
 ```
 
 Default loopback endpoints:
@@ -24,7 +24,7 @@ Default loopback endpoints:
 
 ## Scheduler behavior
 
-`SimpleServer` sorts workers by combined device-CPU/memory load, computes remaining slots from reported status payloads, assigns tasks to available worker slots, and returns overflow to the broker queue. Its `LoadBalancerAlgo` instance implements the public capacity hooks described in the [Public API Guide](public-api.md#server-scheduler): before `scheduleTasks` runs, the broker overlays capacity reservations onto each `WorkerState` by adding reserved slots to `waitingTaskNum`; after later heartbeats include those occupied slots, `workerOccupiedSlots` lets the broker reconcile the reservations conservatively. Non-terminal task-status updates refresh active reservations, but if heartbeat reconciliation has already removed a reservation, a duplicate or late `TaskPending`/`TaskProcessing` update does not recreate it. This prevents repeated scheduler passes from assigning past `taskCapacity` while worker heartbeat counts have not caught up, without keeping safely reconciled slots hidden until terminal status. Operators can inspect `/info.workerReservationMap` for active reserved slots and `/info.workerLivenessMap` for heartbeat age while debugging. Older eight- and nine-frame worker status payloads still decode conservatively, preserving compatibility with workers that do not report capacity or CPU percent.
+`SimpleServer` filters tasks by required worker tags, prefers compatible workers matching preferred tags, sorts remaining workers by combined device-CPU/memory load, computes remaining slots from reported status payloads, assigns tasks to available worker slots, and returns overflow to the broker queue. Its `LoadBalancerAlgo` instance implements the public capacity hooks described in the [Public API Guide](public-api.md#server-scheduler): before `scheduleTasks` runs, the broker overlays capacity reservations onto each `WorkerState` by adding reserved slots to `waitingTaskNum`; after later heartbeats include those occupied slots, `workerOccupiedSlots` lets the broker reconcile the reservations conservatively. Non-terminal task-status updates refresh active reservations, but if heartbeat reconciliation has already removed a reservation, a duplicate or late `TaskPending`/`TaskProcessing` update does not recreate it. This prevents repeated scheduler passes from assigning past `taskCapacity` while worker heartbeat counts have not caught up, without keeping safely reconciled slots hidden until terminal status. Operators can inspect `/info.workerReservationMap` for active reserved slots and `/info.workerLivenessMap` for heartbeat age while debugging. Older eight-, nine-, and ten-frame worker status payloads still decode conservatively, preserving compatibility with workers that do not report capacity, CPU percent, or worker tags.
 
 ## Worker behavior
 

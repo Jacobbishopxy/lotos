@@ -1,6 +1,6 @@
 # TaskSchedule MVP Runtime Contract
 
-This document is the product-facing runtime contract for the `applications/TaskSchedule` demo. Downstream tasks should treat it as the source of truth for CLI shape, default addresses, task JSON, observability, and end-to-end acceptance.
+This document is the product-facing runtime contract for the `applications/TaskSchedule` demo. Downstream tasks should treat it as the source of truth for CLI shape, default addresses, task TOML, observability, and end-to-end acceptance.
 
 TP-002 defined the contract, TP-003 implemented client submission, and TP-004 aligned the server/worker/client runtime config defaults plus sample JSON config files.
 
@@ -74,6 +74,7 @@ Worker defaults:
 | `workerLogging.logIngestWorkerQueueHWM` | `10000` |
 | `workerStatusReportIntervalSec` | `5` |
 | `parallelTasksNo` | `4` |
+| `workerTags` | `["linux"]` |
 | Log file | `./logs/taskScheduleWorker.log` |
 
 `loadBalancerBackendAddr` is the task/status backend and must match the server backend (`5556`). TP-004 corrected the prior demo mismatch that pointed the worker backend at `5555`. The broker treats worker status reports as liveness heartbeats; keep `taskProcessor.workerStaleTimeoutSec` comfortably above `workerStatusReportIntervalSec` so healthy workers are not recovered prematurely.
@@ -82,18 +83,19 @@ Once the broker assigns a task to a worker, the worker executor wakes immediatel
 
 New configs should set the reliable `workerLogging.logIngestAddr` / broker `logIngest.logIngestAddr` endpoint explicitly (`5558` in the checked-in demo). `infoStorage.logIngestDefaultAddr` is only a broker default-derivation hint (`5557` in the checked-in demo), and old `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` JSON remain accepted for migration. Each worker opens a dedicated logging DEALER with `workerId` as its routing id, sends bounded `LogBatch`es, and retries until the broker LogIngest ROUTER returns `LogAck`s. Files written before the LogIngest migration may omit `logIngest`/`workerLogging`, in which case defaults derive a split reliable endpoint from the legacy logging endpoint.
 
-TaskSchedule's `SimpleServer` now reports configured worker capacity through `WorkerState.taskCapacity` and device CPU usage through `WorkerState.cpuUsagePercent`. In each scheduler pass it subtracts reported `processingTaskNum` and `waitingTaskNum` from that capacity, sorts workers by combined CPU-percent/memory load, assigns fresh tasks across remaining slots in stable rounds, and returns any overflow to the broker queue for a later pass. The broker also overlays dispatch reservations onto `waitingTaskNum` between heartbeats, so back-to-back scheduler passes cannot over-assign a worker while its status payload is still catching up. Older eight- or nine-frame worker-status payloads still decode conservatively; this is the append-only compatibility example documented in `docs/book/lotos/src/protocol-compatibility.md`.
+TaskSchedule's `SimpleServer` now reports configured worker capacity through `WorkerState.taskCapacity`, device CPU usage through `WorkerState.cpuUsagePercent`, and operator tags through `WorkerState.workerStateTags`. In each scheduler pass it subtracts reported `processingTaskNum` and `waitingTaskNum` from that capacity, filters tasks by `[schedule].requiredTags`, prefers workers matching `[schedule].preferredTags`, sorts remaining workers by combined CPU-percent/memory load, assigns fresh tasks across remaining slots in stable rounds, and returns any overflow to the broker queue for a later pass. The broker also overlays dispatch reservations onto `waitingTaskNum` between heartbeats, so back-to-back scheduler passes cannot over-assign a worker while its status payload is still catching up. Older eight-, nine-, and ten-frame worker-status payloads still decode conservatively; this is the append-only compatibility example documented in `docs/book/lotos/src/protocol-compatibility.md`.
 
 ### Client
 
 ```bash
-cabal run TaskSchedule:exe:ts-client -- TASK_JSON
-cabal run TaskSchedule:exe:ts-client -- CLIENT_CONFIG_JSON TASK_JSON
+cabal run TaskSchedule:exe:ts-client -- TASK_TOML
+cabal run TaskSchedule:exe:ts-client -- CLIENT_CONFIG_JSON TASK_TOML
 ```
 
-- `TASK_JSON` is required.
+- `TASK_TOML` is required.
 - With one argument, the client uses the built-in MVP client config.
 - With two arguments, it reads `ClientServiceConfig` JSON from the first path and the task from the second path.
+- With `--validate TASK_TOML`, the client validates and summarizes the task contract without contacting the broker.
 - The checked-in sample config is `applications/TaskSchedule/config/client.json`.
 
 Client defaults:
@@ -170,6 +172,7 @@ The MVP config files use existing record field names. The checked-in samples und
   "loadBalancerBackendAddr": "tcp://127.0.0.1:5556",
   "workerStatusReportIntervalSec": 5,
   "parallelTasksNo": 4,
+  "workerTags": ["linux"],
   "workerLogging": {
     "logIngestAddr": "tcp://127.0.0.1:5558",
     "logIngestSocketHWM": 1000,
@@ -199,45 +202,82 @@ The MVP config files use existing record field names. The checked-in samples und
 }
 ```
 
-## Task JSON contract
+## Task TOML contract
 
-The client submits a `Task ClientTask` JSON object. The server owns UUID assignment, so MVP task files set `taskID` to `null`.
+The client submits an operator-authored TOML task contract and converts it into the internal `Task ClientTask` request. Task TOML omits `taskID`; the server owns UUID assignment before scheduling. On the ZMQ wire, the application-specific `ClientTask` payload is encoded as one JSON frame so future task-contract fields can be added without positional frame churn.
 
 Required fields:
 
 | Field | Meaning |
 |---|---|
-| `taskID` | `null`; server assigns the UUID before scheduling. |
-| `taskContent` | Human-readable label/description for the task. |
-| `taskRetry` | Remaining retry count after worker failure. Use `0` for the happy-path demo. |
-| `taskRetryInterval` | Retry delay in seconds after worker failure when `taskRetry > 0`; `0` or less preserves immediate retry. Use `0` for the happy-path demo. |
-| `taskTimeout` | Authoritative execution timeout in seconds. `0` means no timeout. |
-| `taskProp.command` | Shell command executed by the worker. |
-| `taskProp.executeTimeoutSec` | Required by the current `ClientTask` schema and must equal `taskTimeout`; it is not separately authoritative. |
+| `schemaVersion` | Must be `task-schedule/v2`. |
+| `name` | Human-readable task label; becomes `taskContent`. |
+| `labels` | Operator labels; use `[]` when not needed. |
+| `[retry].maxAttempts` | Remaining retry count after worker failure. |
+| `[retry].intervalSec` | Retry delay in seconds after worker failure when retries remain. |
+| `[schedule].priority` | Scheduling hint reserved for policy evolution. |
+| `[schedule].requiredTags` / `preferredTags` | Worker capability/location tags. Required tags must all be present in the worker heartbeat; preferred tags break compatible-slot ties when possible. |
+| `[[steps]]` and `[steps.run]` | At least one shell step with `type = "shell"`, `command`, `args`, and `timeoutSec`. |
+
+Optional fields:
+
+| Field | Meaning |
+|---|---|
+| `description` | Longer operator-facing detail. |
+| `[schedule].maxRuntimeSec` | Overall task timeout used by the broker/worker; if omitted, the client sums positive step timeouts. |
+| `[[inputs]]` | Required pre-run artifacts (`kind = "file"`, `"directory"`, or `"any"`). |
+| `[[outputs]]` | Required post-run artifacts. |
+| `[[success.checks]]` | Proof checks: `path-exists`, `path-nonempty`, or `command`. |
+| `[steps.run].cwd` | Per-step working directory. |
+| `[[steps.run.env]]` | Per-step environment variables with `name` and `value`. |
 
 Failure and retry semantics:
 
-- Worker execution reports `TaskProcessing` when a command starts and `TaskSucceed` or `TaskFailed` when it finishes.
+- Worker execution reports `TaskProcessing` when contract validation starts and `TaskSucceed` only after required inputs, all steps, required outputs, and success checks pass.
 - `ExitSuccess` maps to `TaskSucceed`; any non-zero exit, including timeout termination (`ExitFailure 124`), maps to `TaskFailed`.
 - On `TaskFailed`, the broker removes the task from the worker task map. If `taskRetry > 0`, it decrements `taskRetry` and requeues the task on the failed-task queue; if `taskRetry == 0`, it writes the task to `/SimpleServer/garbage`.
 - Worker status reports are broker liveness heartbeats. When a worker has not reported within `taskProcessor.workerStaleTimeoutSec`, the task processor removes that worker from liveness, status, and task maps before the next scheduling snapshot. Tasks left in `TaskInit`, `TaskPending`, `TaskProcessing`, `TaskRetrying`, or `TaskFailed` are recovered as failures through the same retry/garbage path; `TaskSucceed` entries are dropped with the stale worker instead of re-executed.
-- Requeued failures with `taskRetryInterval > 0` are not passed back to the scheduler until the interval has elapsed from broker failure handling. `taskRetryInterval <= 0` keeps the historical immediate retry behavior. The delay metadata is broker-local and does not change the task JSON or ZMQ frame shape.
+- Requeued failures with `retry.intervalSec > 0` are not passed back to the scheduler until the interval has elapsed from broker failure handling. `retry.intervalSec <= 0` keeps the historical immediate retry behavior. The delay metadata is broker-local and does not change the task TOML shape.
 
-Checked-in sample task (`applications/TaskSchedule/config/task-demo.json`):
+Checked-in sample task (`applications/TaskSchedule/config/task-demo.toml`):
 
-```json
-{
-  "taskID": null,
-  "taskContent": "write a TaskSchedule MVP marker file",
-  "taskRetry": 0,
-  "taskRetryInterval": 0,
-  "taskTimeout": 5,
-  "taskProp": {
-    "command": "mkdir -p .tmp && printf 'task-schedule-ok\\n' > .tmp/task-schedule-demo.out",
-    "executeTimeoutSec": 5
-  }
-}
+```toml
+schemaVersion = "task-schedule/v2"
+name = "write a TaskSchedule MVP marker file"
+description = "Create the demo marker used by the local TaskSchedule smoke path."
+labels = ["demo", "smoke"]
+
+[retry]
+maxAttempts = 0
+intervalSec = 0
+
+[schedule]
+priority = 50
+requiredTags = []
+preferredTags = []
+maxRuntimeSec = 5
+
+[[steps]]
+name = "write-marker"
+
+[steps.run]
+type = "shell"
+command = "sh"
+args = ["-c", "mkdir -p .tmp && printf 'task-schedule-ok\\n' > .tmp/task-schedule-demo.out"]
+timeoutSec = 5
+
+[[outputs]]
+name = "marker"
+kind = "file"
+path = ".tmp/task-schedule-demo.out"
+required = true
+
+[[success.checks]]
+name = "marker exists"
+type = "path-exists"
+path = ".tmp/task-schedule-demo.out"
 ```
+
 
 ## Info API checks
 
@@ -278,7 +318,7 @@ For the normal regression gate, `cabal test all` is safe: the `lotos` package re
 
 The single-worker helper generates a per-run broker config under `.tmp/task-schedule-smoke/<run-id>/` by default so LogIngest reads a run-local journal instead of stale shared smoke evidence; set `SMOKE_BROKER_CONFIG` to exercise a caller-provided broker config. It starts `ts-server` with that broker config plus one `ts-worker`/`ts-client` using the checked-in sample configs, waits for `/SimpleServer/info` and `/SimpleServer/worker_stats`, submits a fresh per-run task with `ts-client`, snapshots scheduler and `/logs` endpoints, checks a per-run marker written by the worker command, polls `/SimpleServer/logs/worker/simpleWorker_1` for the current run id and final `ExitSuccess` result event, verifies clean `/SimpleServer/logs/stats`, and preserves logs plus `result.env` under the evidence directory. It bypasses local proxy settings for loopback `curl` probes and cleans up only the process IDs/process groups it started.
 
-The multi-worker helper generates per-run broker, worker, client, and task JSON files under `.tmp/task-schedule-multi-worker-smoke/<run-id>/`. By default it starts one server, two workers (`smokeWorker_1` and `smokeWorker_2`), and four distinct clients/tasks. It verifies both workers in `/SimpleServer/worker_stats`, all client ACKs, current-run task evidence in every worker-specific stdio log, fresh per-task marker files, current-run stdout plus `ExitSuccess` result events in `/SimpleServer/logs/worker/<workerId>` for every worker, clean `/SimpleServer/logs/stats`, and absence from `/SimpleServer/garbage`, then cleans up its tracked process groups. Exact burst distribution is protected by the bounded `TaskSchedule:test:test-scheduler` suite rather than by timing-sensitive smoke assertions.
+The multi-worker helper generates per-run broker, worker, client, and task TOML files under `.tmp/task-schedule-multi-worker-smoke/<run-id>/`. By default it starts one server, two workers (`smokeWorker_1` and `smokeWorker_2`), and four distinct clients/tasks. It verifies both workers in `/SimpleServer/worker_stats`, all client ACKs, current-run task evidence in the LogIngest journal for every worker, fresh per-task marker files, current-run stdout plus final command-result events in `/SimpleServer/logs/worker/<workerId>` for every worker, clean `/SimpleServer/logs/stats`, and absence from `/SimpleServer/garbage`, then cleans up its tracked process groups. Exact burst distribution is protected by the bounded `TaskSchedule:test:test-scheduler` suite rather than by timing-sensitive smoke assertions.
 
 Exit codes:
 
@@ -300,7 +340,7 @@ cabal run TaskSchedule:exe:ts-server -- applications/TaskSchedule/config/broker.
 cabal run TaskSchedule:exe:ts-worker -- applications/TaskSchedule/config/worker.json
 
 # Terminal 3
-cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json applications/TaskSchedule/config/task-demo.json
+cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/client.json applications/TaskSchedule/config/task-demo.toml
 curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/worker_stats
 curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/worker_tasks
 curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/garbage
@@ -321,8 +361,8 @@ TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-s
 
 ## Implementation status by task
 
-- **TP-002 (contract):** this MVP contract defines the canonical CLI, address, config, task JSON, and acceptance expectations.
-- **TP-003 (client submission):** `ts-client` accepts `TASK_JSON` or `CLIENT_CONFIG_JSON TASK_JSON`, sends the task to frontend `5555`, exits non-zero on parse/argument/ACK timeout failures, and exits `0` after broker acceptance ACK.
+- **TP-002 (contract):** this MVP contract defines the canonical CLI, address, config, task TOML, and acceptance expectations.
+- **TP-003 (client submission):** `ts-client` accepts `TASK_TOML` or `CLIENT_CONFIG_JSON TASK_TOML`, sends the task to frontend `5555`, exits non-zero on parse/argument/ACK timeout failures, and exits `0` after broker acceptance ACK.
 - **TP-004 (runtime config alignment):** `ts-server`, `ts-worker`, and `ts-client` use the defaults above; server/worker accept zero or one config argument; worker backend/logging defaults are aligned to `5556`/`5557`; checked-in sample configs load through the exported config readers.
 - **TP-005 (end-to-end smoke):** `scripts/task-schedule-smoke.sh` provides the repeatable local smoke path and captures per-run evidence.
 - **TP-007 (worker status frame decoding):** worker DEALER sockets now use the configured worker ID as the ZeroMQ routing id, preserving the existing payload frame order while making backend `RouterBackendIn` decode worker status frames as UTF-8.
@@ -356,7 +396,7 @@ Known risks/gaps for downstream work:
 - The client ACK path depends on preserving ZeroMQ ROUTER/REQ frame ordering, including the binary REQ request-id frame; changing this shape can reintroduce ACK timeouts.
 - Worker log transport is wired for the single-machine sample configs; custom topologies must keep broker `logIngest.logIngestAddr` and worker `workerLogging.logIngestAddr` aligned. Preferred new JSON uses `infoStorage.logIngestDefaultAddr` / `logIngestDefaultBufferSize` only as broker derivation hints; legacy `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` fields are retained for compatibility/default derivation, not active log ingestion.
 - The info API currently exposes worker task membership but not a dedicated task-status history or failure-reason field; the file side effect is the required completion proof for the MVP happy path.
-- `taskTimeout` and `taskProp.executeTimeoutSec` duplicate timeout data; the MVP resolves ambiguity by making `taskTimeout` authoritative and requiring equality.
+- Task TOML now carries step timeouts plus optional `schedule.maxRuntimeSec`; the client derives the internal task timeout from `schedule.maxRuntimeSec` or the sum of positive step timeouts.
 - Positive `taskRetryInterval` values defer retry scheduling, but the retry is checked by the task processor's normal wake-up/trigger loop rather than an exact per-task timer; availability is therefore not-before the requested delay, not a precise dispatch deadline.
 - Worker liveness is heartbeat based, not socket-presence based; set `taskProcessor.workerStaleTimeoutSec` higher than normal `workerStatusReportIntervalSec` plus expected scheduling/host jitter.
 - `WorkerState.taskCapacity` is heartbeat-based, so capacity snapshots can still lag behind rapid assignment/execution changes between status reports. Applications with stricter admission-control needs should add stronger reservation/backpressure semantics around their scheduler decisions.

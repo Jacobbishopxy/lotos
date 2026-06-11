@@ -54,16 +54,16 @@ Lower-level `Lotos.Zmq.*` implementation modules are intentionally not part of t
 
 `TaskSchedule` demonstrates the library with concrete task and worker types:
 
-- `ClientTask`: a shell command plus timeout.
+- `ClientTask`: a TOML-authored task contract with inputs, shell steps, outputs, and success checks.
 - `WorkerState`: load average, device CPU percentage, memory usage, task-count metrics, and configured task capacity.
 - `SimpleServer`: schedules by remaining worker capacity, preferring the least-loaded workers and leaving overflow queued when no capacity remains.
-- `SimpleWorker`: executes commands with `executeConcurrently` and reports task results.
+- `SimpleWorker`: validates task contracts, executes shell steps, checks outputs/proofs, and reports task results.
 
 Executables:
 
 - `TaskSchedule:exe:ts-server` — starts the load balancer and info API.
 - `TaskSchedule:exe:ts-worker` — starts one command-executing worker.
-- `TaskSchedule:exe:ts-client` — submits a task JSON file to the load balancer frontend and waits for an ACK.
+- `TaskSchedule:exe:ts-client` — submits a task TOML file to the load balancer frontend and waits for an ACK.
 
 ### `applications/dashboard`
 
@@ -76,6 +76,7 @@ make dashboard-install                # once, if node_modules is absent
 make task-schedule-server             # terminal 1; info API on http://127.0.0.1:8081
 make task-schedule-worker             # terminal 2; connects to the broker backend
 make task-schedule-submit             # terminal 3; optional demo task submission
+make task-validate                    # optional: validate task TOML without submitting
 make dashboard-dev                    # terminal 4; serves on 0.0.0.0 and proxies /SimpleServer to http://127.0.0.1:8081
 ```
 
@@ -119,7 +120,7 @@ make smoke-single  # or scripts/task-schedule-smoke.sh
 make smoke-multi   # or scripts/task-schedule-multi-worker-smoke.sh
 ```
 
-For a manual single-machine demo, start the server and worker in separate terminals, then submit the checked-in sample task from a third terminal. The checked-in JSON files make the default loopback topology explicit: `broker.json` owns the frontend/backend/LogIngest/info endpoints, `worker.json` points at the backend plus worker logging endpoint, `client.json` points at the frontend and ACK timeout, and `task-demo.json` is the submitted `Task ClientTask` payload.
+For a manual single-machine demo, start the server and worker in separate terminals, then submit the checked-in sample task from a third terminal. The checked-in JSON config files make the default loopback topology explicit: `broker.json` owns the frontend/backend/LogIngest/info endpoints, `worker.json` points at the backend plus worker logging endpoint, `client.json` points at the frontend and ACK timeout, and `task-demo.toml` is the submitted task contract.
 
 ```bash
 mkdir -p logs .tmp
@@ -244,7 +245,7 @@ Use a CI-safe test posture: registered Cabal test suites are bounded, assertion-
 | Documentation gate | `make ci-docs` or `make book-build` | Builds the mdBook from `docs/book/lotos` without committing generated `book/` output. |
 | Focused quick regression | `cabal test lotos:test:test-conc-executor` | HUnit coverage for concurrent command success/failure, callbacks, timeout handling, and bounded concurrent execution. |
 | Intentional single-worker MVP smoke | `make smoke-single` or `scripts/task-schedule-smoke.sh` | Bounded server/worker/client smoke; run after `make ci-build` and inspect `.tmp/task-schedule-smoke/<run-id>/` for `result.env`, logs, marker proof, `/info.runtimeQueueStats`, LogIngest-only `/logs/stats`, and endpoint snapshots. |
-| Intentional multi-worker smoke | `make smoke-multi` or `scripts/task-schedule-multi-worker-smoke.sh` | Starts one server, at least two generated worker configs, and multiple distinct clients/tasks; inspect `.tmp/task-schedule-multi-worker-smoke/<run-id>/` for per-worker stdio logs, capacity/reservation snapshots, markers, runtime/log stats, endpoint snapshots, and `result.env`. |
+| Intentional multi-worker smoke | `make smoke-multi` or `scripts/task-schedule-multi-worker-smoke.sh` | Starts one server, at least two generated worker configs, and multiple distinct clients/tasks; inspect `.tmp/task-schedule-multi-worker-smoke/<run-id>/` for LogIngest journal evidence, capacity/reservation snapshots, markers, runtime/log stats, endpoint snapshots, and `result.env`. |
 
 Current bounded regression test suites:
 
@@ -270,9 +271,9 @@ Do not add no-assertion demos back as Cabal `test-suite` components unless they 
 
 ## Running the TaskSchedule demo
 
-The MVP runtime contract for the server, worker, client, task JSON, and verification flow is documented in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
+The MVP runtime contract for the server, worker, client, task TOML, and verification flow is documented in [`docs/task-schedule-mvp.md`](docs/task-schedule-mvp.md).
 
-The executables use built-in single-machine defaults and can also read explicit JSON config files. Sample configs and the copyable sample task live under `applications/TaskSchedule/config/`.
+The executables use built-in single-machine defaults and can also read explicit JSON config files. Sample configs and the copyable TOML task contract live under `applications/TaskSchedule/config/`.
 
 Default addresses:
 
@@ -283,6 +284,7 @@ Default addresses:
 - info HTTP port: `8081`
 - logs: `./logs/taskScheduleServer.log`, `./logs/taskScheduleWorker.log`, and `./logs/taskScheduleClient.log`
 - worker stale timeout: `taskProcessor.workerStaleTimeoutSec = 60` seconds in the checked-in broker config; keep it above `workerStatusReportIntervalSec` for healthy workers.
+- worker tags: `workerTags` in worker JSON reports operator-defined capabilities/locations such as `linux`, `gpu`, or `site-a`; TaskSchedule routes tasks only to workers satisfying `[schedule].requiredTags` and prefers workers matching `[schedule].preferredTags` when compatible slots are available.
 
 Start the server with defaults, or use the root Make target to pass `applications/TaskSchedule/config/broker.json` explicitly:
 
@@ -298,11 +300,14 @@ cabal run TaskSchedule:exe:ts-worker
 make task-schedule-worker
 ```
 
-Submit a task JSON with the client. A client config can be supplied as the first argument when overriding the frontend address or `reqTimeoutSec`; if no ACK arrives before that timeout, `ts-client` exits non-zero with a no-ACK message. The root Make target passes the checked-in client config and sample task:
+Submit a task TOML contract with the client. A client config can be supplied as the first argument when overriding the frontend address or `reqTimeoutSec`; if no ACK arrives before that timeout, `ts-client` exits non-zero with a no-ACK message. The root Make target passes the checked-in client config and sample task:
 
 ```bash
-cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/task-demo.json
+cabal run TaskSchedule:exe:ts-client -- applications/TaskSchedule/config/task-demo.toml
 make task-schedule-submit
+make task-submit TASKSCHEDULE_TASK_TOML=tasks/my-task.toml
+make task-validate TASKSCHEDULE_TASK_TOML=tasks/my-task.toml
+make task-template TASKSCHEDULE_TASK_TEMPLATE_OUT=tasks/new-task.toml
 ```
 
 For repeatable local smoke runs, compile all packages and test targets first, then run the desired helper from the repository root:
@@ -315,7 +320,7 @@ scripts/task-schedule-multi-worker-smoke.sh
 
 The single-worker smoke helper starts the server and one worker with the checked-in sample configs, submits a fresh per-run task when worker readiness passes, captures evidence under `.tmp/task-schedule-smoke/<run-id>/`, and cleans up only the processes it started. Exit `0` means the full MVP path passed: client ACK, worker stats, fresh marker proof, current-run worker logging in `/SimpleServer/logs/worker/simpleWorker_1` plus clean `/SimpleServer/logs/stats`, and no current-run garbage entry. Exit `1` means a runtime, readiness, ACK, marker, worker-logging, or garbage check failed; inspect the evidence directory for `result.env`, `smoke.log`, stdio logs, endpoint snapshots, and the marker file.
 
-The multi-worker smoke helper generates a per-run broker config, two worker configs by default (`smokeWorker_1` and `smokeWorker_2`), unique client configs, and four fresh task JSON files. It requires all workers to appear in `/SimpleServer/worker_stats`, all clients to receive ACKs, every task marker to match the current run, every worker-specific stdio log to show current-run task processing, `/SimpleServer/logs/worker/<workerId>` to contain current-run stdout plus final `ExitSuccess` result events for each worker, clean `/SimpleServer/logs/stats`, no current-run garbage, and no leftover `ts-server`/`ts-worker`/`ts-client` processes from its tracked process groups.
+The multi-worker smoke helper generates a per-run broker config, two worker configs by default (`smokeWorker_1` and `smokeWorker_2`), unique client configs, and four fresh task TOML files. It requires all workers to appear in `/SimpleServer/worker_stats`, all clients to receive ACKs, every task marker to match the current run, LogIngest journal evidence for every worker, `/SimpleServer/logs/worker/<workerId>` to contain current-run stdout plus final `ExitSuccess` result events for each worker, clean `/SimpleServer/logs/stats`, no current-run garbage, and no leftover `ts-server`/`ts-worker`/`ts-client` processes from its tracked process groups.
 
 Latest TP-049 verification profile is green: `make ci-check` compiles all components with tests enabled, runs the explicit bounded regression target list, and builds the mdBook. Intentional single- and multi-worker smokes remain opt-in after the build gate. The bounded scheduler suite covers deterministic assignment/deferred-task behavior, while the smoke helpers prove end-to-end execution and reliable `/logs` evidence without relying on timing-sensitive exact distribution.
 
@@ -339,11 +344,11 @@ The `/info` response is intentionally a lightweight scheduler snapshot; worker l
 
 - `ToZmq` and `FromZmq` instances define positional multipart wire formats. Treat them as a stable wire ABI: compatible changes append payload frames at the tail, keep old-frame decoder fallbacks, and update bounded frame tests; route/envelope/discriminator changes require an explicit protocol migration using a new discriminator, endpoint, or versioned payload. The mdBook [Protocol Compatibility and Versioning](docs/book/lotos/src/protocol-compatibility.md#versioning-decision-matrix) chapter has the full decision matrix and break/version-tag policy.
 - Client ACKs mean accepted/enqueued by the broker, not worker completion. Completion evidence comes from worker side effects, worker task/status state, logs, or smoke artifacts.
-- The broker owns UUID assignment. Client task JSON may set `taskID` to `null`, but scheduled/executing tasks must have IDs before `unsafeGetTaskID` is used.
+- The broker owns UUID assignment. Client task TOML omits `taskID`; the client builds a new request and the broker assigns the UUID before scheduling/execution.
 - Worker DEALER routing ids and reliable worker log DEALER routing ids both use `workerId`; custom configs must align client/frontend, worker/backend, and LogIngest endpoints.
 - Failed tasks retry while `taskRetry > 0`; positive `taskRetryInterval` values delay eligibility until the interval has elapsed, while `0` or less preserves immediate retry.
 - Worker status heartbeats drive broker liveness. When a worker is stale for `taskProcessor.workerStaleTimeoutSec`, the broker removes it from scheduling/info maps and recovers its non-succeeded in-flight tasks through the same retry/garbage path.
-- TaskSchedule's demo scheduler uses `WorkerState.taskCapacity - processingTaskNum - waitingTaskNum` as remaining capacity and prefers lower `cpuUsagePercent`/memory workers. The capacity and device-CPU fields are append-only worker-status payload fields; decoders still accept older payload shapes as conservative single-slot/unknown-CPU worker statuses. See the mdBook protocol compatibility chapter for append-only examples and break criteria.
+- TaskSchedule's demo scheduler uses `WorkerState.taskCapacity - processingTaskNum - waitingTaskNum` as remaining capacity, filters by required task/worker tags, prefers matching preferred tags, and otherwise prefers lower `cpuUsagePercent`/memory workers. The capacity, device-CPU, and worker-tag fields are append-only worker-status payload fields; decoders still accept older payload shapes as conservative single-slot/unknown-CPU/untagged worker statuses. See the mdBook protocol compatibility chapter for append-only examples and break criteria.
 - Safe verification commands are `make ci-check` for the routine compile/test/docs gate, `make ci-test` for the explicit bounded regression list, `make smoke-single` / `scripts/task-schedule-smoke.sh` for the intentional single-worker end-to-end demo smoke, and `make smoke-multi` / `scripts/task-schedule-multi-worker-smoke.sh` for bounded multi-worker scheduling smoke after building.
 
 ## Development notes

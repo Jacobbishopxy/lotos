@@ -12,7 +12,7 @@ Use the commands below from the repository root. Long-running runtime commands s
 |------|-----------------|------|---------|
 | Broker/server | `make task-schedule-server` | TaskSchedule broker config from `TASKSCHEDULE_BROKER_CONFIG`; ZMQ frontend `tcp://127.0.0.1:5555`; ZMQ backend `tcp://127.0.0.1:5556`; LogIngest runtime `tcp://127.0.0.1:5558` | Read-only HTTP info API at `http://127.0.0.1:8081/SimpleServer/...`; no HTTP write/control routes |
 | Worker | `make task-schedule-worker` | Worker config from `TASKSCHEDULE_WORKER_CONFIG`; broker backend `tcp://127.0.0.1:5556`; LogIngest runtime `tcp://127.0.0.1:5558` | Heartbeats, task status, and task logs through the broker protocols; no dashboard HTTP server |
-| Client submission | `make task-schedule-submit` | Client config from `TASKSCHEDULE_CLIENT_CONFIG`; task payload from `TASKSCHEDULE_TASK_JSON`; broker frontend `tcp://127.0.0.1:5555` | One task request and ACK result; use this role for writes instead of adding dashboard controls |
+| Client submission | `make task-schedule-submit` / `make task-validate` | Client config from `TASKSCHEDULE_CLIENT_CONFIG`; task payload from `TASKSCHEDULE_TASK_TOML`; broker frontend `tcp://127.0.0.1:5555` for submit only | One task request and ACK result; use this role for writes instead of adding dashboard controls |
 | Dashboard | `make dashboard-dev` | Browser fetches existing read-only HTTP endpoints under `DASHBOARD_API_ROOT` through the Vite proxy target `DASHBOARD_API_TARGET`; Vite binds `DASHBOARD_HOST` | Local Vite UI only, bound to `0.0.0.0:5173` by default; no task-control UI and no write API |
 | mdBook docs | `make book-serve` | Static docs in `MDBOOK_DIR` | Local docs server at `http://<MDBOOK_HOST>:<MDBOOK_PORT>`; no runtime dependency |
 
@@ -89,10 +89,12 @@ make task-schedule-server TASKSCHEDULE_BROKER_CONFIG=applications/TaskSchedule/c
 make task-schedule-worker TASKSCHEDULE_WORKER_CONFIG=applications/TaskSchedule/config/worker.json
 make task-schedule-submit \
   TASKSCHEDULE_CLIENT_CONFIG=applications/TaskSchedule/config/client.json \
-  TASKSCHEDULE_TASK_JSON=applications/TaskSchedule/config/task-demo.json
+  TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-demo.toml
+make task-validate TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-demo.toml
+make task-template TASKSCHEDULE_TASK_TEMPLATE_OUT=tasks/new-task.toml
 ```
 
-Use matching frontend/backend/LogIngest addresses across those config files. The dashboard is read-only, so task payload changes always go through `TASKSCHEDULE_TASK_JSON` and `make task-schedule-submit`.
+Use matching frontend/backend/LogIngest addresses across those config files. The dashboard is read-only, so task payload changes always go through `TASKSCHEDULE_TASK_TOML` and `make task-schedule-submit` after optional `make task-validate` checks.
 
 ### Dashboard API and serving
 
@@ -150,7 +152,7 @@ The dashboard intentionally uses a light operations theme rather than a dark con
   make task-schedule-submit
   ```
 
-- Keep `taskID` as `null` in task JSON; the broker assigns task ids.
+- Omit `taskID` from task TOML; the broker assigns task ids.
 - Use [Runtime Failure Runbook](runtime-failures.md) if tasks remain queued, workers go stale, reservations look conservative, or handoff queues show sustained warning/critical state.
 
 ### Log counters look different from runtime queue depth

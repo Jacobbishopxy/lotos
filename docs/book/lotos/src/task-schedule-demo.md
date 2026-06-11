@@ -8,8 +8,8 @@
 mkdir -p logs
 cabal run TaskSchedule:exe:ts-server -- [BROKER_CONFIG_JSON]
 cabal run TaskSchedule:exe:ts-worker -- [WORKER_CONFIG_JSON]
-cabal run TaskSchedule:exe:ts-client -- TASK_JSON
-cabal run TaskSchedule:exe:ts-client -- CLIENT_CONFIG_JSON TASK_JSON
+cabal run TaskSchedule:exe:ts-client -- TASK_TOML
+cabal run TaskSchedule:exe:ts-client -- CLIENT_CONFIG_JSON TASK_TOML
 ```
 
 Default loopback endpoints:
@@ -30,7 +30,7 @@ Default loopback endpoints:
 taskCapacity - processingTaskNum - waitingTaskNum
 ```
 
-It then assigns tasks in stable rounds across available worker slots and returns overflow to the broker queue. Older eight- or nine-frame worker status payloads still decode conservatively, preserving compatibility with workers that do not report capacity or device CPU percent.
+It then assigns tasks in stable rounds across available worker slots and returns overflow to the broker queue. Older eight-, nine-, or ten-frame worker status payloads still decode conservatively, preserving compatibility with workers that do not report capacity, device CPU percent, or worker tags.
 
 ## Worker behavior
 

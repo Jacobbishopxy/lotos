@@ -24,7 +24,7 @@ run wsConfig = do
   tid <- liftIO myThreadId
   logApp INFO $ "runLotosApp on thread: " <> show tid
 
-  let worker = SimpleWorker
+  let worker = SimpleWorker {simpleWorkerTags = workerTags wsConfig}
   -- Create a worker service
   service <- mkWorkerService wsConfig worker worker :: LotosApp (WorkerService SimpleWorker SimpleWorker ClientTask WorkerState)
   -- Run the worker service
@@ -39,7 +39,8 @@ defaultWorkerConfig =
       loadBalancerLoggingAddr = "tcp://127.0.0.1:5557",
       workerLogging = defaultLogIngestConfig "tcp://127.0.0.1:5558",
       workerStatusReportIntervalSec = 5,
-      parallelTasksNo = 4
+      parallelTasksNo = 4,
+      workerTags = []
     }
 
 usage :: String
@@ -63,7 +64,8 @@ workerAliveStatus cfg =
         [ "worker=" <> Text.unpack (workerId cfg),
           "backend=" <> Text.unpack (loadBalancerBackendAddr cfg),
           "logIngest=" <> Text.unpack (logIngestAddr (workerLogging cfg)),
-          "capacity=" <> show (parallelTasksNo cfg)
+          "capacity=" <> show (parallelTasksNo cfg),
+          "tags=" <> show (workerTags cfg)
         ],
       aliveIntervalSec = max 1 (workerStatusReportIntervalSec cfg)
     }

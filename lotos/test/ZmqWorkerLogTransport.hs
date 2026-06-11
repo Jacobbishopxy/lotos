@@ -43,7 +43,8 @@ mkWorkerCfg queueHWM dropPolicy =
             logIngestDropPolicy = dropPolicy
           },
       workerStatusReportIntervalSec = 5,
-      parallelTasksNo = 1
+      parallelTasksNo = 1,
+      workerTags = []
     }
 
 withTaskId :: (TaskID -> IO a) -> IO a

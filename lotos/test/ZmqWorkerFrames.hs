@@ -69,7 +69,8 @@ mkWorkerCfg =
             logIngestDropPolicy = LogDropOldest
           },
       workerStatusReportIntervalSec = 5,
-      parallelTasksNo = 1
+      parallelTasksNo = 1,
+      workerTags = []
     }
 
 data NoopAcceptor = NoopAcceptor
