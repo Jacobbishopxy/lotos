@@ -21,6 +21,7 @@ TASKSCHEDULE_WORKER_CONFIG ?= $(TASKSCHEDULE_CONFIG_DIR)/worker.json
 TASKSCHEDULE_CLIENT_CONFIG ?= $(TASKSCHEDULE_CONFIG_DIR)/client.json
 TASKSCHEDULE_TASK_TOML ?= $(TASKSCHEDULE_CONFIG_DIR)/task-demo.toml
 TASKSCHEDULE_TASK_TEMPLATE_OUT ?= tasks/task-template.toml
+TASKSCHEDULE_RELEASE_DIR ?= dist-release/TaskSchedule
 
 CI_TEST_TARGETS ?= \
 	lotos:test:test-conc-executor \
@@ -35,7 +36,7 @@ CI_TEST_TARGETS ?= \
 	TaskSchedule:test:test-scheduler \
 	lotos-minimal-scheduler-example:test:test-minimal-scheduler-example
 
-.PHONY: help tree clean update build ci-build ci-test ci-docs ci-check book-build book-serve docs-build docs-serve dashboard-install dashboard-build dashboard-dev dashboard-preview task-schedule-build-server task-schedule-build-worker task-schedule-build-client task-schedule-build-all task-schedule-server task-schedule-broker task-schedule-worker task-schedule-submit task-submit task-validate task-template example-minimal smoke-single smoke-multi hie
+.PHONY: help tree clean update build ci-build ci-test ci-docs ci-check book-build book-serve docs-build docs-serve dashboard-install dashboard-build dashboard-dev dashboard-preview task-schedule-build-server task-schedule-build-worker task-schedule-build-client task-schedule-build-all release-clean release-server release-worker release-client release-task-schedule release-manifest task-schedule-server task-schedule-broker task-schedule-worker task-schedule-submit task-submit task-validate task-template example-minimal smoke-single smoke-multi hie
 
 help:
 	@printf '%s\n' 'Lotos Make targets:'
@@ -60,6 +61,11 @@ help:
 	@printf '  %-24s %s\n' 'task-schedule-build-worker' 'Build TaskSchedule ts-worker executable.'
 	@printf '  %-24s %s\n' 'task-schedule-build-client' 'Build TaskSchedule ts-client executable.'
 	@printf '  %-24s %s\n' 'task-schedule-build-all' 'Build all TaskSchedule role executables.'
+	@printf '  %-24s %s\n' 'release-clean' 'Remove TASKSCHEDULE_RELEASE_DIR.'
+	@printf '  %-24s %s\n' 'release-server' 'Package ts-server plus broker config into TASKSCHEDULE_RELEASE_DIR.'
+	@printf '  %-24s %s\n' 'release-worker' 'Package ts-worker plus worker config into TASKSCHEDULE_RELEASE_DIR.'
+	@printf '  %-24s %s\n' 'release-client' 'Package ts-client plus client config and sample task into TASKSCHEDULE_RELEASE_DIR.'
+	@printf '  %-24s %s\n' 'release-task-schedule' 'Package all TaskSchedule role binaries/configs/tasks with checksums.'
 	@printf '  %-24s %s\n' 'task-schedule-server' 'Run long-lived TaskSchedule broker/server using TASKSCHEDULE_BROKER_CONFIG.'
 	@printf '  %-24s %s\n' 'task-schedule-broker' 'Alias for task-schedule-server.'
 	@printf '  %-24s %s\n' 'task-schedule-worker' 'Run long-lived TaskSchedule worker using TASKSCHEDULE_WORKER_CONFIG.'
@@ -73,7 +79,7 @@ help:
 	@printf '  %-24s %s\n' 'hie' 'Regenerate hie.yaml with gen-hie.'
 	@printf '\nmdBook defaults: MDBOOK_DIR=%s MDBOOK_HOST=%s MDBOOK_PORT=%s\n' '$(MDBOOK_DIR)' '$(MDBOOK_HOST)' '$(MDBOOK_PORT)'
 	@printf 'Dashboard defaults: DASHBOARD_DIR=%s DASHBOARD_HOST=%s DASHBOARD_API_TARGET=%s DASHBOARD_API_ROOT=%s DASHBOARD_API_BASE=%s DASHBOARD_API_TIMEOUT_MS=%s\n' '$(DASHBOARD_DIR)' '$(DASHBOARD_HOST)' '$(DASHBOARD_API_TARGET)' '$(DASHBOARD_API_ROOT)' '$(DASHBOARD_API_BASE)' '$(DASHBOARD_API_TIMEOUT_MS)'
-	@printf 'TaskSchedule defaults: TASKSCHEDULE_BROKER_CONFIG=%s TASKSCHEDULE_WORKER_CONFIG=%s TASKSCHEDULE_CLIENT_CONFIG=%s TASKSCHEDULE_TASK_TOML=%s TASKSCHEDULE_TASK_TEMPLATE_OUT=%s\n' '$(TASKSCHEDULE_BROKER_CONFIG)' '$(TASKSCHEDULE_WORKER_CONFIG)' '$(TASKSCHEDULE_CLIENT_CONFIG)' '$(TASKSCHEDULE_TASK_TOML)' '$(TASKSCHEDULE_TASK_TEMPLATE_OUT)'
+	@printf 'TaskSchedule defaults: TASKSCHEDULE_BROKER_CONFIG=%s TASKSCHEDULE_WORKER_CONFIG=%s TASKSCHEDULE_CLIENT_CONFIG=%s TASKSCHEDULE_TASK_TOML=%s TASKSCHEDULE_TASK_TEMPLATE_OUT=%s TASKSCHEDULE_RELEASE_DIR=%s\n' '$(TASKSCHEDULE_BROKER_CONFIG)' '$(TASKSCHEDULE_WORKER_CONFIG)' '$(TASKSCHEDULE_CLIENT_CONFIG)' '$(TASKSCHEDULE_TASK_TOML)' '$(TASKSCHEDULE_TASK_TEMPLATE_OUT)' '$(TASKSCHEDULE_RELEASE_DIR)'
 
 tree:
 	tree . --gitignore
@@ -132,6 +138,50 @@ task-schedule-build-client:
 	cabal build TaskSchedule:exe:ts-client
 
 task-schedule-build-all: task-schedule-build-server task-schedule-build-worker task-schedule-build-client
+
+release-clean:
+	rm -rf $(TASKSCHEDULE_RELEASE_DIR)
+
+release-server: task-schedule-build-server
+	@mkdir -p $(TASKSCHEDULE_RELEASE_DIR)/bin $(TASKSCHEDULE_RELEASE_DIR)/config
+	@bin_path="$$(cabal list-bin TaskSchedule:exe:ts-server)"; \
+		install -m 755 "$$bin_path" $(TASKSCHEDULE_RELEASE_DIR)/bin/ts-server
+	install -m 644 $(TASKSCHEDULE_BROKER_CONFIG) $(TASKSCHEDULE_RELEASE_DIR)/config/broker.json
+	$(MAKE) release-manifest
+
+release-worker: task-schedule-build-worker
+	@mkdir -p $(TASKSCHEDULE_RELEASE_DIR)/bin $(TASKSCHEDULE_RELEASE_DIR)/config
+	@bin_path="$$(cabal list-bin TaskSchedule:exe:ts-worker)"; \
+		install -m 755 "$$bin_path" $(TASKSCHEDULE_RELEASE_DIR)/bin/ts-worker
+	install -m 644 $(TASKSCHEDULE_WORKER_CONFIG) $(TASKSCHEDULE_RELEASE_DIR)/config/worker.json
+	$(MAKE) release-manifest
+
+release-client: task-schedule-build-client
+	@mkdir -p $(TASKSCHEDULE_RELEASE_DIR)/bin $(TASKSCHEDULE_RELEASE_DIR)/config $(TASKSCHEDULE_RELEASE_DIR)/tasks
+	@bin_path="$$(cabal list-bin TaskSchedule:exe:ts-client)"; \
+		install -m 755 "$$bin_path" $(TASKSCHEDULE_RELEASE_DIR)/bin/ts-client
+	install -m 644 $(TASKSCHEDULE_CLIENT_CONFIG) $(TASKSCHEDULE_RELEASE_DIR)/config/client.json
+	install -m 644 $(TASKSCHEDULE_TASK_TOML) $(TASKSCHEDULE_RELEASE_DIR)/tasks/task-demo.toml
+	$(MAKE) release-manifest
+
+release-task-schedule: release-server release-worker release-client release-manifest
+
+release-manifest:
+	@if [ ! -d "$(TASKSCHEDULE_RELEASE_DIR)" ]; then \
+		echo "release directory does not exist: $(TASKSCHEDULE_RELEASE_DIR)" >&2; \
+		exit 1; \
+	fi
+	@cd $(TASKSCHEDULE_RELEASE_DIR) && \
+		find . -type f ! -name MANIFEST.txt ! -name SHA256SUMS | sort > MANIFEST.txt && \
+		if command -v sha256sum >/dev/null 2>&1; then \
+			xargs sha256sum < MANIFEST.txt > SHA256SUMS; \
+		elif command -v shasum >/dev/null 2>&1; then \
+			xargs shasum -a 256 < MANIFEST.txt > SHA256SUMS; \
+		else \
+			echo "sha256sum or shasum is required to write SHA256SUMS" >&2; \
+			exit 1; \
+		fi
+	@printf 'TaskSchedule release packaged at %s\n' '$(TASKSCHEDULE_RELEASE_DIR)'
 
 task-schedule-server:
 	cabal run TaskSchedule:exe:ts-server -- $(TASKSCHEDULE_BROKER_CONFIG)

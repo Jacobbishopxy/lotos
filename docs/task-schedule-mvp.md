@@ -359,6 +359,17 @@ Pass criteria:
 
 TP-009 verification status: `cabal build all --enable-tests` and `scripts/task-schedule-smoke.sh` passed. The smoke run `.tmp/task-schedule-smoke/tp009-final-20260601T043107Z-241489/` proves the client ACK path, worker stats, fresh marker proof, and no current-run garbage entry under the default sample configs. TP-010 keeps that smoke command intentional while making `cabal test all` a safe bounded regression gate.
 
+## Release packaging
+
+For production-style same-machine packaging after building on the target OS/device, run:
+
+```bash
+make release-clean
+make release-task-schedule
+```
+
+The bundle is written under ignored `dist-release/TaskSchedule/` with role binaries, sample configs, sample task TOML, `MANIFEST.txt`, and `SHA256SUMS`. Use `make release-server`, `make release-worker`, or `make release-client` when a device only needs one role.
+
 ## Implementation status by task
 
 - **TP-002 (contract):** this MVP contract defines the canonical CLI, address, config, task TOML, and acceptance expectations.

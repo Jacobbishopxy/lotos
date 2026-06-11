@@ -231,7 +231,33 @@ cabal build lotos
 cabal build TaskSchedule:exe:ts-server
 cabal build TaskSchedule:exe:ts-worker
 cabal build TaskSchedule:exe:ts-client
+make task-schedule-build-all
 ```
+
+## TaskSchedule release packaging
+
+For same-machine production packaging after cloning/building on the target OS, use:
+
+```bash
+make release-clean
+make release-task-schedule
+```
+
+This writes an ignored release bundle under `dist-release/TaskSchedule/`:
+
+```text
+bin/ts-server
+bin/ts-worker
+bin/ts-client
+config/broker.json
+config/worker.json
+config/client.json
+tasks/task-demo.toml
+MANIFEST.txt
+SHA256SUMS
+```
+
+Role-specific packaging is also available with `make release-server`, `make release-worker`, and `make release-client`.
 
 ## Tests and demos
 
