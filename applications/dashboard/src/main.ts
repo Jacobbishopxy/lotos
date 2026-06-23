@@ -1,6 +1,13 @@
 import './style.css'
+import { submitTaskToml, type BridgeSubmitResponse, type BridgeSubmitStatus } from './api'
 import { DEFAULT_DASHBOARD_POLL_INTERVAL_MS, loadDashboardData, type DashboardDataResult } from './dashboardData'
-import { SAMPLE_DASHBOARD_API_SNAPSHOT } from './sampleData'
+import {
+  buildMinimalTaskToml,
+  DEFAULT_TASK_TEMPLATE_INPUT,
+  SAMPLE_DASHBOARD_API_SNAPSHOT,
+  SAMPLE_TASK_TOML,
+  type TaskTemplateInput,
+} from './sampleData'
 import {
   buildDashboardViewModel,
   type DashboardViewModel,
@@ -155,6 +162,119 @@ const renderStatusBanner = (viewModel: DashboardViewModel, isRefreshing: boolean
   </section>
 `
 
+type SubmitPanelStatus = 'idle' | 'submitting' | BridgeSubmitStatus | 'transport-error'
+
+type SubmitPanelState = {
+  taskToml: string
+  template: TaskTemplateInput
+  status: SubmitPanelStatus
+  message: string
+  taskName?: string
+  source: string
+}
+
+const submitState: SubmitPanelState = {
+  taskToml: SAMPLE_TASK_TOML,
+  template: { ...DEFAULT_TASK_TEMPLATE_INPUT },
+  status: 'idle',
+  message: 'Generated sample TOML is ready to review, edit, import, or submit through the local bridge.',
+  source: 'Generated template',
+}
+
+const submitStatusLabel = (status: SubmitPanelStatus): string => {
+  switch (status) {
+    case 'idle':
+      return 'Ready'
+    case 'submitting':
+      return 'Submitting…'
+    case 'accepted':
+      return 'Accepted/enqueued'
+    case 'validation-error':
+      return 'Validation error'
+    case 'ack-timeout':
+      return 'ACK timeout'
+    case 'unsupported-format':
+      return 'Unsupported format'
+    case 'submit-error':
+      return 'Submit error'
+    case 'transport-error':
+      return 'Bridge request error'
+  }
+}
+
+const renderSubmitPanel = (): string => {
+  const isSubmitting = submitState.status === 'submitting'
+  const disabled = isSubmitting ? 'disabled' : ''
+  const taskName = submitState.taskName
+    ? `<p><strong>Task:</strong> ${escapeHtml(submitState.taskName)}</p>`
+    : ''
+
+  return `
+    <section class="submit-panel" aria-labelledby="submit-panel-title">
+      <div class="submit-panel__header">
+        <div>
+          <span class="eyebrow">Optional submit-only bridge</span>
+          <h2 id="submit-panel-title">Submit a TaskSchedule TOML contract</h2>
+        </div>
+        ${renderPill(isSubmitting ? 'idle' : submitState.status === 'accepted' ? 'healthy' : submitState.status === 'idle' ? 'idle' : 'warning', submitStatusLabel(submitState.status))}
+      </div>
+      <p class="submit-panel__intro">
+        Paste, edit, import, or generate TOML. The browser sends only a JSON envelope to the local client bridge; ACKs mean accepted/enqueued, not task completion.
+      </p>
+
+      <div class="submit-panel__layout">
+        <div class="submit-editor">
+          <label class="field-label" for="submit-task-toml">Task TOML</label>
+          <textarea id="submit-task-toml" data-submit-toml spellcheck="false" ${disabled}>${escapeHtml(submitState.taskToml)}</textarea>
+          <div class="submit-actions" aria-label="Submit TOML actions">
+            <button class="button button--primary" type="button" data-submit-action="submit" ${disabled}>${isSubmitting ? 'Submitting…' : 'Submit'}</button>
+            <label class="button button--ghost submit-file-control">
+              Import TOML file
+              <input type="file" data-submit-file accept=".toml,text/toml,text/plain" ${disabled} />
+            </label>
+            <button class="button button--ghost" type="button" data-submit-action="load-template" ${disabled}>Load generated template</button>
+          </div>
+        </div>
+
+        <form class="template-form" data-submit-template-form>
+          <div>
+            <span class="eyebrow">Minimal template</span>
+            <h3>Generate editable TOML</h3>
+            <p>Use this for a valid sample contract, then edit the TOML before submitting if needed.</p>
+          </div>
+          <label class="field-label">
+            Task name
+            <input data-template-field="name" type="text" value="${escapeHtml(submitState.template.name)}" ${disabled} />
+          </label>
+          <label class="field-label">
+            Shell command
+            <textarea data-template-field="command" rows="3" ${disabled}>${escapeHtml(submitState.template.command)}</textarea>
+          </label>
+          <div class="template-form__row">
+            <label class="field-label">
+              Marker path
+              <input data-template-field="markerPath" type="text" value="${escapeHtml(submitState.template.markerPath)}" ${disabled} />
+            </label>
+            <label class="field-label">
+              Timeout seconds
+              <input data-template-field="timeoutSec" type="number" min="0" step="1" value="${submitState.template.timeoutSec}" ${disabled} />
+            </label>
+          </div>
+          <button class="button" type="submit" ${disabled}>Generate TOML</button>
+        </form>
+
+        <aside class="submit-result submit-result--${submitState.status}" aria-live="polite">
+          <span class="eyebrow">Submit state</span>
+          <h3>${escapeHtml(submitStatusLabel(submitState.status))}</h3>
+          <p>${escapeHtml(submitState.message)}</p>
+          ${taskName}
+          <small>Source: ${escapeHtml(submitState.source)} · Watch existing read-only queue, worker, and log panels after enqueue.</small>
+        </aside>
+      </div>
+    </section>
+  `
+}
+
 const renderDashboard = (viewModel: DashboardViewModel, isRefreshing: boolean): string => `
   <main class="shell">
     <header class="hero">
@@ -171,12 +291,12 @@ const renderDashboard = (viewModel: DashboardViewModel, isRefreshing: boolean): 
       </nav>
       <section class="hero__content">
         <div>
-          <span class="eyebrow">Read-only live operations surface</span>
-          <h2>Queues, workers, reservations, and LogIngest state from TaskSchedule.</h2>
+          <span class="eyebrow">Observer plus optional submit-only bridge</span>
+          <h2>Queues, workers, reservations, LogIngest state, and safe TOML enqueue.</h2>
         </div>
         <p>
-          The dashboard polls existing read-only HTTP endpoints and falls back to the same useful
-          sample state when a local server is unavailable. No task control or broker mutation is exposed.
+          The dashboard polls existing read-only HTTP endpoints and can submit TOML only through the local
+          client bridge. No retry, cancel, delete, worker, queue, or scheduler controls are exposed.
         </p>
       </section>
     </header>
@@ -186,6 +306,8 @@ const renderDashboard = (viewModel: DashboardViewModel, isRefreshing: boolean): 
     <section class="endpoint-strip" aria-label="Endpoint status strip">
       ${viewModel.endpoints.map(renderEndpoint).join('')}
     </section>
+
+    ${renderSubmitPanel()}
 
     <section class="section-heading">
       <div>
@@ -322,6 +444,195 @@ const patchDashboard = (html: string): void => {
 let currentResult: DashboardDataResult | undefined
 let isRefreshing = false
 
+const makeOfflineDashboardResult = (): DashboardDataResult => ({
+  mode: 'offline',
+  snapshot: {
+    ...SAMPLE_DASHBOARD_API_SNAPSHOT,
+    fetchedAt: new Date().toISOString(),
+  },
+})
+
+const syncSubmitControls = (): void => {
+  const syncValue = (selector: string, value: string): void => {
+    const control = app.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)
+    if (control && control.value !== value) {
+      control.value = value
+    }
+  }
+
+  syncValue('[data-submit-toml]', submitState.taskToml)
+  syncValue('[data-template-field="name"]', submitState.template.name)
+  syncValue('[data-template-field="command"]', submitState.template.command)
+  syncValue('[data-template-field="markerPath"]', submitState.template.markerPath)
+  syncValue('[data-template-field="timeoutSec"]', String(submitState.template.timeoutSec))
+}
+
+const rerenderDashboard = (loading = false): void => {
+  renderResult(currentResult ?? makeOfflineDashboardResult(), loading)
+}
+
+const setSubmitFeedback = (status: SubmitPanelStatus, message: string, taskName?: string): void => {
+  submitState.status = status
+  submitState.message = message
+  if (taskName) {
+    submitState.taskName = taskName
+  } else {
+    delete submitState.taskName
+  }
+}
+
+const loadGeneratedTemplate = (): void => {
+  if (submitState.status === 'submitting') {
+    return
+  }
+
+  submitState.taskToml = buildMinimalTaskToml(submitState.template)
+  submitState.source = 'Generated template form'
+  setSubmitFeedback('idle', 'Generated TOML is loaded in the editor; review or submit it through the bridge.')
+  rerenderDashboard()
+}
+
+const applyBridgeResponse = (response: BridgeSubmitResponse): void => {
+  submitState.source = 'Bridge /submit response'
+  if (response.ok) {
+    setSubmitFeedback('accepted', response.message || 'accepted/enqueued', response.taskName ?? undefined)
+    return
+  }
+
+  setSubmitFeedback(response.status, response.message)
+}
+
+const submitErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) {
+    return error.name === 'AbortError'
+      ? 'Submit request timed out before the bridge returned JSON. Bridge-declared ACK timeouts are shown separately when received.'
+      : error.message
+  }
+
+  return String(error)
+}
+
+const submitCurrentToml = async (): Promise<void> => {
+  if (submitState.status === 'submitting') {
+    return
+  }
+
+  if (submitState.taskToml.trim().length === 0) {
+    submitState.source = 'Local editor validation'
+    setSubmitFeedback('validation-error', 'Task TOML is required before submitting to the bridge.')
+    rerenderDashboard()
+    return
+  }
+
+  submitState.source = 'Bridge /submit request'
+  setSubmitFeedback('submitting', 'Submitting TOML to the local bridge as `{ format: "toml", taskToml }`…')
+  rerenderDashboard(true)
+
+  try {
+    applyBridgeResponse(await submitTaskToml(submitState.taskToml))
+  } catch (error) {
+    submitState.source = 'Bridge /submit transport'
+    setSubmitFeedback('transport-error', submitErrorMessage(error))
+  }
+
+  rerenderDashboard()
+}
+
+const importTomlFile = async (input: HTMLInputElement): Promise<void> => {
+  const file = input.files?.[0]
+  if (!file) {
+    return
+  }
+
+  try {
+    submitState.taskToml = await file.text()
+    submitState.source = `Imported file: ${file.name}`
+    setSubmitFeedback('idle', `Imported ${file.name}; review or submit the TOML through the bridge.`)
+  } catch (error) {
+    submitState.source = `File import: ${file.name}`
+    setSubmitFeedback('transport-error', `Could not read TOML file: ${submitErrorMessage(error)}`)
+  } finally {
+    input.value = ''
+  }
+
+  rerenderDashboard()
+}
+
+const updateTemplateField = (field: string, value: string): void => {
+  switch (field) {
+    case 'name':
+      submitState.template.name = value
+      return
+    case 'command':
+      submitState.template.command = value
+      return
+    case 'markerPath':
+      submitState.template.markerPath = value
+      return
+    case 'timeoutSec':
+      submitState.template.timeoutSec = Number(value)
+      return
+  }
+}
+
+const handleSubmitInput = (event: Event): void => {
+  const target = event.target
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+    return
+  }
+
+  if (target.matches('[data-submit-toml]')) {
+    submitState.taskToml = target.value
+    submitState.source = 'Edited in TOML textarea'
+    if (submitState.status !== 'submitting') {
+      setSubmitFeedback('idle', 'TOML edited locally; submit when ready or keep editing.')
+    }
+    return
+  }
+
+  const templateField = target.dataset.templateField
+  if (templateField) {
+    updateTemplateField(templateField, target.value)
+  }
+}
+
+const handleSubmitChange = (event: Event): void => {
+  const target = event.target
+  if (target instanceof HTMLInputElement && target.matches('[data-submit-file]')) {
+    void importTomlFile(target)
+  }
+}
+
+const handleSubmitClick = (event: MouseEvent): void => {
+  const target = event.target
+  if (!(target instanceof Element)) {
+    return
+  }
+
+  const button = target.closest<HTMLButtonElement>('[data-submit-action]')
+  const action = button?.dataset.submitAction
+  if (!action) {
+    return
+  }
+
+  if (action === 'submit') {
+    void submitCurrentToml()
+    return
+  }
+
+  if (action === 'load-template') {
+    loadGeneratedTemplate()
+  }
+}
+
+const handleSubmitTemplate = (event: SubmitEvent): void => {
+  const target = event.target
+  if (target instanceof HTMLFormElement && target.matches('[data-submit-template-form]')) {
+    event.preventDefault()
+    loadGeneratedTemplate()
+  }
+}
+
 const renderResult = (result: DashboardDataResult, loading = false): void => {
   const viewModel = buildDashboardViewModel(result.snapshot, {
     mode: result.mode,
@@ -329,19 +640,11 @@ const renderResult = (result: DashboardDataResult, loading = false): void => {
     isLoading: loading,
   })
   patchDashboard(renderDashboard(viewModel, loading))
+  syncSubmitControls()
 }
 
 const renderInitialLoading = (): void => {
-  renderResult(
-    {
-      mode: 'offline',
-      snapshot: {
-        ...SAMPLE_DASHBOARD_API_SNAPSHOT,
-        fetchedAt: new Date().toISOString(),
-      },
-    },
-    true,
-  )
+  renderResult(makeOfflineDashboardResult(), true)
 }
 
 const refreshDashboard = async (): Promise<void> => {
@@ -360,6 +663,11 @@ const refreshDashboard = async (): Promise<void> => {
   isRefreshing = false
   renderResult(result)
 }
+
+app.addEventListener('input', handleSubmitInput)
+app.addEventListener('change', handleSubmitChange)
+app.addEventListener('click', handleSubmitClick)
+app.addEventListener('submit', handleSubmitTemplate)
 
 void refreshDashboard()
 window.setInterval(() => void refreshDashboard(), DEFAULT_DASHBOARD_POLL_INTERVAL_MS)

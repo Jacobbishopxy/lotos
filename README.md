@@ -4,7 +4,7 @@ Lotos is a Haskell/Cabal workspace for experimenting with a ZeroMQ-backed task l
 
 - `lotos`: a reusable library with logging, STM-backed data structures, concurrent process execution, and a ZMQ client/server/worker framework.
 - `TaskSchedule`: an example application that schedules shell-command tasks onto workers based on reported CPU and memory load.
-- `applications/dashboard`: a Vite + TypeScript dashboard for a light, read-only live runtime overview with sample/offline fallback.
+- `applications/dashboard`: a Vite + TypeScript dashboard for a light live runtime overview with sample/offline fallback and an optional submit-only TOML bridge panel.
 
 ## Repository layout
 
@@ -64,30 +64,35 @@ Executables:
 - `TaskSchedule:exe:ts-server` — starts the load balancer and info API.
 - `TaskSchedule:exe:ts-worker` — starts one command-executing worker.
 - `TaskSchedule:exe:ts-client` — submits a task TOML file to the load balancer frontend and waits for an ACK.
+- `TaskSchedule:exe:ts-client-bridge` — local HTTP bridge for dashboard submit-only TOML envelopes; it owns client/ZMQ config server-side and reuses the `ts-client` ACK path.
 
 ### `applications/dashboard`
 
-The dashboard is a Vite + TypeScript app under [`applications/dashboard/`](applications/dashboard/). It polls the read-only TaskSchedule info API (`/SimpleServer/info`, `/worker_stats`, `/worker_tasks`, `/tasks`, and `/logs/stats`) when available, and keeps rendering useful sample/offline data when the backend is stopped. The visual direction is light and Linear-inspired: near-white canvas, quiet gray hierarchy, hairline borders, restrained cards, and one lavender-blue primary accent.
+The dashboard is a Vite + TypeScript app under [`applications/dashboard/`](applications/dashboard/). It polls the TaskSchedule observer API (`/SimpleServer/info`, `/worker_stats`, `/worker_tasks`, `/tasks`, and `/logs/stats`) when available, keeps rendering useful sample/offline data when the backend is stopped, and can optionally submit TOML through a local client bridge. The submit panel supports paste/edit, file import, and a minimal generated-template form, but sends only `{ format: "toml", taskToml: "..." }`; the bridge owns client id, frontend address, and ACK timeout and reuses the existing ZMQ client request path. The visual direction is light and Linear-inspired: near-white canvas, quiet gray hierarchy, hairline borders, restrained cards, and one lavender-blue primary accent.
 
-For the shortest live local path, start the TaskSchedule roles with root Make targets, then open the dashboard dev server. Run the long-lived server, worker, and dashboard commands in separate terminals:
+For the shortest live local path, start the TaskSchedule roles with root Make targets, then open the dashboard dev server. Run the long-lived server, worker, bridge, and dashboard commands in separate terminals:
 
 ```bash
 make dashboard-install                # once, if node_modules is absent
 make task-schedule-server             # terminal 1; info API on http://127.0.0.1:8081
 make task-schedule-worker             # terminal 2; connects to the broker backend
-make task-schedule-submit             # terminal 3; optional demo task submission
-make task-validate                    # optional: validate task TOML without submitting
-make dashboard-dev                    # terminal 4; serves on 0.0.0.0 and proxies /SimpleServer to http://127.0.0.1:8081
+make task-schedule-client-bridge      # terminal 3; local submit bridge on http://127.0.0.1:8090/submit
+make dashboard-dev                    # terminal 4; serves on 127.0.0.1 and proxies /SimpleServer plus /submit
+# optional CLI paths remain available:
+make task-schedule-submit             # submit the demo task without the dashboard
+make task-validate                    # validate task TOML without submitting
 ```
 
-The full [Dashboard Operations Manual](docs/book/lotos/src/dashboard-operations.md) documents startup order, role boundaries, read-only endpoints, overrides, troubleshooting, and manual browser verification. Use the root Make targets to install dependencies, build, develop, or preview the app:
+The full [Dashboard Operations Manual](docs/book/lotos/src/dashboard-operations.md) documents startup order, role boundaries, observer endpoints, the optional submit-only bridge, overrides, troubleshooting, and manual browser verification. Use the root Make targets to install dependencies, build, develop, preview, or smoke the app:
 
 ```bash
 make dashboard-install
 make dashboard-build                  # no live server required; sample/offline fallback remains available
-make dashboard-dev                    # serves on DASHBOARD_HOST and proxies /SimpleServer to DASHBOARD_API_TARGET
-DASHBOARD_HOST=0.0.0.0 DASHBOARD_API_TARGET=http://127.0.0.1:8081 make dashboard-dev
-DASHBOARD_API_BASE=http://127.0.0.1:8081 make dashboard-build  # direct API base for same-origin/CORS-enabled previews
+make dashboard-dev                    # serves on DASHBOARD_HOST and proxies /SimpleServer plus /submit
+make smoke-dashboard-bridge           # server + worker + bridge + dashboard proxy submit evidence under .tmp/
+make smoke-dashboard-browser          # same smoke plus real browser click automation; requires BROWSER_BIN or Chrome/Chromium on PATH
+DASHBOARD_HOST=127.0.0.1 DASHBOARD_API_TARGET=http://127.0.0.1:8081 DASHBOARD_BRIDGE_TARGET=http://127.0.0.1:8090 make dashboard-dev
+DASHBOARD_API_BASE=http://127.0.0.1:8081 DASHBOARD_BRIDGE_BASE=http://127.0.0.1:8090 make dashboard-build  # direct bases are baked at build time and require same-origin/external CORS proxying
 make dashboard-preview
 ```
 
@@ -160,7 +165,7 @@ make book-serve
 make book-serve MDBOOK_HOST=0.0.0.0 MDBOOK_PORT=3004 MDBOOK_DIR=docs/book/lotos
 ```
 
-The book source is under [`docs/book/lotos`](docs/book/lotos/src/SUMMARY.md). New readers should start with [Start Here](docs/book/lotos/src/start-here.md). Use the [Dashboard Operations Manual](docs/book/lotos/src/dashboard-operations.md) for the read-only dashboard path and the [Runtime Failure Runbook](docs/book/lotos/src/runtime-failures.md) when diagnosing stuck workers, LogIngest backlog, broker overload, stale heartbeats, capacity-reservation surprises, or smoke failures. Generated HTML is written to `docs/book/lotos/book/` by mdBook and should not be committed.
+The book source is under [`docs/book/lotos`](docs/book/lotos/src/SUMMARY.md). New readers should start with [Start Here](docs/book/lotos/src/start-here.md). Use the [Dashboard Operations Manual](docs/book/lotos/src/dashboard-operations.md) for the observer plus optional submit-only dashboard path and the [Runtime Failure Runbook](docs/book/lotos/src/runtime-failures.md) when diagnosing stuck workers, LogIngest backlog, broker overload, stale heartbeats, capacity-reservation surprises, or smoke failures. Generated HTML is written to `docs/book/lotos/book/` by mdBook and should not be committed.
 
 ## Architecture overview
 

@@ -1,6 +1,6 @@
 # Lotos dashboard visual foundation
 
-This dashboard is a static Vite + TypeScript foundation for visualizing Lotos and TaskSchedule runtime state. It polls the broker's existing read-only info/log endpoints when available and falls back to sample data when a local TaskSchedule server is unavailable.
+This dashboard is a static Vite + TypeScript foundation for visualizing Lotos and TaskSchedule runtime state. It polls the broker's existing read-only info/log endpoints when available and falls back to sample data when a local TaskSchedule server is unavailable. When a local TaskSchedule client bridge is enabled, it also offers one submit-only TOML panel that posts `{ format, taskToml }` to the bridge.
 
 ## Light theme direction
 
@@ -18,10 +18,11 @@ The UI follows a light, Linear-inspired direction rather than a dark operations 
 - **Endpoint/status strip:** compact health summaries for info, worker, log, and broker endpoints.
 - **Worker cards:** capacity, heartbeat, queue, and load signals with subtle progress rails.
 - **Queue/reservation cards:** runtime queue depth, high-water marks, reservation counts, and overload state.
+- **Submit-only panel:** TOML upload/paste/edit/template flow with accepted/enqueued, validation, and ACK-timeout feedback while keeping client/ZMQ config server-owned.
 - **Logs/status panels:** recent event stream plus operational notes for what the static shell will eventually connect to.
 
 ## Non-goals
 
-- No authentication, writes, task control, or required live server dependency for build/preview.
-- No backend API changes.
+- No authentication, broad writes, retry/cancel/delete/worker controls, queue mutation, or required live server dependency for build/preview.
+- No browser ZMQ access and no browser-supplied client/frontend/worker configuration.
 - No dark/neon-first theme.

@@ -8,8 +8,11 @@
 
 module Client
   ( SimpleClient (..),
+    defaultClientConfig,
     getTaskFromFile,
     readTaskFromFile,
+    readTaskFromTomlText,
+    submitClientTask,
     validateClientTask,
   )
 where
@@ -27,6 +30,8 @@ import Adt
 import Control.Monad (forM_, unless, when)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
+import qualified Data.Text.IO as TextIO
+import Lotos.Logger (LogLevel (DEBUG), withLocalTimeLogger)
 import Lotos.Zmq
 import Toml (TomlCodec, (.=))
 import qualified Toml
@@ -61,11 +66,28 @@ getTaskFromFile fp = do
     Right task -> pure task
 
 readTaskFromFile :: FilePath -> IO (Either String (Task ClientTask))
-readTaskFromFile fp = do
-  parsed <- Toml.decodeFileEither taskFileCodec fp
-  pure $ case parsed of
+readTaskFromFile fp = readTaskFromTomlText <$> TextIO.readFile fp
+
+readTaskFromTomlText :: Text.Text -> Either String (Task ClientTask)
+readTaskFromTomlText tomlText =
+  case Toml.decode taskFileCodec tomlText of
     Left errs -> Left $ Text.unpack $ Toml.prettyTomlDecodeErrors errs
     Right taskFile -> taskFileToTask taskFile >>= validateClientTask
+
+defaultClientConfig :: ClientServiceConfig
+defaultClientConfig =
+  ClientServiceConfig
+    { clientId = "simpleClient_1",
+      loadBalancerFrontendAddr = "tcp://127.0.0.1:5555",
+      reqTimeoutSec = 5
+    }
+
+submitClientTask :: ClientServiceConfig -> Task ClientTask -> IO (Maybe Ack)
+submitClientTask clientConfig task =
+  withLocalTimeLogger "./logs/taskScheduleClient.log" DEBUG False $ \logConfig ->
+    runZmqApp logConfig $ do
+      service <- mkClientService clientConfig
+      sendTaskRequest service task
 
 validateClientTask :: Task ClientTask -> Either String (Task ClientTask)
 validateClientTask task = do

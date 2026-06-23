@@ -134,6 +134,7 @@ library ts-client-lib
   exposed-modules:
     Adt
     Client
+    ClientBridge
     Util
 
   build-depends:
@@ -160,3 +161,47 @@ executable ts-client
     , text
 
   hs-source-dirs: app
+
+executable ts-client-bridge
+  import:         shared-properties
+  main-is:        TaskScheduleClientBridge.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , aeson
+    , base
+    , bytestring
+    , directory
+    , http-types
+    , lotos
+    , TaskSchedule:ts-client-lib
+    , text
+    , time
+    , wai
+    , warp
+
+  hs-source-dirs: app
+
+test-suite test-client-submission
+  import:         shared-properties
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        ClientSubmission.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , HUnit
+    , lotos
+    , TaskSchedule:ts-client-lib
+    , text
+
+test-suite test-client-bridge
+  import:         shared-properties
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is:        ClientBridgeSpec.hs
+  ghc-options:    -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , bytestring
+    , HUnit
+    , lotos
+    , TaskSchedule:ts-client-lib
+    , text

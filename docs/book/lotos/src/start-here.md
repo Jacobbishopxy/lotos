@@ -36,12 +36,12 @@ Use this page as the shortest path through the Lotos docs.
    make smoke-multi
    ```
 
-3. Use [Dashboard Operations Manual](dashboard-operations.md) for the read-only dashboard startup path:
+3. Use [Dashboard Operations Manual](dashboard-operations.md) for the observer plus optional submit-only dashboard startup path:
 
    ```bash
    make task-schedule-server
    make task-schedule-worker
-   make task-schedule-submit
+   make task-schedule-client-bridge
    make dashboard-dev
    ```
 

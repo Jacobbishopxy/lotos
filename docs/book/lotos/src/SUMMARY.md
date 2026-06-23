@@ -14,6 +14,7 @@
 - [TaskSchedule](task-schedule.md)
 - [TaskSchedule Demo](task-schedule-demo.md)
 - [Dashboard Operations Manual](dashboard-operations.md)
+- [Dashboard Client Bridge Experiment](dashboard-client-bridge-experiment.md)
 - [Operations Runbook](operations.md)
 - [Runtime Failure Runbook](runtime-failures.md)
 - [Compatibility Notes](compatibility.md)

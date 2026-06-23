@@ -28,7 +28,7 @@ Use the [Runtime Failure Runbook](runtime-failures.md) when workers stop making 
 
 ## Dashboard operations
 
-Use the [Dashboard Operations Manual](dashboard-operations.md) for the read-only visualization startup path, dashboard-specific Make targets, API root/proxy overrides, and manual browser verification. Keep deeper failure diagnosis on this runbook and the [Runtime Failure Runbook](runtime-failures.md).
+Use the [Dashboard Operations Manual](dashboard-operations.md) for the observer plus optional submit-only dashboard startup path, dashboard-specific Make targets, API/bridge proxy overrides, and manual browser verification. Keep deeper failure diagnosis on this runbook and the [Runtime Failure Runbook](runtime-failures.md).
 
 ## HTTP probes
 

@@ -8,11 +8,10 @@
 module Main where
 
 import Adt (ClientTask)
-import Client (readTaskFromFile)
+import Client (defaultClientConfig, readTaskFromFile, submitClientTask)
 import Control.Exception (SomeException, try)
 import Data.Text qualified as Text
-import Lotos.Logger (LogLevel (DEBUG), runZmqApp, withLocalTimeLogger)
-import Lotos.Zmq (Ack, ClientServiceConfig (..), Task (..), mkClientService, readClientConfig, sendTaskRequest)
+import Lotos.Zmq (Ack, ClientServiceConfig (..), Task (..), readClientConfig)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
@@ -41,14 +40,6 @@ parseClientArgs [taskToml] = Right $ ClientArgs Submit Nothing taskToml
 parseClientArgs [clientConfigJson, taskToml] = Right $ ClientArgs Submit (Just clientConfigJson) taskToml
 parseClientArgs _ = Left usage
 
-defaultClientConfig :: ClientServiceConfig
-defaultClientConfig =
-  ClientServiceConfig
-    { clientId = "simpleClient_1",
-      loadBalancerFrontendAddr = "tcp://127.0.0.1:5555",
-      reqTimeoutSec = 5
-    }
-
 loadClientConfig :: ClientArgs -> IO ClientServiceConfig
 loadClientConfig ClientArgs {clientConfigPath = Nothing} = pure defaultClientConfig
 loadClientConfig ClientArgs {clientConfigPath = Just path} = readClientConfig path
@@ -59,13 +50,6 @@ readClientTask ClientArgs {clientTaskPath = path} = do
   case result of
     Left err -> fail $ "Invalid task TOML: " <> err
     Right task -> pure task
-
-submitClientTask :: ClientServiceConfig -> Task ClientTask -> IO (Maybe Ack)
-submitClientTask clientConfig task =
-  withLocalTimeLogger "./logs/taskScheduleClient.log" DEBUG False $ \logConfig ->
-    runZmqApp logConfig $ do
-      service <- mkClientService clientConfig
-      sendTaskRequest service task
 
 describeClientRun :: ClientArgs -> ClientServiceConfig -> Task ClientTask -> String
 describeClientRun ClientArgs {..} clientConfig task =
