@@ -57,7 +57,8 @@ defaultBrokerConfig =
       -- info storage
       infoStorage =
         InfoStorageConfig
-          { httpPort = 8081,
+          { httpHost = "127.0.0.1",
+            httpPort = 8081,
             loggingAddr = "tcp://127.0.0.1:5557",
             loggingsBufferSize = 1000,
             infoFetchIntervalSec = 10
@@ -85,7 +86,7 @@ brokerAliveStatus cfg =
       aliveDetails =
         [ "frontend=" <> Text.unpack (frontendAddr (socketLayer cfg)),
           "backend=" <> Text.unpack (backendAddr (socketLayer cfg)),
-          "info=http://127.0.0.1:" <> show (httpPort (infoStorage cfg)) <> "/SimpleServer",
+          "info=http://" <> Text.unpack (httpHost (infoStorage cfg)) <> ":" <> show (httpPort (infoStorage cfg)) <> "/SimpleServer",
           "logIngest=" <> Text.unpack (logIngestAddr (logIngest cfg))
         ],
       aliveIntervalSec = 5

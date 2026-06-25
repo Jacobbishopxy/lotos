@@ -374,7 +374,14 @@ routerLoopRejectsMismatchedEnvelopeBeforeMutation = withJournal $ \journalPath -
 
 sameAddressLogIngestRouterStartsNormally :: Assertion
 sameAddressLogIngestRouterStartsNormally = withJournal $ \journalPath -> withTaskId $ \taskId -> do
-  let infoCfg = InfoStorageConfig 8081 "inproc://tp025-log-ingest-same-address" 100 1
+  let infoCfg =
+        InfoStorageConfig
+          { httpHost = "127.0.0.1",
+            httpPort = 8081,
+            loggingAddr = "inproc://tp025-log-ingest-same-address",
+            loggingsBufferSize = 100,
+            infoFetchIntervalSec = 1
+          }
       cfg = (testConfig journalPath) {logIngestAddr = loggingAddr infoCfg}
       batch = mkBatch 1 [mkEvent taskId 1]
   Logger.withConsoleLogger Logger.ERROR $ \env -> do

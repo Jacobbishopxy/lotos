@@ -111,6 +111,17 @@ Deeper operational probes such as `/logs/recent`, `/logs/worker/<workerId>`, `/l
 
 ## Add workers or move beyond loopback
 
+Default configs bind to loopback. To generate and use public-bind configs for all TaskSchedule TCP binds plus the broker HTTP API and dashboard dev server, set `TASKSCHEDULE_BIND_ALL=1` on the same Make targets:
+
+```bash
+TASKSCHEDULE_BIND_ALL=1 TASKSCHEDULE_CONNECT_HOST=<server-ip-or-dns> make task-schedule-server
+TASKSCHEDULE_BIND_ALL=1 TASKSCHEDULE_CONNECT_HOST=<server-ip-or-dns> make task-schedule-worker
+TASKSCHEDULE_BIND_ALL=1 TASKSCHEDULE_CONNECT_HOST=<server-ip-or-dns> make task-schedule-client-bridge
+TASKSCHEDULE_BIND_ALL=1 make dashboard-dev
+```
+
+This writes generated configs to `.tmp/task-schedule-bind-all-config/`. `TASKSCHEDULE_BIND_HOST` defaults to `0.0.0.0`; `TASKSCHEDULE_CONNECT_HOST` is the concrete host workers/clients use to reach the broker and should not be `0.0.0.0` for remote machines.
+
 For additional local workers, create another worker JSON with a unique `workerId` and the same broker backend/log addresses, then run:
 
 ```bash
@@ -119,11 +130,10 @@ make task-schedule-worker TASKSCHEDULE_WORKER_CONFIG=path/to/worker-2.json
 
 For multi-host deployments:
 
-1. Change broker bind addresses in `applications/TaskSchedule/config/broker.json` from loopback to reachable host/interface addresses.
-2. Point worker configs at the broker backend and LogIngest host.
-3. Point client/bridge configs at the broker frontend host.
-4. Keep the dashboard and bridge behind loopback or a same-origin reverse proxy where possible.
-5. If exposing the bridge beyond loopback, set `bridgeAllowNoOrigin` to `false` and enumerate exact `bridgeAllowedOrigins` in `applications/TaskSchedule/config/client-bridge.json`.
+1. Prefer `TASKSCHEDULE_BIND_ALL=1 TASKSCHEDULE_CONNECT_HOST=<server-ip-or-dns>` to generate public-bind configs instead of editing checked-in loopback configs.
+2. Point remote worker/client/bridge configs at the broker's concrete host or DNS name, not `0.0.0.0`.
+3. Keep the dashboard and bridge behind loopback or a same-origin reverse proxy where possible.
+4. If exposing the bridge beyond loopback, keep generated `bridgeAllowNoOrigin=false` and enumerate exact `bridgeAllowedOrigins` in the generated or custom bridge config.
 
 The dashboard is an observer-first UI. It intentionally does not expose retry, cancel, delete, worker restart, broker mutation, or scheduler-control actions.
 

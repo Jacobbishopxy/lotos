@@ -137,7 +137,9 @@ make task-validate TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-
 make task-template TASKSCHEDULE_TASK_TEMPLATE_OUT=tasks/new-task.toml
 ```
 
-Use matching frontend/backend/LogIngest addresses across those config files. The bridge defaults to loopback bind; non-loopback bridge exposure should be an explicit operator decision because it enables task submission. For non-loopback deployments, set `bridgeAllowNoOrigin` to `false`, list exact browser origins in `bridgeAllowedOrigins`, and prefer a same-origin reverse proxy over direct cross-origin bridge posts.
+Use matching frontend/backend/LogIngest addresses across those config files. The checked-in configs default to loopback binds. To opt into public binds without editing checked-in JSON, pass `TASKSCHEDULE_BIND_ALL=1` to the same Make targets; this generates `.tmp/task-schedule-bind-all-config/*.json` with broker TCP binds, broker HTTP `httpHost`, bridge bind, and dashboard dev host set from `TASKSCHEDULE_BIND_HOST` (default `0.0.0.0`). Set `TASKSCHEDULE_CONNECT_HOST=<server-ip-or-dns>` to the concrete address workers, clients, and the bridge use to connect back to the broker. Do not use `0.0.0.0` as a remote connect address.
+
+The bridge defaults to loopback bind; non-loopback bridge exposure should be an explicit operator decision because it enables task submission. For non-loopback deployments, set `bridgeAllowNoOrigin` to `false`, list exact browser origins in `bridgeAllowedOrigins`, and prefer a same-origin reverse proxy over direct cross-origin bridge posts. Generated `TASKSCHEDULE_BIND_ALL=1` bridge configs set `bridgeAllowNoOrigin=false` and include loopback plus `TASKSCHEDULE_CONNECT_HOST` / `TASKSCHEDULE_DASHBOARD_ORIGIN_HOST` dashboard origins for ports 5173 and 4173.
 
 ### Dashboard API and serving
 
@@ -148,6 +150,7 @@ make dashboard-dev \
   DASHBOARD_API_ROOT=/SimpleServer \
   DASHBOARD_BRIDGE_TARGET=http://127.0.0.1:8090 \
   DASHBOARD_BRIDGE_PATH=/submit
+TASKSCHEDULE_BIND_ALL=1 TASKSCHEDULE_CONNECT_HOST=<server-ip-or-dns> make dashboard-dev
 make dashboard-build DASHBOARD_API_BASE= DASHBOARD_API_ROOT=/SimpleServer DASHBOARD_BRIDGE_BASE= DASHBOARD_BRIDGE_PATH=/submit
 # Direct bases are baked at build time; rebuild with them before previewing.
 make dashboard-build DASHBOARD_API_BASE=http://127.0.0.1:8081 DASHBOARD_BRIDGE_BASE=http://127.0.0.1:8090 \
@@ -155,7 +158,7 @@ make dashboard-build DASHBOARD_API_BASE=http://127.0.0.1:8081 DASHBOARD_BRIDGE_B
 # Direct bases also require same-origin serving or external CORS/reverse-proxy support.
 ```
 
-- `DASHBOARD_HOST` defaults to `127.0.0.1` because the dev server proxies submit traffic. Override deliberately if you need remote access.
+- `DASHBOARD_HOST` defaults to `127.0.0.1` because the dev server proxies submit traffic. Override deliberately if you need remote access. `TASKSCHEDULE_BIND_ALL=1` makes the Make target use `TASKSCHEDULE_BIND_HOST` for the dashboard dev host.
 - `DASHBOARD_API_TARGET` configures the Vite dev proxy target for observer endpoints.
 - `DASHBOARD_API_ROOT` defaults to `/SimpleServer` and must match the broker service name.
 - `DASHBOARD_API_BASE` is used by built/previewed assets when you want direct browser fetches without the dev proxy. The broker observer API itself does not add browser CORS headers, so direct preview/build fetches need same-origin serving or an external CORS/reverse proxy.

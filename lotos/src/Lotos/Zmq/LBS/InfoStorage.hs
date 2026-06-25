@@ -19,6 +19,7 @@ import Control.Monad.RWS
 import Data.Aeson ((.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Map qualified as Map
+import Data.String (fromString)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Data.UUID qualified as UUID
@@ -106,8 +107,11 @@ runInfoStorage httpName InfoStorageConfig {..} logIngestState tsd = do
       srv = serve (Proxy @(HttpAPI name t w)) (httpServer infoStorageServer)
 
   -- 4. Run the HTTP server in a separate thread.
-  t1 <- liftIO $ forkIO $ Warp.run httpPort srv
-  logApp INFO $ "HTTP server started on port " <> show httpPort <> ", thread ID: " <> show t1
+  let settings =
+        Warp.setHost (fromString $ Text.unpack httpHost) $
+          Warp.setPort httpPort Warp.defaultSettings
+  t1 <- liftIO $ forkIO $ Warp.runSettings settings srv
+  logApp INFO $ "HTTP server started on " <> Text.unpack httpHost <> ":" <> show httpPort <> ", thread ID: " <> show t1
 
   -- 5. Run the scheduler snapshot loop.
   t2 <- forkApp $ infoLoop infoStorageServer tsd

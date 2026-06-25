@@ -78,14 +78,14 @@ make dashboard-build DASHBOARD_API_BASE=http://127.0.0.1:8081 DASHBOARD_BRIDGE_B
 # Direct bases also require same-origin serving or external CORS/reverse-proxy support.
 ```
 
-- `DASHBOARD_HOST` defaults to `127.0.0.1` because the dev server now proxies a submit endpoint. Override deliberately if you need remote access.
+- `DASHBOARD_HOST` defaults to `127.0.0.1` because the dev server now proxies a submit endpoint. Override deliberately if you need remote access. From the repo root, `TASKSCHEDULE_BIND_ALL=1 make dashboard-dev` uses `TASKSCHEDULE_BIND_HOST` (default `0.0.0.0`) for the dev server host.
 - `DASHBOARD_API_TARGET` / `VITE_TASKSCHEDULE_API_TARGET` configures the Vite dev proxy target for observer endpoints.
 - `DASHBOARD_API_ROOT` / `VITE_TASKSCHEDULE_API_ROOT` defaults to `/SimpleServer`.
 - `DASHBOARD_API_BASE` / `VITE_TASKSCHEDULE_API_BASE` is used by built assets when fetching observer endpoints directly. The broker observer API does not add browser CORS headers itself, so built/preview assets need same-origin serving or an external CORS/reverse proxy for direct observer fetches.
 - `DASHBOARD_BRIDGE_TARGET` configures the Vite dev proxy target for `/submit`.
 - `DASHBOARD_BRIDGE_BASE` / `VITE_TASKSCHEDULE_BRIDGE_BASE` is used by built/preview assets when posting directly to the bridge. Direct browser posts are accepted only from the bridge config's `bridgeAllowedOrigins`; use the dev proxy or a same-origin reverse proxy for other deployments.
 - `DASHBOARD_API_TIMEOUT_MS` and `DASHBOARD_BRIDGE_TIMEOUT_MS` control read and submit timeouts.
-- `applications/TaskSchedule/config/client-bridge.json` owns bridge-side `bridgeAllowedOrigins` and `bridgeAllowNoOrigin`. Keep `bridgeAllowNoOrigin=true` for local curl/dev-proxy smoke; set it to `false` and enumerate exact origins for non-loopback deployments.
+- `applications/TaskSchedule/config/client-bridge.json` owns bridge-side `bridgeAllowedOrigins` and `bridgeAllowNoOrigin`. Keep `bridgeAllowNoOrigin=true` for local curl/dev-proxy smoke; set it to `false` and enumerate exact origins for non-loopback deployments. The root `TASKSCHEDULE_BIND_ALL=1` flag generates public-bind bridge configs under `.tmp/task-schedule-bind-all-config/` with `bridgeAllowNoOrigin=false`.
 
 ## Troubleshooting
 

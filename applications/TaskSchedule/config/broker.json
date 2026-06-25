@@ -16,6 +16,7 @@
     "workerStaleTimeoutSec": 60
   },
   "infoStorage": {
+    "httpHost": "127.0.0.1",
     "httpPort": 8081,
     "logIngestDefaultAddr": "tcp://127.0.0.1:5557",
     "logIngestDefaultBufferSize": 1000,

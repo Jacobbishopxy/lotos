@@ -149,7 +149,9 @@ instance Aeson.FromJSON TaskProcessorConfig where
 -- 'logIngest' block. InfoStorage no longer binds a worker-log SUB socket or
 -- embeds retained log lines in /info snapshots.
 data InfoStorageConfig = InfoStorageConfig
-  { httpPort :: Int,
+  { httpHost :: Text.Text,
+    -- ^ Servant/Warp host for the info API.
+    httpPort :: Int,
     -- ^ Servant/Warp port for the info API.
     loggingAddr :: Text.Text,
     -- ^ Deprecated compatibility endpoint used only for default derivation.
@@ -170,17 +172,23 @@ data InfoStorageConfig = InfoStorageConfig
 -- unchanged so existing record construction/imports continue to compile.
 instance Aeson.FromJSON InfoStorageConfig where
   parseJSON = Aeson.withObject "InfoStorageConfig" $ \v -> do
+    parsedHttpHost <- maybe defaultInfoStorageHttpHost id <$> v Aeson..:? "httpHost"
     parsedHttpPort <- v Aeson..: "httpPort"
     parsedLoggingAddr <- maybe defaultLegacyLoggingAddr id <$> optionalPreferredKey v "logIngestDefaultAddr" "loggingAddr"
     parsedLoggingsBufferSize <- maybe defaultLegacyLoggingsBufferSize id <$> optionalPreferredKey v "logIngestDefaultBufferSize" "loggingsBufferSize"
     parsedInfoFetchIntervalSec <- v Aeson..: "infoFetchIntervalSec"
     pure $
       InfoStorageConfig
-        { httpPort = parsedHttpPort,
+        { httpHost = parsedHttpHost,
+          httpPort = parsedHttpPort,
           loggingAddr = parsedLoggingAddr,
           loggingsBufferSize = parsedLoggingsBufferSize,
           infoFetchIntervalSec = parsedInfoFetchIntervalSec
         }
+
+-- | Default retained for JSON that omits the explicit HTTP bind host.
+defaultInfoStorageHttpHost :: Text.Text
+defaultInfoStorageHttpHost = "127.0.0.1"
 
 -- | Default retained for JSON that omits the deprecated logging/default address.
 defaultLegacyLoggingAddr :: Text.Text

@@ -209,6 +209,7 @@ logSequenceFramesRejectNegativeAndOverflow = do
 oldBrokerAndWorkerConfigsGetLoggingDefaults :: Assertion
 oldBrokerAndWorkerConfigsGetLoggingDefaults = do
   brokerCfg <- unwrapEither (Aeson.eitherDecode oldBrokerConfigJson)
+  httpHost (infoStorage brokerCfg) @?= "127.0.0.1"
   logIngestAddr (logIngest brokerCfg) @?= defaultReliableLogIngestAddr (loggingAddr (infoStorage brokerCfg))
   logIngestDropPolicy (logIngest brokerCfg) @?= LogDropOldest
   logIngestSocketHWM (logIngest brokerCfg) @?= logIngestSocketHWM (defaultLogIngestConfig (defaultReliableLogIngestAddr (loggingAddr (infoStorage brokerCfg))))
@@ -220,6 +221,7 @@ oldBrokerAndWorkerConfigsGetLoggingDefaults = do
 newBrokerAndWorkerConfigsUsePreferredLoggingNames :: Assertion
 newBrokerAndWorkerConfigsUsePreferredLoggingNames = do
   brokerCfg <- unwrapEither (Aeson.eitherDecode newBrokerConfigJson)
+  httpHost (infoStorage brokerCfg) @?= "127.0.0.1"
   loggingAddr (infoStorage brokerCfg) @?= "tcp://127.0.0.1:6007"
   loggingsBufferSize (infoStorage brokerCfg) @?= 42
   logIngestAddr (logIngest brokerCfg) @?= "tcp://127.0.0.1:6008"
@@ -232,6 +234,7 @@ newBrokerAndWorkerConfigsUsePreferredLoggingNames = do
 mixedLoggingNamesPreferNewAliasesAndExplicitBlocks :: Assertion
 mixedLoggingNamesPreferNewAliasesAndExplicitBlocks = do
   brokerCfg <- unwrapEither (Aeson.eitherDecode mixedBrokerConfigJson)
+  httpHost (infoStorage brokerCfg) @?= "127.0.0.1"
   loggingAddr (infoStorage brokerCfg) @?= "tcp://127.0.0.1:6007"
   loggingsBufferSize (infoStorage brokerCfg) @?= 42
   logIngestAddr (logIngest brokerCfg) @?= "tcp://127.0.0.1:6008"
@@ -249,6 +252,7 @@ checkedInTaskScheduleConfigsParse = do
   brokerCfg <- readBrokerConfig brokerPath
   workerCfg <- readWorkerConfig workerPath
   clientCfg <- readClientConfig clientPath
+  httpHost (infoStorage brokerCfg) @?= "127.0.0.1"
   loggingAddr (infoStorage brokerCfg) @?= "tcp://127.0.0.1:5557"
   logIngestAddr (logIngest brokerCfg) @?= "tcp://127.0.0.1:5558"
   loadBalancerLoggingAddr workerCfg @?= logIngestAddr (workerLogging workerCfg)
