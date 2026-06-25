@@ -95,6 +95,16 @@ make task-template TASKSCHEDULE_TASK_TEMPLATE_OUT=tasks/my-task.toml
 
 A minimal task is TOML with `schemaVersion = "task-schedule/v2"`, `name`, `[retry]`, `[schedule]`, at least one `[[steps]]`, and optional output/success checks. `[schedule]` supports `maxRuntimeSec`, `maxCpuPercent`, and `maxRssMb` admission hints; CPU/RSS hints choose compatible workers from heartbeat snapshots and are not hard cgroup enforcement. The checked-in example is `applications/TaskSchedule/config/task-demo.toml`.
 
+Resource-load mock tasks are available for manual dashboard/cluster testing:
+
+```bash
+make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-cpu.toml
+make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-rss.toml
+make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-cpu-rss.toml
+```
+
+Edit each TOML's `scripts/task-schedule-resource-burner.py` args to tune load: `--cpu-workers N` burns roughly `N*100%` CPU, and `--mem-percent P` holds roughly `P%` memory subject to `--max-rss-mb`. The script path is resolved on the worker, relative to the worker process cwd.
+
 ## Observe runtime state
 
 Use the dashboard or probe the read-only API directly:

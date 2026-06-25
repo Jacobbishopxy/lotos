@@ -1,0 +1,46 @@
+# CPU mock task.
+# Tune --cpu-workers in [steps.run].args: N workers ~= N*100% CPU.
+# Keep timeoutSec greater than --duration-sec.
+schemaVersion = "task-schedule/v2"
+name = "resource burn: 2 CPU workers"
+description = "Spin two CPU worker processes for dashboard/scheduler load testing. Edit --cpu-workers in this TOML to change N*100% CPU."
+labels = ["mock", "resource", "cpu"]
+
+[retry]
+maxAttempts = 0
+intervalSec = 0
+
+[schedule]
+priority = 50
+requiredTags = []
+preferredTags = []
+maxRuntimeSec = 75
+maxCpuPercent = 100
+maxRssMb = 256
+
+[[steps]]
+name = "burn-cpu"
+
+[steps.run]
+type = "shell"
+command = "python3"
+args = [
+  "scripts/task-schedule-resource-burner.py",
+  "--duration-sec", "60",
+  "--cpu-workers", "2",
+  "--mem-percent", "0",
+  "--max-rss-mb", "0",
+  "--output", ".tmp/task-schedule-resource-burn-cpu.json"
+]
+timeoutSec = 75
+
+[[outputs]]
+name = "resource-burn-summary"
+kind = "file"
+path = ".tmp/task-schedule-resource-burn-cpu.json"
+required = true
+
+[[success.checks]]
+name = "summary written"
+type = "path-nonempty"
+path = ".tmp/task-schedule-resource-burn-cpu.json"

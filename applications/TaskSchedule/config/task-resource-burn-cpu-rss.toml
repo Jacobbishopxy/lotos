@@ -1,0 +1,46 @@
+# Combined CPU + RSS mock task.
+# Tune --cpu-workers for N*100% CPU and --mem-percent for %MEM.
+# --max-rss-mb keeps the checked-in example large but bounded.
+schemaVersion = "task-schedule/v2"
+name = "resource burn: 4 CPU workers plus memory"
+description = "Spin four CPU worker processes and hold roughly 10% memory, capped at 4096 MiB. Edit --cpu-workers, --mem-percent, and --max-rss-mb in this TOML for heavier tests."
+labels = ["mock", "resource", "cpu", "rss"]
+
+[retry]
+maxAttempts = 0
+intervalSec = 0
+
+[schedule]
+priority = 50
+requiredTags = []
+preferredTags = []
+maxRuntimeSec = 110
+maxCpuPercent = 100
+maxRssMb = 4096
+
+[[steps]]
+name = "burn-cpu-rss"
+
+[steps.run]
+type = "shell"
+command = "python3"
+args = [
+  "scripts/task-schedule-resource-burner.py",
+  "--duration-sec", "90",
+  "--cpu-workers", "4",
+  "--mem-percent", "10",
+  "--max-rss-mb", "4096",
+  "--output", ".tmp/task-schedule-resource-burn-cpu-rss.json"
+]
+timeoutSec = 110
+
+[[outputs]]
+name = "resource-burn-summary"
+kind = "file"
+path = ".tmp/task-schedule-resource-burn-cpu-rss.json"
+required = true
+
+[[success.checks]]
+name = "summary written"
+type = "path-nonempty"
+path = ".tmp/task-schedule-resource-burn-cpu-rss.json"

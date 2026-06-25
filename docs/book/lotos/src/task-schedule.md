@@ -30,6 +30,18 @@ Default loopback endpoints:
 
 `SimpleWorker` executes shell commands with `Lotos.Proc`, reports `TaskProcessing` at command start, streams stdout/stderr through reliable task logs, emits a final `LogResult`, and reports `TaskSucceed` or `TaskFailed` based on the command result.
 
+## Resource-load mock tasks
+
+For manual dashboard/cluster testing, the checked-in TOMLs call `scripts/task-schedule-resource-burner.py`, a dependency-free helper that spins CPU processes and optionally holds resident memory until the step duration expires.
+
+```bash
+make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-cpu.toml
+make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-rss.toml
+make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-cpu-rss.toml
+```
+
+Tune the load in each TOML's `[steps.run].args`: `--cpu-workers N` burns roughly `N*100%` CPU; `--mem-percent P` holds roughly `P%` of host/cgroup memory, capped by `--max-rss-mb` unless that cap is set to `0`. Keep `timeoutSec` and `[schedule].maxRuntimeSec` greater than `--duration-sec`. The helper path is resolved on the worker relative to the worker process cwd, so copy the script or edit the path for remote release directories.
+
 ## Completion evidence
 
 A client ACK only proves broker acceptance. For task completion, check a worker side effect, worker task/status state, `/logs/worker/<workerId>`, `/logs/task/<taskUuid>`, or the smoke-script evidence directories.

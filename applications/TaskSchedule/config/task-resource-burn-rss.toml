@@ -1,0 +1,46 @@
+# RSS/memory mock task.
+# Tune --mem-percent in [steps.run].args to allocate P% of host/cgroup memory.
+# --max-rss-mb is a safety cap; set it higher only when you really want a larger allocation.
+schemaVersion = "task-schedule/v2"
+name = "resource burn: 5 percent memory"
+description = "Allocate and hold roughly 5% memory, capped at 2048 MiB, for dashboard/scheduler load testing. Edit --mem-percent and --max-rss-mb in this TOML to change %MEM."
+labels = ["mock", "resource", "rss"]
+
+[retry]
+maxAttempts = 0
+intervalSec = 0
+
+[schedule]
+priority = 50
+requiredTags = []
+preferredTags = []
+maxRuntimeSec = 75
+maxCpuPercent = 100
+maxRssMb = 2048
+
+[[steps]]
+name = "burn-rss"
+
+[steps.run]
+type = "shell"
+command = "python3"
+args = [
+  "scripts/task-schedule-resource-burner.py",
+  "--duration-sec", "60",
+  "--cpu-workers", "0",
+  "--mem-percent", "5",
+  "--max-rss-mb", "2048",
+  "--output", ".tmp/task-schedule-resource-burn-rss.json"
+]
+timeoutSec = 75
+
+[[outputs]]
+name = "resource-burn-summary"
+kind = "file"
+path = ".tmp/task-schedule-resource-burn-rss.json"
+required = true
+
+[[success.checks]]
+name = "summary written"
+type = "path-nonempty"
+path = ".tmp/task-schedule-resource-burn-rss.json"

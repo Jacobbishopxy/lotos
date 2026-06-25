@@ -351,6 +351,16 @@ curl --noproxy '*' -fsS http://127.0.0.1:8081/SimpleServer/garbage
 cat .tmp/task-schedule-demo.out
 ```
 
+Resource-load mock tasks for manual dashboard/cluster testing:
+
+```bash
+make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-cpu.toml
+make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-rss.toml
+make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-cpu-rss.toml
+```
+
+These TOMLs invoke `scripts/task-schedule-resource-burner.py`. Edit `[steps.run].args` to tune load: `--cpu-workers N` burns roughly `N*100%` CPU, `--mem-percent P` holds roughly `P%` of host/cgroup memory, and `--max-rss-mb` caps the allocation for safety. Keep step `timeoutSec` and `[schedule].maxRuntimeSec` greater than `--duration-sec`. The helper path is resolved on the worker relative to the worker process cwd, so copy the script or edit the path for remote release directories.
+
 Pass criteria:
 
 - Server and worker stay running without uncaught exceptions.
