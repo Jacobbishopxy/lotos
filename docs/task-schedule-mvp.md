@@ -354,10 +354,13 @@ cat .tmp/task-schedule-demo.out
 Resource-load mock tasks for manual dashboard/cluster testing:
 
 ```bash
+make smoke-resource-roundtrip
 make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-cpu.toml
 make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-rss.toml
 make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-cpu-rss.toml
 ```
+
+`make smoke-resource-roundtrip` is a self-contained background round trip: it starts broker, worker, client bridge, and dashboard dev proxy; submits generated CPU/RSS/combined tasks through the dashboard-facing `/submit` route; waits for worker-produced JSON summaries; snapshots observer endpoints; writes evidence under `.tmp/task-schedule-resource-roundtrip-smoke/<run-id>/`; and cleans up tracked process groups. Defaults are intentionally small; raise `SMOKE_RESOURCE_CPU_WORKERS`, `SMOKE_RESOURCE_RSS_MB`, `SMOKE_RESOURCE_COMBINED_CPU_WORKERS`, and `SMOKE_RESOURCE_COMBINED_RSS_MB` for heavier manual runs.
 
 These TOMLs invoke `scripts/task-schedule-resource-burner.py`. Edit `[steps.run].args` to tune load: `--cpu-workers N` burns roughly `N*100%` CPU, `--mem-percent P` holds roughly `P%` of host/cgroup memory, and `--max-rss-mb` caps the allocation for safety. Keep step `timeoutSec` and `[schedule].maxRuntimeSec` greater than `--duration-sec`. The helper path is resolved on the worker relative to the worker process cwd, so copy the script or edit the path for remote release directories.
 

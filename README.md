@@ -98,12 +98,13 @@ A minimal task is TOML with `schemaVersion = "task-schedule/v2"`, `name`, `[retr
 Resource-load mock tasks are available for manual dashboard/cluster testing:
 
 ```bash
+make smoke-resource-roundtrip   # starts broker+worker+bridge+dashboard, submits all resource mocks, then cleans up
 make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-cpu.toml
 make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-rss.toml
 make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-cpu-rss.toml
 ```
 
-Edit each TOML's `scripts/task-schedule-resource-burner.py` args to tune load: `--cpu-workers N` burns roughly `N*100%` CPU, and `--mem-percent P` holds roughly `P%` memory subject to `--max-rss-mb`. The script path is resolved on the worker, relative to the worker process cwd.
+Edit each TOML's `scripts/task-schedule-resource-burner.py` args to tune load: `--cpu-workers N` burns roughly `N*100%` CPU, and `--mem-percent P` holds roughly `P%` memory subject to `--max-rss-mb`. The script path is resolved on the worker, relative to the worker process cwd. The all-roles smoke uses safe defaults; raise `SMOKE_RESOURCE_CPU_WORKERS`, `SMOKE_RESOURCE_RSS_MB`, `SMOKE_RESOURCE_COMBINED_CPU_WORKERS`, and `SMOKE_RESOURCE_COMBINED_RSS_MB` for heavier manual runs.
 
 ## Observe runtime state
 
@@ -153,6 +154,7 @@ The dashboard is an observer-first UI. It intentionally does not expose retry, c
 make smoke-single              # single worker/server/client smoke
 make smoke-multi               # generated multi-worker smoke
 make smoke-dashboard-bridge    # broker + worker + bridge + dashboard proxy submit smoke
+make smoke-resource-roundtrip   # all local roles + CPU/RSS resource tasks through dashboard /submit
 ```
 
 Real browser-click smoke is optional and headless; it needs Chrome/Chromium or `BROWSER_BIN`:

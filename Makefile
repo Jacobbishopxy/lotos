@@ -55,7 +55,7 @@ CI_TEST_TARGETS ?= \
 	TaskSchedule:test:test-client-bridge \
 	lotos-minimal-scheduler-example:test:test-minimal-scheduler-example
 
-.PHONY: help tree clean update build ci-build ci-test ci-docs ci-check book-build book-serve docs-build docs-serve dashboard-install dashboard-build dashboard-dev dashboard-preview task-schedule-build-server task-schedule-build-worker task-schedule-build-client task-schedule-build-client-bridge task-schedule-build-all task-schedule-bind-all-config release-clean release-server release-worker release-client release-client-bridge release-task-schedule release-manifest task-schedule-server task-schedule-broker task-schedule-worker task-schedule-client-bridge task-schedule-submit task-submit task-validate task-template example-minimal smoke-single smoke-multi smoke-dashboard-bridge smoke-dashboard-browser hie
+.PHONY: help tree clean update build ci-build ci-test ci-docs ci-check book-build book-serve docs-build docs-serve dashboard-install dashboard-build dashboard-dev dashboard-preview task-schedule-build-server task-schedule-build-worker task-schedule-build-client task-schedule-build-client-bridge task-schedule-build-all task-schedule-bind-all-config release-clean release-server release-worker release-client release-client-bridge release-task-schedule release-manifest task-schedule-server task-schedule-broker task-schedule-worker task-schedule-client-bridge task-schedule-submit task-submit task-validate task-template example-minimal smoke-single smoke-multi smoke-dashboard-bridge smoke-dashboard-browser smoke-resource-roundtrip hie
 
 help:
 	@printf '%s\n' 'Lotos Make targets:'
@@ -101,6 +101,7 @@ help:
 	@printf '  %-24s %s\n' 'smoke-multi' 'Run multi-worker/capacity TaskSchedule smoke.'
 	@printf '  %-24s %s\n' 'smoke-dashboard-bridge' 'Run server+worker+bridge+dashboard submit smoke with .tmp evidence.'
 	@printf '  %-24s %s\n' 'smoke-dashboard-browser' 'Run smoke-dashboard-bridge plus real browser click automation (requires BROWSER_BIN or Chrome/Chromium on PATH).'
+	@printf '  %-24s %s\n' 'smoke-resource-roundtrip' 'Run all local roles in background and submit CPU/RSS resource tasks through dashboard /submit.'
 	@printf '  %-24s %s\n' 'hie' 'Regenerate hie.yaml with gen-hie.'
 	@printf '\nmdBook defaults: MDBOOK_DIR=%s MDBOOK_HOST=%s MDBOOK_PORT=%s\n' '$(MDBOOK_DIR)' '$(MDBOOK_HOST)' '$(MDBOOK_PORT)'
 	@printf 'Dashboard defaults: DASHBOARD_DIR=%s DASHBOARD_HOST=%s DASHBOARD_API_TARGET=%s DASHBOARD_API_ROOT=%s DASHBOARD_API_BASE=%s DASHBOARD_API_TIMEOUT_MS=%s DASHBOARD_BRIDGE_TARGET=%s DASHBOARD_BRIDGE_PATH=%s DASHBOARD_BRIDGE_BASE=%s DASHBOARD_BRIDGE_TIMEOUT_MS=%s\n' '$(DASHBOARD_DIR)' '$(DASHBOARD_HOST)' '$(DASHBOARD_API_TARGET)' '$(DASHBOARD_API_ROOT)' '$(DASHBOARD_API_BASE)' '$(DASHBOARD_API_TIMEOUT_MS)' '$(DASHBOARD_BRIDGE_TARGET)' '$(DASHBOARD_BRIDGE_PATH)' '$(DASHBOARD_BRIDGE_BASE)' '$(DASHBOARD_BRIDGE_TIMEOUT_MS)'
@@ -266,6 +267,9 @@ smoke-dashboard-bridge:
 
 smoke-dashboard-browser:
 	SMOKE_BROWSER_CLICK=1 scripts/task-schedule-dashboard-bridge-smoke.sh
+
+smoke-resource-roundtrip:
+	scripts/task-schedule-resource-roundtrip-smoke.sh
 
 hie:
 	gen-hie > hie.yaml
