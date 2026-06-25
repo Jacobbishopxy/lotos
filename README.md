@@ -43,7 +43,25 @@ make dashboard-build # Vite/TypeScript dashboard build
 
 ## Run the TaskSchedule cluster locally
 
-Start each long-running role in a separate terminal:
+Recommended first resource-load check before manual clicking/submission:
+
+```bash
+make smoke-resource-roundtrip
+```
+
+This starts broker, worker, client bridge, and dashboard dev server in the background; submits generated CPU, RSS, and combined CPU/RSS tasks through the dashboard-facing `/submit` path; waits for worker summaries; stores evidence under `.tmp/task-schedule-resource-roundtrip-smoke/`; then cleans up the tracked processes.
+
+For a heavier opt-in local load run:
+
+```bash
+SMOKE_RESOURCE_CPU_WORKERS=8 \
+SMOKE_RESOURCE_RSS_MB=8192 \
+SMOKE_RESOURCE_COMBINED_CPU_WORKERS=8 \
+SMOKE_RESOURCE_COMBINED_RSS_MB=16384 \
+make smoke-resource-roundtrip
+```
+
+After that passes, start each long-running role in a separate terminal for manual dashboard/CLI testing:
 
 ```bash
 make dashboard-install                # once, if applications/dashboard/node_modules is absent
@@ -95,16 +113,15 @@ make task-template TASKSCHEDULE_TASK_TEMPLATE_OUT=tasks/my-task.toml
 
 A minimal task is TOML with `schemaVersion = "task-schedule/v2"`, `name`, `[retry]`, `[schedule]`, at least one `[[steps]]`, and optional output/success checks. `[schedule]` supports `maxRuntimeSec`, `maxCpuPercent`, and `maxRssMb` admission hints; CPU/RSS hints choose compatible workers from heartbeat snapshots and are not hard cgroup enforcement. The checked-in example is `applications/TaskSchedule/config/task-demo.toml`.
 
-Resource-load mock tasks are available for manual dashboard/cluster testing:
+Resource-load mock tasks are available after the manual roles are running:
 
 ```bash
-make smoke-resource-roundtrip   # starts broker+worker+bridge+dashboard, submits all resource mocks, then cleans up
 make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-cpu.toml
 make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-rss.toml
 make task-submit TASKSCHEDULE_TASK_TOML=applications/TaskSchedule/config/task-resource-burn-cpu-rss.toml
 ```
 
-Edit each TOML's `scripts/task-schedule-resource-burner.py` args to tune load: `--cpu-workers N` burns roughly `N*100%` CPU, and `--mem-percent P` holds roughly `P%` memory subject to `--max-rss-mb`. The script path is resolved on the worker, relative to the worker process cwd. The all-roles smoke uses safe defaults; raise `SMOKE_RESOURCE_CPU_WORKERS`, `SMOKE_RESOURCE_RSS_MB`, `SMOKE_RESOURCE_COMBINED_CPU_WORKERS`, and `SMOKE_RESOURCE_COMBINED_RSS_MB` for heavier manual runs.
+Edit each TOML's `scripts/task-schedule-resource-burner.py` args to tune load: `--cpu-workers N` burns roughly `N*100%` CPU, and `--mem-percent P` holds roughly `P%` memory subject to `--max-rss-mb`. The script path is resolved on the worker, relative to the worker process cwd.
 
 ## Observe runtime state
 
