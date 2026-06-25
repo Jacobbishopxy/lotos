@@ -56,6 +56,8 @@ priority = 50
 requiredTags = []
 preferredTags = []
 maxRuntimeSec = ${template.timeoutSec}
+maxCpuPercent = 100
+maxRssMb = 128
 
 [[steps]]
 name = "run-shell"

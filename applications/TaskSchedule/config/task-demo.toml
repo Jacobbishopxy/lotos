@@ -12,6 +12,8 @@ priority = 50
 requiredTags = []
 preferredTags = []
 maxRuntimeSec = 5
+maxCpuPercent = 100
+maxRssMb = 128
 
 [[steps]]
 name = "write-marker"

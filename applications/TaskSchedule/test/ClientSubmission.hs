@@ -2,7 +2,7 @@
 
 module Main where
 
-import Adt (ClientTask (..))
+import Adt (ClientTask (..), ScheduleHints (..))
 import Client (readTaskFromTomlText)
 import Control.Monad (when)
 import Data.List (isInfixOf)
@@ -25,7 +25,11 @@ parseSampleTomlText = do
       taskContent task @?= "write a TaskSchedule MVP marker file"
       taskTimeout task @?= 5
       let clientTask = taskProp task
+          schedule = clientTaskSchedule clientTask
       clientTaskName clientTask @?= "write a TaskSchedule MVP marker file"
+      scheduleMaxRuntimeSec schedule @?= Just 5
+      scheduleMaxCpuPercent schedule @?= Just 100
+      scheduleMaxRssMb schedule @?= Just 128
       length (clientTaskSteps clientTask) @?= 1
 
 invalidTomlReturnsParseError :: Assertion
@@ -58,13 +62,47 @@ invalidContractReturnsValidationError =
     Left err -> assertBool "validation error should mention missing steps" ("at least one [[steps]] entry is required" `isInfixOf` err)
     Right task -> assertFailure $ "invalid task contract unexpectedly parsed as " <> show task
 
+invalidCpuLimitToml :: Text.Text
+invalidCpuLimitToml =
+  Text.unlines
+    [ "schemaVersion = \"task-schedule/v2\"",
+      "name = \"bad cpu\"",
+      "labels = []",
+      "",
+      "[retry]",
+      "maxAttempts = 0",
+      "intervalSec = 0",
+      "",
+      "[schedule]",
+      "priority = 0",
+      "requiredTags = []",
+      "preferredTags = []",
+      "maxCpuPercent = 101",
+      "maxRssMb = 128",
+      "",
+      "[[steps]]",
+      "name = \"run\"",
+      "[steps.run]",
+      "type = \"shell\"",
+      "command = \"sh\"",
+      "args = [\"-c\", \"true\"]",
+      "timeoutSec = 1"
+    ]
+
+invalidResourceLimitsReturnValidationError :: Assertion
+invalidResourceLimitsReturnValidationError =
+  case readTaskFromTomlText invalidCpuLimitToml of
+    Left err -> assertBool "validation error should mention maxCpuPercent" ("schedule.maxCpuPercent" `isInfixOf` err)
+    Right task -> assertFailure $ "invalid resource limit unexpectedly parsed as " <> show task
+
 
 tests :: Test
 tests =
   TestList
     [ TestLabel "parse sample task TOML text" (TestCase parseSampleTomlText),
       TestLabel "invalid TOML returns a parse error" (TestCase invalidTomlReturnsParseError),
-      TestLabel "invalid task contract returns a validation error" (TestCase invalidContractReturnsValidationError)
+      TestLabel "invalid task contract returns a validation error" (TestCase invalidContractReturnsValidationError),
+      TestLabel "invalid resource limits return a validation error" (TestCase invalidResourceLimitsReturnValidationError)
     ]
 
 main :: IO ()

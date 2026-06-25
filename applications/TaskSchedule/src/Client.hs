@@ -116,6 +116,12 @@ validateSchedule ScheduleHints {..} = do
   case scheduleMaxRuntimeSec of
     Just n | n < 0 -> Left "schedule.maxRuntimeSec must be non-negative"
     _ -> pure ()
+  case scheduleMaxCpuPercent of
+    Just n | n < 0 || n > 100 -> Left "schedule.maxCpuPercent must be between 0 and 100"
+    _ -> pure ()
+  case scheduleMaxRssMb of
+    Just n | n < 0 -> Left "schedule.maxRssMb must be non-negative"
+    _ -> pure ()
 
 validateArtifact :: TaskArtifact -> Either String ()
 validateArtifact TaskArtifact {..} = do
@@ -210,6 +216,8 @@ scheduleHintsCodec =
     <*> Toml.arrayOf Toml._Text "requiredTags" .= scheduleRequiredTags
     <*> Toml.arrayOf Toml._Text "preferredTags" .= schedulePreferredTags
     <*> Toml.dioptional (Toml.int "maxRuntimeSec") .= scheduleMaxRuntimeSec
+    <*> Toml.dioptional (Toml.int "maxCpuPercent") .= scheduleMaxCpuPercent
+    <*> Toml.dioptional (Toml.int "maxRssMb") .= scheduleMaxRssMb
 
 artifactCodec :: TomlCodec TaskArtifact
 artifactCodec =

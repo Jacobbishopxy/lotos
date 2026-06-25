@@ -217,6 +217,8 @@ Required fields:
 | `[retry].intervalSec` | Retry delay in seconds after worker failure when retries remain. |
 | `[schedule].priority` | Scheduling hint reserved for policy evolution. |
 | `[schedule].requiredTags` / `preferredTags` | Worker capability/location tags. Required tags must all be present in the worker heartbeat; preferred tags break compatible-slot ties when possible. |
+| `[schedule].maxCpuPercent` | Optional worker-admission ceiling for current device CPU percentage from the latest heartbeat. This is a scheduling hint, not hard CPU throttling. |
+| `[schedule].maxRssMb` | Optional worker-admission resident-memory budget in MiB; workers need at least this much `memAvailable` in their latest heartbeat. This is a scheduling hint, not cgroup/RSS enforcement. |
 | `[[steps]]` and `[steps.run]` | At least one shell step with `type = "shell"`, `command`, `args`, and `timeoutSec`. |
 
 Optional fields:
@@ -256,6 +258,8 @@ priority = 50
 requiredTags = []
 preferredTags = []
 maxRuntimeSec = 5
+maxCpuPercent = 100
+maxRssMb = 128
 
 [[steps]]
 name = "write-marker"
@@ -407,7 +411,7 @@ Known risks/gaps for downstream work:
 - The client ACK path depends on preserving ZeroMQ ROUTER/REQ frame ordering, including the binary REQ request-id frame; changing this shape can reintroduce ACK timeouts.
 - Worker log transport is wired for the single-machine sample configs; custom topologies must keep broker `logIngest.logIngestAddr` and worker `workerLogging.logIngestAddr` aligned. Preferred new JSON uses `infoStorage.logIngestDefaultAddr` / `logIngestDefaultBufferSize` only as broker derivation hints; legacy `infoStorage.loggingAddr`, `infoStorage.loggingsBufferSize`, and `loadBalancerLoggingAddr` fields are retained for compatibility/default derivation, not active log ingestion.
 - The info API currently exposes worker task membership but not a dedicated task-status history or failure-reason field; the file side effect is the required completion proof for the MVP happy path.
-- Task TOML now carries step timeouts plus optional `schedule.maxRuntimeSec`; the client derives the internal task timeout from `schedule.maxRuntimeSec` or the sum of positive step timeouts.
+- Task TOML now carries step timeouts plus optional `schedule.maxRuntimeSec`, `schedule.maxCpuPercent`, and `schedule.maxRssMb`; the client derives the internal task timeout from `schedule.maxRuntimeSec` or the sum of positive step timeouts, while CPU/RSS values are scheduler admission hints from worker heartbeat snapshots.
 - Positive `taskRetryInterval` values defer retry scheduling, but the retry is checked by the task processor's normal wake-up/trigger loop rather than an exact per-task timer; availability is therefore not-before the requested delay, not a precise dispatch deadline.
 - Worker liveness is heartbeat based, not socket-presence based; set `taskProcessor.workerStaleTimeoutSec` higher than normal `workerStatusReportIntervalSec` plus expected scheduling/host jitter.
 - `WorkerState.taskCapacity` is heartbeat-based, so capacity snapshots can still lag behind rapid assignment/execution changes between status reports. Applications with stricter admission-control needs should add stronger reservation/backpressure semantics around their scheduler decisions.

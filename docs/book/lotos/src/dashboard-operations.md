@@ -192,7 +192,7 @@ The dashboard intentionally uses a light operations theme rather than a dark con
 
 ### Submit panel returns `validation-error`
 
-- Confirm the request format is TOML and the contract includes `schemaVersion = "task-schedule/v2"`, `name`, `[retry]`, `[schedule]`, and at least one `[[steps]]` entry.
+- Confirm the request format is TOML and the contract includes `schemaVersion = "task-schedule/v2"`, `name`, `[retry]`, `[schedule]`, and at least one `[[steps]]` entry. Optional `[schedule].maxCpuPercent` and `[schedule].maxRssMb` are scheduler admission hints from worker heartbeat snapshots.
 - Omit `taskID`; the broker assigns task ids.
 - Do not include browser-side `clientId`, `loadBalancerFrontendAddr`, `workerId`, or nested client config fields.
 - If posting directly from built/preview assets, use a local dashboard origin allowed by the bridge (`127.0.0.1`/`localhost` Vite dev or preview ports) or route through a same-origin proxy.

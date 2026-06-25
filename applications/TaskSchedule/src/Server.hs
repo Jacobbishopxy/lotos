@@ -78,7 +78,14 @@ instance LoadBalancerAlgo SimpleServer ClientTask WorkerState where
 
       compatibleWorker :: Task ClientTask -> WorkerState -> Bool
       compatibleWorker task ws =
-        all (`elem` workerStateTags ws) (scheduleRequiredTags $ clientTaskSchedule $ taskProp task)
+        let schedule = clientTaskSchedule $ taskProp task
+         in all (`elem` workerStateTags ws) (scheduleRequiredTags schedule)
+              && withinResourceHints schedule ws
+
+      withinResourceHints :: ScheduleHints -> WorkerState -> Bool
+      withinResourceHints ScheduleHints {..} ws =
+        maybe True (\limit -> cpuUsagePercent ws <= fromIntegral limit) scheduleMaxCpuPercent
+          && maybe True (\requiredMb -> memAvailable ws >= fromIntegral requiredMb) scheduleMaxRssMb
 
       preferredWorker :: Task ClientTask -> WorkerState -> Bool
       preferredWorker task ws =

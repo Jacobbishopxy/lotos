@@ -65,6 +65,22 @@ mkTaggedTask n required preferred =
               }
         }
 
+mkResourceLimitedTask :: Int -> Maybe Int -> Maybe Int -> Task ClientTask
+mkResourceLimitedTask n maxCpu maxRss =
+  let baseTask = mkTask n
+      baseProp = taskProp baseTask
+      schedule = clientTaskSchedule baseProp
+   in baseTask
+        { taskProp =
+            baseProp
+              { clientTaskSchedule =
+                  schedule
+                    { scheduleMaxCpuPercent = maxCpu,
+                      scheduleMaxRssMb = maxRss
+                    }
+              }
+        }
+
 runSchedule :: [(RoutingID, WorkerState)] -> [Task ClientTask] -> IO (ScheduledResult ClientTask WorkerState)
 runSchedule workers tasks =
   withConsoleLogger ERROR $ \env -> do
@@ -179,6 +195,21 @@ preferredWorkerTagsBreakCompatibleSlotTies = do
   assignmentSummary result @?= [("preferred", "task-1")]
   leftSummary result @?= []
 
+resourceLimitsRestrictAssignments :: Assertion
+resourceLimitsRestrictAssignments = do
+  let hotWorker = idleWorker {cpuUsagePercent = 95, memAvailable = 1000}
+      lowMemoryWorker = idleWorker {cpuUsagePercent = 10, memAvailable = 64}
+      compatible = idleWorker {cpuUsagePercent = 20, memAvailable = 512}
+  result <- runSchedule [("hot", hotWorker), ("low-memory", lowMemoryWorker), ("ok", compatible)] [mkResourceLimitedTask 1 (Just 80) (Just 128)]
+  assignmentSummary result @?= [("ok", "task-1")]
+  leftSummary result @?= []
+
+unmatchedResourceLimitsStayQueued :: Assertion
+unmatchedResourceLimitsStayQueued = do
+  result <- runSchedule [("hot", idleWorker {cpuUsagePercent = 95, memAvailable = 64})] [mkResourceLimitedTask 1 (Just 80) (Just 128)]
+  assignmentSummary result @?= []
+  leftSummary result @?= ["task-1"]
+
 workerStateFramesAppendCapacityAndDecodeOldPayloads :: Assertion
 workerStateFramesAppendCapacityAndDecodeOldPayloads = do
   let state = (capacityWorker 4) {processingTaskNum = 1, waitingTaskNum = 2, cpuUsagePercent = 12.5}
@@ -242,6 +273,8 @@ tests =
       TestLabel "required worker tags restrict assignments" (TestCase requiredWorkerTagsRestrictAssignments),
       TestLabel "unmatched required worker tags stay queued" (TestCase unmatchedRequiredWorkerTagsStayQueued),
       TestLabel "preferred worker tags break compatible slot ties" (TestCase preferredWorkerTagsBreakCompatibleSlotTies),
+      TestLabel "resource limits restrict assignments" (TestCase resourceLimitsRestrictAssignments),
+      TestLabel "unmatched resource limits stay queued" (TestCase unmatchedResourceLimitsStayQueued),
       TestLabel "WorkerState frames append capacity and decode old payloads" (TestCase workerStateFramesAppendCapacityAndDecodeOldPayloads),
       TestLabel "WorkerState status golden frames decode old payloads" (TestCase workerStateStatusGoldenFramesDecodeOldPayloads)
     ]

@@ -93,7 +93,7 @@ make task-submit TASKSCHEDULE_TASK_TOML=tasks/my-task.toml
 make task-template TASKSCHEDULE_TASK_TEMPLATE_OUT=tasks/my-task.toml
 ```
 
-A minimal task is TOML with `schemaVersion = "task-schedule/v2"`, `name`, `[retry]`, `[schedule]`, at least one `[[steps]]`, and optional output/success checks. The checked-in example is `applications/TaskSchedule/config/task-demo.toml`.
+A minimal task is TOML with `schemaVersion = "task-schedule/v2"`, `name`, `[retry]`, `[schedule]`, at least one `[[steps]]`, and optional output/success checks. `[schedule]` supports `maxRuntimeSec`, `maxCpuPercent`, and `maxRssMb` admission hints; CPU/RSS hints choose compatible workers from heartbeat snapshots and are not hard cgroup enforcement. The checked-in example is `applications/TaskSchedule/config/task-demo.toml`.
 
 ## Observe runtime state
 

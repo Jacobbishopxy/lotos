@@ -323,7 +323,12 @@ data ScheduleHints = ScheduleHints
   { schedulePriority :: Int,
     scheduleRequiredTags :: [Text.Text],
     schedulePreferredTags :: [Text.Text],
-    scheduleMaxRuntimeSec :: Maybe Int
+    scheduleMaxRuntimeSec :: Maybe Int,
+    -- ^ Overall wall-clock runtime limit in seconds.
+    scheduleMaxCpuPercent :: Maybe Int,
+    -- ^ Optional worker-admission ceiling for current device CPU percentage.
+    scheduleMaxRssMb :: Maybe Int
+    -- ^ Optional worker-admission requirement for available resident-memory budget in MiB.
   }
   deriving (Show, Eq, Generic, Aeson.ToJSON, Aeson.FromJSON)
 
@@ -347,7 +352,7 @@ simpleClientTask cmd =
       clientTaskName = Text.pack cmd,
       clientTaskDescription = Nothing,
       clientTaskLabels = [],
-      clientTaskSchedule = ScheduleHints 50 [] [] Nothing,
+      clientTaskSchedule = ScheduleHints 50 [] [] Nothing Nothing Nothing,
       clientTaskInputs = [],
       clientTaskSteps =
         [ TaskStep

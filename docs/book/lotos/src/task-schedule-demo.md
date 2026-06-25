@@ -30,7 +30,7 @@ Default loopback endpoints:
 taskCapacity - processingTaskNum - waitingTaskNum
 ```
 
-It then assigns tasks in stable rounds across available worker slots and returns overflow to the broker queue. Older eight-, nine-, or ten-frame worker status payloads still decode conservatively, preserving compatibility with workers that do not report capacity, device CPU percent, or worker tags.
+It then filters by required tags plus optional `[schedule].maxCpuPercent` / `[schedule].maxRssMb` heartbeat-admission hints, assigns tasks in stable rounds across available worker slots, and returns overflow to the broker queue. CPU/RSS TOML limits are scheduling hints from worker heartbeat snapshots, not hard cgroup enforcement. Older eight-, nine-, or ten-frame worker status payloads still decode conservatively, preserving compatibility with workers that do not report capacity, device CPU percent, or worker tags.
 
 ## Worker behavior
 
