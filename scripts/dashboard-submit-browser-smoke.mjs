@@ -223,6 +223,8 @@ try {
   const generateTarget = await evaluate(cdp, `
     (async () => {
       ${domHelpers}
+      const submitTab = document.querySelector('[data-dashboard-tab="submit"]');
+      if (submitTab) submitTab.click();
       await waitFor('[data-submit-template-form]');
       setValue('[data-template-field="name"]', ${JSON.stringify(taskName)});
       setValue('[data-template-field="command"]', ${JSON.stringify(command)});

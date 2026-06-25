@@ -57,6 +57,31 @@ export type StatusNote = {
   state: Health
 }
 
+export type DashboardSummary = {
+  workerCount: number
+  queuedTasks: number
+  assignedTasks: number
+  retryTasks: number
+  garbageTasks: number
+  reservedSlots: number
+  warningQueues: number
+  logProblems: number
+}
+
+export type TaskLane = 'queued' | 'assigned' | 'retry-failed' | 'garbage'
+
+export type TaskSnapshot = {
+  id: string
+  label: string
+  lane: TaskLane
+  laneLabel: string
+  workerId?: string
+  timeoutSec: number
+  retry: number
+  state: Health
+  detail: string
+}
+
 export type DashboardViewModel = {
   mode: DashboardDataMode
   fetchedAt: string
@@ -64,7 +89,9 @@ export type DashboardViewModel = {
   statusState: Health
   statusDetail: string
   endpoints: EndpointStatus[]
+  summary: DashboardSummary
   workers: WorkerSnapshot[]
+  tasks: TaskSnapshot[]
   queues: QueueSnapshot[]
   logs: LogEntry[]
   statusNotes: StatusNote[]
@@ -235,6 +262,77 @@ const queueDetail = (queue: HandoffQueueStats): string => {
   return `${queue.overloadStatus} overload status · ${netDepth} net enqueued/drained`
 }
 
+const taskId = (task: TaskScheduleTask): string => task.taskID ?? 'pending broker UUID'
+
+const buildTaskDetail = (task: TaskScheduleTask, workerId?: string): string => {
+  const owner = workerId ? `worker ${workerId}` : 'broker queue'
+  const timeout = task.taskTimeout > 0 ? `${task.taskTimeout}s timeout` : 'timeout not set'
+  return `${owner} · retry ${task.taskRetry} · interval ${task.taskRetryInterval}s · ${timeout}`
+}
+
+const buildTaskSnapshots = (snapshot: DashboardApiSnapshot): TaskSnapshot[] => {
+  const assignedEntries = new Map<string, { workerId: string; task: TaskScheduleTask }>()
+
+  for (const [workerId, tasks] of Object.entries(snapshot.info.workerTasksMap)) {
+    for (const task of tasks) {
+      assignedEntries.set(`${workerId}:${taskId(task)}:${task.taskContent}`, { workerId, task })
+    }
+  }
+
+  for (const [workerId, tasks] of Object.entries(snapshot.workerTasks.workers)) {
+    for (const task of tasks) {
+      assignedEntries.set(`${workerId}:${taskId(task)}:${task.taskContent}`, { workerId, task })
+    }
+  }
+
+  const queued = snapshot.taskQueues.queued.map((task): TaskSnapshot => ({
+    id: taskId(task),
+    label: taskLabel(task),
+    lane: 'queued',
+    laneLabel: 'Queued',
+    timeoutSec: task.taskTimeout,
+    retry: task.taskRetry,
+    state: 'idle',
+    detail: buildTaskDetail(task),
+  }))
+
+  const assigned = [...assignedEntries.values()].map(({ workerId, task }): TaskSnapshot => ({
+    id: taskId(task),
+    label: taskLabel(task),
+    lane: 'assigned',
+    laneLabel: 'Assigned',
+    workerId,
+    timeoutSec: task.taskTimeout,
+    retry: task.taskRetry,
+    state: 'healthy',
+    detail: buildTaskDetail(task, workerId),
+  }))
+
+  const retryFailed = snapshot.taskQueues.running.map((task): TaskSnapshot => ({
+    id: taskId(task),
+    label: taskLabel(task),
+    lane: 'retry-failed',
+    laneLabel: 'Retry / failed',
+    timeoutSec: task.taskTimeout,
+    retry: task.taskRetry,
+    state: 'warning',
+    detail: buildTaskDetail(task),
+  }))
+
+  const garbage = snapshot.info.tasksInGarbageBin.map((task): TaskSnapshot => ({
+    id: taskId(task),
+    label: taskLabel(task),
+    lane: 'garbage',
+    laneLabel: 'Garbage',
+    timeoutSec: task.taskTimeout,
+    retry: task.taskRetry,
+    state: 'warning',
+    detail: buildTaskDetail(task),
+  }))
+
+  return [...assigned, ...queued, ...retryFailed, ...garbage]
+}
+
 const buildQueues = (snapshot: DashboardApiSnapshot): QueueSnapshot[] => {
   if (snapshot.info.runtimeQueueStats.length === 0) {
     return [
@@ -364,6 +462,10 @@ export const buildDashboardViewModel = (
     : options.mode === 'live'
       ? `Fetched ${snapshot.fetchedAt} from read-only TaskSchedule endpoints.`
       : `Rendering sample data because live fetch failed${options.error ? `: ${options.error}` : '.'}`
+  const logProblems = snapshot.logStats.rejectedEvents + snapshot.logStats.droppedEvents + snapshot.logStats.sequenceGaps
+  const tasks = buildTaskSnapshots(snapshot)
+  const assignedTasks = tasks.filter((task) => task.lane === 'assigned').length
+  const reservedSlots = sumValues(snapshot.info.workerReservationMap, (reservation) => reservation.reservedSlots)
 
   return {
     mode: options.mode,
@@ -372,7 +474,18 @@ export const buildDashboardViewModel = (
     statusState,
     statusDetail,
     endpoints: buildEndpoints(snapshot, options.mode, staleWorkers, warningQueues),
+    summary: {
+      workerCount: countValues(snapshot.workerStats.stats),
+      queuedTasks: snapshot.taskQueues.queued.length,
+      assignedTasks,
+      retryTasks: snapshot.taskQueues.running.length,
+      garbageTasks: snapshot.info.tasksInGarbageBin.length,
+      reservedSlots,
+      warningQueues,
+      logProblems,
+    },
     workers: buildWorkers(snapshot),
+    tasks,
     queues: buildQueues(snapshot),
     logs: buildLogs(snapshot, staleWorkers, warningQueues),
     statusNotes: buildNotes(snapshot, options.mode, statusDetail, warningQueues),

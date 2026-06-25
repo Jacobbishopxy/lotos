@@ -16,6 +16,7 @@ import {
   type LogEntry,
   type QueueSnapshot,
   type StatusNote,
+  type TaskSnapshot,
   type WorkerSnapshot,
 } from './viewModel'
 
@@ -33,6 +34,21 @@ const escapeHtml = (value: string): string =>
   })
 
 const percentage = (value: number): string => `${Math.round(Math.max(0, Math.min(value, 1)) * 100)}%`
+
+type DashboardTab = 'overview' | 'submit' | 'workers' | 'tasks' | 'logs'
+
+const dashboardTabs: Array<{ id: DashboardTab; label: string; description: string }> = [
+  { id: 'overview', label: 'Overview', description: 'health, endpoints, and key signals' },
+  { id: 'submit', label: 'Submit Task', description: 'TOML-only enqueue bridge' },
+  { id: 'workers', label: 'Workers', description: 'capacity, CPU/RSS, heartbeats' },
+  { id: 'tasks', label: 'Tasks', description: 'queued, assigned, failed, garbage' },
+  { id: 'logs', label: 'Logs / Diagnostics', description: 'LogIngest and runtime queues' },
+]
+
+const isDashboardTab = (value: string | undefined): value is DashboardTab =>
+  dashboardTabs.some((tab) => tab.id === value)
+
+let activeTab: DashboardTab = 'overview'
 
 const statusLabel = (state: Health): string => {
   switch (state) {
@@ -275,6 +291,213 @@ const renderSubmitPanel = (): string => {
   `
 }
 
+const renderSummaryStat = (label: string, value: string | number, detail: string, state: Health): string => `
+  <article class="summary-card summary-card--${state}">
+    <span>${escapeHtml(label)}</span>
+    <strong>${escapeHtml(String(value))}</strong>
+    <p>${escapeHtml(detail)}</p>
+  </article>
+`
+
+const renderStatusStrip = (viewModel: DashboardViewModel): string => {
+  const taskTotal =
+    viewModel.summary.queuedTasks +
+    viewModel.summary.assignedTasks +
+    viewModel.summary.retryTasks +
+    viewModel.summary.garbageTasks
+  const taskState: Health = viewModel.summary.retryTasks + viewModel.summary.garbageTasks > 0 ? 'warning' : taskTotal > 0 ? 'idle' : 'healthy'
+  const logState: Health = viewModel.summary.logProblems > 0 ? 'warning' : 'healthy'
+  const queueState: Health = viewModel.summary.warningQueues > 0 ? 'warning' : 'healthy'
+
+  return `
+    <section class="status-strip" aria-label="Always-visible cluster summary">
+      ${renderSummaryStat('Workers', viewModel.summary.workerCount, `${viewModel.summary.reservedSlots} reserved slots`, viewModel.summary.workerCount > 0 ? 'healthy' : 'idle')}
+      ${renderSummaryStat('Tasks', taskTotal, `${viewModel.summary.queuedTasks} queued · ${viewModel.summary.assignedTasks} assigned`, taskState)}
+      ${renderSummaryStat('Runtime queues', viewModel.summary.warningQueues, 'warning / critical queues', queueState)}
+      ${renderSummaryStat('Log issues', viewModel.summary.logProblems, 'rejected + dropped + gaps', logState)}
+    </section>
+  `
+}
+
+const renderTask = (task: TaskSnapshot): string => `
+  <article class="task-row task-row--${task.state}">
+    <div>
+      <span class="task-row__lane">${escapeHtml(task.laneLabel)}</span>
+      <h3>${escapeHtml(task.label)}</h3>
+      <p>${escapeHtml(task.detail)}</p>
+    </div>
+    <dl>
+      <div>
+        <dt>ID</dt>
+        <dd>${escapeHtml(task.id)}</dd>
+      </div>
+      <div>
+        <dt>Retry</dt>
+        <dd>${task.retry}</dd>
+      </div>
+      <div>
+        <dt>Timeout</dt>
+        <dd>${task.timeoutSec > 0 ? `${task.timeoutSec}s` : 'unset'}</dd>
+      </div>
+      <div>
+        <dt>Worker</dt>
+        <dd>${escapeHtml(task.workerId ?? 'not assigned')}</dd>
+      </div>
+    </dl>
+  </article>
+`
+
+const renderTaskList = (viewModel: DashboardViewModel): string =>
+  viewModel.tasks.length > 0
+    ? viewModel.tasks.map(renderTask).join('')
+    : `
+      <article class="empty-card">
+        <span class="eyebrow">No task rows</span>
+        <h3>No queued, assigned, retry/failed, or garbage tasks are visible.</h3>
+        <p>Submit a TOML task or run a smoke helper to populate this tab.</p>
+      </article>
+    `
+
+const tabStatus = (tab: DashboardTab, viewModel: DashboardViewModel): string => {
+  switch (tab) {
+    case 'overview':
+      return viewModel.mode === 'live' ? 'Live' : 'Sample'
+    case 'submit':
+      return submitStatusLabel(submitState.status)
+    case 'workers':
+      return `${viewModel.summary.workerCount}`
+    case 'tasks':
+      return `${viewModel.tasks.length}`
+    case 'logs':
+      return `${viewModel.summary.logProblems}`
+  }
+}
+
+const renderTabNav = (viewModel: DashboardViewModel): string => `
+  <nav class="tab-nav" aria-label="Dashboard sections" role="tablist">
+    ${dashboardTabs
+      .map(
+        (tab) => `
+          <button
+            class="tab-button ${activeTab === tab.id ? 'tab-button--active' : ''}"
+            type="button"
+            role="tab"
+            id="dashboard-tab-${tab.id}"
+            aria-controls="dashboard-panel-${tab.id}"
+            aria-selected="${activeTab === tab.id}"
+            data-dashboard-tab="${tab.id}"
+          >
+            <span>${escapeHtml(tab.label)}</span>
+            <small>${escapeHtml(tab.description)}</small>
+            <strong>${escapeHtml(tabStatus(tab.id, viewModel))}</strong>
+          </button>
+        `,
+      )
+      .join('')}
+  </nav>
+`
+
+const renderOverviewTab = (viewModel: DashboardViewModel): string => `
+  <section class="tab-layout tab-layout--overview">
+    <div class="main-column">
+      <section class="section-heading section-heading--inside">
+        <div>
+          <span class="eyebrow">Endpoint health</span>
+          <h2>Read-only API status</h2>
+        </div>
+        <p>These cards show which observer endpoints are backing the current view. Offline mode falls back to sample data.</p>
+      </section>
+      <section class="endpoint-strip" aria-label="Endpoint status strip">
+        ${viewModel.endpoints.map(renderEndpoint).join('')}
+      </section>
+    </div>
+    <aside class="side-panel" aria-label="Overview notes">
+      <section class="note-grid">
+        ${viewModel.statusNotes.map(renderStatusNote).join('')}
+      </section>
+    </aside>
+  </section>
+`
+
+const renderWorkersTab = (viewModel: DashboardViewModel): string => `
+  <section>
+    <section class="section-heading section-heading--inside">
+      <div>
+        <span class="eyebrow">Worker fleet</span>
+        <h2>Capacity, heartbeat, CPU/RSS, assignments, and reservations</h2>
+      </div>
+      <p>Worker cards combine /worker_stats capacity with /worker_tasks assignments, liveness, and broker reservation overlays.</p>
+    </section>
+    <section class="worker-grid" aria-label="Worker cards">
+      ${viewModel.workers.map(renderWorker).join('')}
+    </section>
+  </section>
+`
+
+const renderTasksTab = (viewModel: DashboardViewModel): string => `
+  <section>
+    <section class="section-heading section-heading--inside">
+      <div>
+        <span class="eyebrow">Task flow</span>
+        <h2>Queued, assigned, retry/failed, and garbage task rows</h2>
+      </div>
+      <p>ACKs only prove accepted/enqueued. Use these read-only rows plus worker logs and side effects for completion evidence.</p>
+    </section>
+    <section class="task-summary-grid" aria-label="Task counts">
+      ${renderSummaryStat('Queued', viewModel.summary.queuedTasks, 'waiting for scheduler admission', viewModel.summary.queuedTasks > 0 ? 'idle' : 'healthy')}
+      ${renderSummaryStat('Assigned', viewModel.summary.assignedTasks, 'currently mapped under workers', viewModel.summary.assignedTasks > 0 ? 'healthy' : 'idle')}
+      ${renderSummaryStat('Retry / failed', viewModel.summary.retryTasks, 'failed queue / retry window', viewModel.summary.retryTasks > 0 ? 'warning' : 'healthy')}
+      ${renderSummaryStat('Garbage', viewModel.summary.garbageTasks, 'exhausted or discarded tasks', viewModel.summary.garbageTasks > 0 ? 'warning' : 'healthy')}
+    </section>
+    <section class="task-list" aria-label="Task rows">
+      ${renderTaskList(viewModel)}
+    </section>
+  </section>
+`
+
+const renderLogsTab = (viewModel: DashboardViewModel): string => `
+  <section class="tab-layout">
+    <div class="main-column">
+      <section class="section-heading section-heading--inside">
+        <div>
+          <span class="eyebrow">Queues & overload</span>
+          <h2>No-drop runtime signals</h2>
+        </div>
+        <p>Runtime queues are diagnostics only; this dashboard does not expose queue mutation or scheduler controls.</p>
+      </section>
+      <div class="queue-grid" aria-label="Runtime queue cards">
+        ${viewModel.queues.map(renderQueue).join('')}
+      </div>
+    </div>
+    <aside class="side-panel" aria-label="Log panels">
+      <section class="panel">
+        <div class="panel__header">
+          <span class="eyebrow">Derived diagnostics</span>
+          ${renderPill(viewModel.mode === 'live' ? 'healthy' : 'warning', viewModel.mode === 'live' ? 'Live' : 'Sample')}
+        </div>
+        <ul class="log-list">
+          ${viewModel.logs.map(renderLog).join('')}
+        </ul>
+      </section>
+    </aside>
+  </section>
+`
+
+const renderActiveTab = (viewModel: DashboardViewModel): string => {
+  switch (activeTab) {
+    case 'overview':
+      return renderOverviewTab(viewModel)
+    case 'submit':
+      return renderSubmitPanel()
+    case 'workers':
+      return renderWorkersTab(viewModel)
+    case 'tasks':
+      return renderTasksTab(viewModel)
+    case 'logs':
+      return renderLogsTab(viewModel)
+  }
+}
+
 const renderDashboard = (viewModel: DashboardViewModel, isRefreshing: boolean): string => `
   <main class="shell">
     <header class="hero">
@@ -291,63 +514,29 @@ const renderDashboard = (viewModel: DashboardViewModel, isRefreshing: boolean): 
       </nav>
       <section class="hero__content">
         <div>
-          <span class="eyebrow">Observer plus optional submit-only bridge</span>
-          <h2>Queues, workers, reservations, LogIngest state, and safe TOML enqueue.</h2>
+          <span class="eyebrow">Observer-first tabs</span>
+          <h2>Runtime health, safe TOML enqueue, workers, tasks, and diagnostics.</h2>
         </div>
         <p>
-          The dashboard polls existing read-only HTTP endpoints and can submit TOML only through the local
-          client bridge. No retry, cancel, delete, worker, queue, or scheduler controls are exposed.
+          Top-level tabs separate observation from the submit-only bridge. The dashboard still exposes no retry,
+          cancel, delete, worker, queue, or scheduler controls.
         </p>
       </section>
     </header>
 
     ${renderStatusBanner(viewModel, isRefreshing)}
+    ${renderStatusStrip(viewModel)}
 
-    <section class="endpoint-strip" aria-label="Endpoint status strip">
-      ${viewModel.endpoints.map(renderEndpoint).join('')}
-    </section>
-
-    ${renderSubmitPanel()}
-
-    <section class="section-heading">
-      <div>
-        <span class="eyebrow">Worker fleet</span>
-        <h2>Capacity, heartbeat, assignments, and reservations</h2>
-      </div>
-      <p>Worker cards combine /worker_stats capacity with /worker_tasks assignments, liveness, and broker reservation overlays.</p>
-    </section>
-
-    <section class="operations-grid">
-      <div class="main-column">
-        <section class="worker-grid" aria-label="Worker cards">
-          ${viewModel.workers.map(renderWorker).join('')}
-        </section>
-
-        <section class="section-heading section-heading--compact">
-          <div>
-            <span class="eyebrow">Queues & overload</span>
-            <h2>No-drop runtime signals</h2>
-          </div>
-        </section>
-        <div class="queue-grid" aria-label="Runtime queue cards">
-          ${viewModel.queues.map(renderQueue).join('')}
-        </div>
-      </div>
-
-      <aside class="side-panel" aria-label="Log and status panels">
-        <section class="panel">
-          <div class="panel__header">
-            <span class="eyebrow">Derived diagnostics</span>
-            ${renderPill(viewModel.mode === 'live' ? 'healthy' : 'warning', viewModel.mode === 'live' ? 'Live' : 'Sample')}
-          </div>
-          <ul class="log-list">
-            ${viewModel.logs.map(renderLog).join('')}
-          </ul>
-        </section>
-        <section class="note-grid">
-          ${viewModel.statusNotes.map(renderStatusNote).join('')}
-        </section>
-      </aside>
+    <section class="dashboard-tabs">
+      ${renderTabNav(viewModel)}
+      <section
+        class="tab-panel"
+        id="dashboard-panel-${activeTab}"
+        role="tabpanel"
+        aria-labelledby="dashboard-tab-${activeTab}"
+      >
+        ${renderActiveTab(viewModel)}
+      </section>
     </section>
   </main>
 `
@@ -606,6 +795,14 @@ const handleSubmitChange = (event: Event): void => {
 const handleSubmitClick = (event: MouseEvent): void => {
   const target = event.target
   if (!(target instanceof Element)) {
+    return
+  }
+
+  const tabButton = target.closest<HTMLButtonElement>('[data-dashboard-tab]')
+  const nextTab = tabButton?.dataset.dashboardTab
+  if (isDashboardTab(nextTab)) {
+    activeTab = nextTab
+    rerenderDashboard()
     return
   }
 

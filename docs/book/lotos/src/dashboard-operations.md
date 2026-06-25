@@ -1,6 +1,6 @@
 # Dashboard Operations Manual
 
-The Lotos dashboard is a Vite + TypeScript view over the TaskSchedule demo runtime. It observes broker queues, worker capacity, reservations, heartbeats, and LogIngest counters through the existing observer endpoints. When the TaskSchedule client bridge is running, the dashboard also exposes one submit-only TOML panel that posts a JSON envelope to the bridge.
+The Lotos dashboard is a Vite + TypeScript view over the TaskSchedule demo runtime. It observes broker queues, worker capacity, reservations, heartbeats, and LogIngest counters through the existing observer endpoints. The UI groups information into **Overview**, **Submit Task**, **Workers**, **Tasks**, and **Logs / Diagnostics** tabs, with a small always-visible status strip above the tabs. When the TaskSchedule client bridge is running, the **Submit Task** tab exposes one submit-only TOML panel that posts a JSON envelope to the bridge.
 
 The submit path is intentionally narrow: the browser sends only `{ "format": "toml", "taskToml": "..." }`; it does not speak ZMQ and cannot provide client id, frontend address, worker id, ACK timeout, or other client/worker/broker config. The bridge reuses the shared `ts-client` TOML parse/validate helpers and submits through `mkClientService` / `sendTaskRequest`. It does not add retry, cancel, delete, queue mutation, worker restart, or scheduler-control actions.
 
@@ -19,7 +19,7 @@ Use the commands below from the repository root. Long-running runtime commands s
 | Dashboard | `make dashboard-dev` | Browser fetches observer endpoints under `DASHBOARD_API_ROOT` through `DASHBOARD_API_TARGET`; browser posts `/submit` through `DASHBOARD_BRIDGE_TARGET`; Vite binds `DASHBOARD_HOST` | Local Vite UI, bound to `127.0.0.1:5173` by default; submit-only panel plus observer views; no control-plane UI |
 | mdBook docs | `make book-serve` | Static docs in `MDBOOK_DIR` | Local docs server at `http://<MDBOOK_HOST>:<MDBOOK_PORT>`; no runtime dependency |
 
-The worker card's `Device CPU` meter shows system-wide CPU usage sampled by the worker heartbeat. It is host/device utilization for scheduling and operations visibility, not per-worker-process CPU.
+The worker card's `Device CPU` meter in the **Workers** tab shows system-wide CPU usage sampled by the worker heartbeat. It is host/device utilization for scheduling and operations visibility, not per-worker-process CPU. The **Tasks** tab groups queued, assigned, retry/failed, and garbage rows; the **Logs / Diagnostics** tab groups LogIngest summaries with runtime queue cards.
 
 The dashboard consumes these TaskSchedule observer endpoints by default:
 
@@ -77,7 +77,7 @@ For deeper probes such as `/logs/recent`, `/logs/worker/<workerId>`, `/logs/task
 
 6. Submit through either path:
 
-   - Dashboard: upload, paste/edit, load the generated sample TOML, or use the minimal template form to set task name, shell command, marker path, and timeout, then click **Submit** once. No confirmation modal is shown.
+   - Dashboard: open the **Submit Task** tab, upload, paste/edit, load the generated sample TOML, or use the minimal template form to set task name, shell command, marker path, and timeout, then click **Submit** once. No confirmation modal is shown.
    - CLI: `make task-schedule-submit` remains available for non-dashboard submissions.
 
 7. Serve this manual locally if needed:

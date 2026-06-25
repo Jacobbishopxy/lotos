@@ -16,7 +16,7 @@ make task-schedule-client-bridge      # terminal 3; local POST /submit bridge on
 make dashboard-dev                    # terminal 4; serves Vite on 127.0.0.1 and proxies /SimpleServer plus /submit
 ```
 
-Open the Vite URL and use the **Submit-only client bridge** panel to upload, paste/edit, load generated TOML, or fill the minimal template form for task name, shell command, marker path, and timeout. The Submit button sends only:
+Open the Vite URL. The UI is grouped into tabs: **Overview**, **Submit Task**, **Workers**, **Tasks**, and **Logs / Diagnostics**, with a small always-visible status strip above them. Use the **Submit Task** tab to upload, paste/edit, load generated TOML, or fill the minimal template form for task name, shell command, marker path, and timeout. The Submit button sends only:
 
 ```json
 { "format": "toml", "taskToml": "schemaVersion = \"task-schedule/v2\"\n..." }
@@ -24,7 +24,7 @@ Open the Vite URL and use the **Submit-only client bridge** panel to upload, pas
 
 The bridge owns `clientId`, `loadBalancerFrontendAddr`, and `reqTimeoutSec`, then reuses the existing `ts-client` parse/validate/ACK path. A successful response means `accepted/enqueued`, not completed; completion appears later through worker/status/log polling.
 
-Worker cards show `Device CPU`, a system-wide CPU usage percentage sampled by the worker heartbeat. It is host/device utilization, not per-worker-process CPU.
+Worker cards in the **Workers** tab show `Device CPU`, a system-wide CPU usage percentage sampled by the worker heartbeat. It is host/device utilization, not per-worker-process CPU. The **Tasks** tab groups queued, assigned, retry/failed, and garbage task rows; the **Logs / Diagnostics** tab groups LogIngest and runtime queue signals.
 
 The dashboard polls these observer endpoints by default:
 
